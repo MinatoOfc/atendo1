@@ -6,6 +6,47 @@ const MODEL = process.env.ATENDO_MODEL || 'claude-opus-4-8'
 
 const client = iaConfigurada ? new Anthropic() : null
 
+// Estado da IA, exposto na interface — sem isso uma falha da API some no log
+// e o usuário só vê "gerada por regras" sem saber o motivo.
+export const statusIA = { ok: null, erro: null, verificadoEm: null, modelo: MODEL }
+
+function registrarErro(msg) {
+  Object.assign(statusIA, { ok: false, erro: msg, verificadoEm: new Date().toISOString() })
+}
+
+function traduzirErro(err) {
+  const status = err?.status
+  const m = String(err?.message || err)
+  if (status === 401) return 'Chave de API inválida ou revogada. Confira ANTHROPIC_API_KEY no Railway.'
+  if (status === 403) return 'A chave não tem permissão para este modelo. Verifique o plano da conta em console.anthropic.com.'
+  if (status === 404) return `O modelo "${MODEL}" não existe ou não está disponível para sua conta. Defina ATENDO_MODEL com um modelo que você tenha acesso (ex.: claude-sonnet-5).`
+  if (status === 429) return 'Limite de uso atingido (rate limit). Aguarde um pouco ou aumente o limite da sua conta.'
+  if (status === 400 && /credit|balance|billing/i.test(m)) return 'Sua conta Anthropic está sem créditos. Adicione créditos em console.anthropic.com → Billing.'
+  if (status === 400) return `A API recusou a requisição: ${m.slice(0, 200)}`
+  if (status >= 500) return 'A API da Anthropic está indisponível no momento. As respostas voltam sozinhas quando o serviço normalizar.'
+  if (/credit|balance|insufficient/i.test(m)) return 'Sua conta Anthropic está sem créditos. Adicione créditos em console.anthropic.com → Billing.'
+  return m.slice(0, 250)
+}
+
+/** Chamada barata só para validar chave, modelo e créditos. */
+export async function testarIA() {
+  if (!client) {
+    Object.assign(statusIA, { ok: null, erro: null, verificadoEm: null })
+    return statusIA
+  }
+  try {
+    await client.messages.create({
+      model: MODEL,
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'Responda apenas: ok' }],
+    })
+    Object.assign(statusIA, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
+  } catch (err) {
+    registrarErro(traduzirErro(err))
+  }
+  return statusIA
+}
+
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -67,10 +108,17 @@ export async function processarEmailIA(state, ticket) {
       messages: [{ role: 'user', content: user }],
       output_config: { format: { type: 'json_schema', schema: SCHEMA } },
     })
-    if (resp.stop_reason === 'refusal') return null
+    if (resp.stop_reason === 'refusal') {
+      registrarErro('O Claude recusou responder a este e-mail por política de segurança. O rascunho veio das regras locais.')
+      return null
+    }
     const texto = resp.content.find(b => b.type === 'text')?.text
-    if (!texto) return null
+    if (!texto) {
+      registrarErro('O Claude respondeu sem conteúdo de texto.')
+      return null
+    }
     const r = JSON.parse(texto)
+    Object.assign(statusIA, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
     return {
       categoria: r.categoria,
       idioma: r.idioma,
@@ -82,7 +130,8 @@ export async function processarEmailIA(state, ticket) {
       geradoPorIA: true,
     }
   } catch (err) {
-    console.error('[ai] falha ao gerar resposta, usando fallback local:', err.message)
+    registrarErro(traduzirErro(err))
+    console.error('[ai] falha, usando regras locais:', statusIA.erro)
     return null
   }
 }

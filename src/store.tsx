@@ -44,6 +44,8 @@ export interface Config {
   tomDetectado: boolean
   automacaoAtiva: boolean
   atrasoMinutos: number
+  escalarSensiveis: boolean
+  confiancaMinima: number
   assinatura: string
 }
 
@@ -58,9 +60,11 @@ export interface Diagnostico {
   totalNaCaixa?: number; janelaDias?: number; encontradosNaJanela?: number
   mensagens?: MensagemCaixa[]
 }
+export interface StatusIA { ok: boolean | null; erro: string | null; verificadoEm: string | null; modelo?: string }
 export interface Integracoes {
   email: boolean; shopify: boolean; ia: boolean
   emailStatus: StatusEmail
+  iaStatus: StatusIA
 }
 
 interface ServerState {
@@ -75,13 +79,18 @@ interface ServerState {
 const configPadrao: Config = {
   nomeLoja: 'minha loja', emailConectado: null, shopifyConectada: false,
   tomDetectado: false, automacaoAtiva: false, atrasoMinutos: 3,
+  escalarSensiveis: true, confiancaMinima: 0.55,
   assinatura: 'Equipe de atendimento',
 }
 
 const estadoVazio: ServerState = {
   tickets: [], politicas: [], faqs: [], pedidos: [],
   config: configPadrao,
-  integracoes: { email: false, shopify: false, ia: false, emailStatus: { ok: null, erro: null, verificadoEm: null } },
+  integracoes: {
+    email: false, shopify: false, ia: false,
+    emailStatus: { ok: null, erro: null, verificadoEm: null },
+    iaStatus: { ok: null, erro: null, verificadoEm: null },
+  },
 }
 
 /* ---------------- API ---------------- */
@@ -125,6 +134,7 @@ interface Store extends ServerState {
   limparTudo: () => void
   testarEmail: () => Promise<StatusEmail>
   diagnosticarEmail: () => Promise<Diagnostico>
+  testarIA: () => Promise<StatusIA>
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -229,6 +239,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const r = (await api('/email/diagnostico')) as { state?: ServerState; diagnostico: Diagnostico }
       aplicar(r)
       return r.diagnostico
+    },
+
+    testarIA: async () => {
+      const r = (await api('/ia/testar')) as { state?: ServerState; status: StatusIA }
+      aplicar(r)
+      return r.status
     },
   }), [state, carregado, tipsFechados])
 

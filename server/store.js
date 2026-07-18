@@ -11,6 +11,10 @@ export const configPadrao = {
   tomDetectado: false,
   automacaoAtiva: false,
   atrasoMinutos: 3,
+  // Quando true, reembolsos e casos sensíveis sempre esperam aprovação humana
+  escalarSensiveis: true,
+  // Abaixo desta confiança a resposta espera aprovação em vez de sair sozinha
+  confiancaMinima: 0.55,
   assinatura: 'Equipe de atendimento',
 }
 

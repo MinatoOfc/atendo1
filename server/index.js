@@ -6,7 +6,7 @@ import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
-import { processarEmail, iaConfigurada } from './ai.js'
+import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
 import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, diagnosticar, statusEmail } from './mail.js'
 import { shopifyConfigurada, buscarPedidosShopify } from './shopify.js'
 
@@ -36,6 +36,7 @@ function visao() {
       shopify: shopifyConfigurada,
       ia: iaConfigurada,
       emailStatus: { ...statusEmail },
+      iaStatus: { ...statusIA },
     },
   }
 }
@@ -71,13 +72,17 @@ async function criarTicket({ nome, de, assunto, corpo, data, messageId }) {
   base.confianca = r.confianca
   base.geradoPorIA = r.geradoPorIA
 
-  if (r.escalarHumano || r.confianca < 0.55) {
+  const minima = state.config.confiancaMinima ?? 0.55
+  const sensivel = state.config.escalarSensiveis !== false && r.escalarHumano
+  const incerto = r.confianca < minima
+
+  if (sensivel || incerto) {
     base.status = 'humano'
-    base.motivoEscalada = r.motivo || 'Caso sensível ou de baixa confiança'
+    base.motivoEscalada = r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
   } else {
     base.status = 'aprovacao'
     if (state.config.automacaoAtiva) {
-      base.enviaEm = Date.now() + state.config.atrasoMinutos * 60_000
+      base.enviaEm = Date.now() + Math.max(0, state.config.atrasoMinutos) * 60_000
     }
   }
   return base
@@ -185,6 +190,11 @@ app.post('/api/sync', async (req, res) => {
 
 app.post('/api/email/testar', async (req, res) => {
   const s = await verificarConexao()
+  res.json({ status: s, state: visao() })
+})
+
+app.post('/api/ia/testar', async (req, res) => {
+  const s = await testarIA()
   res.json({ status: s, state: visao() })
 })
 
@@ -306,7 +316,7 @@ app.post('/api/faqs/biblioteca', (req, res) => {
 /* ---- Config ---- */
 
 app.post('/api/config', (req, res) => {
-  const permitidos = ['nomeLoja', 'assinatura', 'atrasoMinutos', 'automacaoAtiva', 'tomDetectado', 'emailConectado', 'shopifyConectada']
+  const permitidos = ['nomeLoja', 'assinatura', 'atrasoMinutos', 'automacaoAtiva', 'tomDetectado', 'emailConectado', 'shopifyConectada', 'escalarSensiveis', 'confiancaMinima']
   for (const k of permitidos) {
     if (k in req.body) state.config[k] = req.body[k]
   }
@@ -339,6 +349,11 @@ app.listen(PORT, async () => {
   console.log(`  e-mail:  ${emailConfigurado ? enderecoEmail : 'não configurado (modo demo)'}`)
   console.log(`  shopify: ${shopifyConfigurada ? process.env.SHOPIFY_STORE : 'não configurada (modo demo)'}`)
   console.log(`  ia:      ${iaConfigurada ? 'Claude conectado' : 'não configurada (respostas por regras)'}`)
+
+  if (iaConfigurada) {
+    const t = await testarIA()
+    console.log(t.ok ? `  IA OK — usando ${t.modelo}` : `  IA FALHOU: ${t.erro}`)
+  }
 
   if (emailConfigurado) {
     const s = await verificarConexao()
