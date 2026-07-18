@@ -7,7 +7,7 @@ import {
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
 import { processarEmail, iaConfigurada } from './ai.js'
-import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, statusEmail } from './mail.js'
+import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, diagnosticar, statusEmail } from './mail.js'
 import { shopifyConfigurada, buscarPedidosShopify } from './shopify.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -186,6 +186,15 @@ app.post('/api/sync', async (req, res) => {
 app.post('/api/email/testar', async (req, res) => {
   const s = await verificarConexao()
   res.json({ status: s, state: visao() })
+})
+
+app.post('/api/email/diagnostico', async (req, res) => {
+  try {
+    const d = await diagnosticar(state.emailsProcessados)
+    res.json({ diagnostico: d, state: visao() })
+  } catch (err) {
+    res.json({ diagnostico: { ok: false, erro: err.message }, state: visao() })
+  }
 })
 
 const acharTicket = (req, res) => {

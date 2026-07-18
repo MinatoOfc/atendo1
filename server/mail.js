@@ -18,6 +18,12 @@ const imapHost = (process.env.EMAIL_IMAP_HOST || presets[provider]?.imap || '').
 const smtpHost = (process.env.EMAIL_SMTP_HOST || presets[provider]?.smtp || '').trim()
 const imapPort = Number(process.env.EMAIL_IMAP_PORT || 993)
 const smtpPort = Number(process.env.EMAIL_SMTP_PORT || 465)
+// Janela de busca: e-mails mais antigos que isso são ignorados
+const diasJanela = Number(process.env.EMAIL_DIAS || 3)
+const MAX_POR_SYNC = 20
+
+// Marca as respostas que o próprio atendo envia, para nunca reprocessá-las
+const HEADER_AUTO = 'x-atendo-auto'
 
 export const emailConfigurado = !!(user && pass && imapHost && smtpHost)
 export const enderecoEmail = emailConfigurado ? user : null
@@ -45,6 +51,8 @@ function novoClienteImap() {
   })
 }
 
+const desde = () => new Date(Date.now() - diasJanela * 24 * 3600_000)
+
 export async function verificarConexao() {
   if (!emailConfigurado) {
     Object.assign(statusEmail, { ok: null, erro: null, verificadoEm: null })
@@ -61,6 +69,57 @@ export async function verificarConexao() {
   return statusEmail
 }
 
+/**
+ * Diagnóstico: mostra o que o app realmente enxerga na caixa de entrada,
+ * e por que cada mensagem recente virou ou não virou ticket.
+ */
+export async function diagnosticar(jaProcessados = []) {
+  if (!emailConfigurado) return { ok: false, erro: 'E-mail não configurado.' }
+  const client = novoClienteImap()
+  try {
+    await client.connect()
+  } catch (err) {
+    const erro = traduzirErro(err)
+    Object.assign(statusEmail, { ok: false, erro, verificadoEm: new Date().toISOString() })
+    return { ok: false, erro }
+  }
+
+  const lock = await client.getMailboxLock('INBOX')
+  try {
+    const caixa = client.mailbox
+    const uids = await client.search({ since: desde() }, { uid: true })
+    const recentes = (uids || []).slice(-15).reverse()
+    const mensagens = []
+    for (const uid of recentes) {
+      const msg = await client.fetchOne(uid, { envelope: true, flags: true, headers: [HEADER_AUTO] }, { uid: true })
+      if (!msg?.envelope) continue
+      const de = msg.envelope.from?.[0]
+      const id = msg.envelope.messageId
+      const auto = String(msg.headers ?? '').toLowerCase().includes(HEADER_AUTO)
+      mensagens.push({
+        de: de?.address ?? '(sem remetente)',
+        assunto: msg.envelope.subject || '(sem assunto)',
+        data: msg.envelope.date?.toISOString?.() ?? null,
+        lido: !!msg.flags?.has?.('\\Seen'),
+        virouTicket: id ? jaProcessados.includes(id) : false,
+        respostaDoAtendo: auto,
+      })
+    }
+    Object.assign(statusEmail, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
+    return {
+      ok: true,
+      caixa: enderecoEmail,
+      totalNaCaixa: caixa?.exists ?? 0,
+      janelaDias: diasJanela,
+      encontradosNaJanela: (uids || []).length,
+      mensagens,
+    }
+  } finally {
+    lock.release()
+    await client.logout().catch(() => {})
+  }
+}
+
 export async function buscarNovosEmails(jaProcessados) {
   if (!emailConfigurado) return []
   const client = novoClienteImap()
@@ -74,17 +133,23 @@ export async function buscarNovosEmails(jaProcessados) {
 
   const lock = await client.getMailboxLock('INBOX')
   try {
-    const uids = await client.search({ seen: false }, { uid: true })
-    for (const uid of uids || []) {
+    // Busca por data, não pelo flag de lido: um e-mail que você abriu no Gmail
+    // continua sendo um e-mail de cliente que precisa de resposta.
+    const uids = await client.search({ since: desde() }, { uid: true })
+    const recentes = (uids || []).slice(-MAX_POR_SYNC * 3).reverse()
+
+    for (const uid of recentes) {
+      if (novos.length >= MAX_POR_SYNC) break
       const msg = await client.fetchOne(uid, { source: true }, { uid: true })
       if (!msg?.source) continue
       const parsed = await simpleParser(msg.source)
       const id = parsed.messageId || `uid-${uid}-${parsed.date?.getTime()}`
       if (jaProcessados.includes(id)) continue
+      // nunca reprocessa uma resposta enviada pelo próprio atendo
+      if (parsed.headers?.get?.(HEADER_AUTO)) continue
       const remetente = parsed.from?.value?.[0]
       if (!remetente?.address) continue
-      // não processa e-mails enviados por nós mesmos
-      if (remetente.address.toLowerCase() === user.toLowerCase()) continue
+
       novos.push({
         messageId: id,
         nome: remetente.name || remetente.address.split('@')[0],
@@ -93,7 +158,7 @@ export async function buscarNovosEmails(jaProcessados) {
         corpo: (parsed.text || '').trim().slice(0, 8000),
         data: (parsed.date || new Date()).toISOString(),
       })
-      await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true })
+      await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true }).catch(() => {})
     }
     Object.assign(statusEmail, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
   } finally {
@@ -122,6 +187,7 @@ export async function enviarEmailReal({ para, assunto, corpo }) {
       to: para,
       subject: assunto.startsWith('Re:') ? assunto : `Re: ${assunto}`,
       text: corpo,
+      headers: { 'X-Atendo-Auto': '1' },
     })
     return true
   } catch (err) {

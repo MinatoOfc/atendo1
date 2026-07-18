@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle } from 'lucide-react'
+import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle, Search } from 'lucide-react'
 import { useStore } from '../store'
+import type { Diagnostico } from '../store'
 
 function EnvVars({ vars }: { vars: [string, string][] }) {
   const [copiado, setCopiado] = useState(false)
@@ -24,11 +25,18 @@ export default function Configuracoes() {
   const s = useStore()
   const [email, setEmail] = useState(s.config.emailConectado ?? '')
   const [testando, setTestando] = useState(false)
+  const [diag, setDiag] = useState<Diagnostico | null>(null)
+  const [diagnosticando, setDiagnosticando] = useState(false)
   const status = s.integracoes.emailStatus
 
   const testar = async () => {
     setTestando(true)
     try { await s.testarEmail() } finally { setTestando(false) }
+  }
+
+  const diagnosticar = async () => {
+    setDiagnosticando(true)
+    try { setDiag(await s.diagnosticarEmail()) } finally { setDiagnosticando(false) }
   }
 
   const Section = ({ icon, title, desc, children }: { icon: React.ReactNode; title: string; desc: string; children: React.ReactNode }) => (
@@ -82,6 +90,9 @@ export default function Configuracoes() {
               <button className="btn btn-sm" onClick={testar} disabled={testando}>
                 {testando ? 'Testando…' : 'Testar conexão'}
               </button>
+              <button className="btn btn-sm" onClick={diagnosticar} disabled={diagnosticando}>
+                <Search size={13} /> {diagnosticando ? 'Lendo a caixa…' : 'Ver o que o atendo enxerga'}
+              </button>
             </div>
             {status?.ok === false && status.erro && (
               <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: '#fecaca', background: '#fef7f7' }}>
@@ -89,6 +100,45 @@ export default function Configuracoes() {
                   <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>O servidor de e-mail recusou a conexão</b>
                 </div>
                 <p className="muted-sm" style={{ lineHeight: 1.6 }}>{status.erro}</p>
+              </div>
+            )}
+            {diag && (
+              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px' }}>
+                {!diag.ok ? (
+                  <p className="muted-sm" style={{ color: 'var(--red)' }}>{diag.erro}</p>
+                ) : (
+                  <>
+                    <p className="muted-sm mb-8">
+                      Caixa <b>{diag.caixa}</b> — {diag.totalNaCaixa} mensagens no total,{' '}
+                      <b>{diag.encontradosNaJanela}</b> nos últimos {diag.janelaDias} dias (só essas são consideradas).
+                    </p>
+                    {diag.mensagens?.length ? (
+                      <table className="table" style={{ fontSize: 12 }}>
+                        <thead><tr><th>De</th><th>Assunto</th><th>Situação</th></tr></thead>
+                        <tbody>
+                          {diag.mensagens.map((m, i) => (
+                            <tr key={i}>
+                              <td style={{ whiteSpace: 'nowrap' }}>{m.de}</td>
+                              <td>{m.assunto}</td>
+                              <td style={{ whiteSpace: 'nowrap' }}>
+                                {m.respostaDoAtendo
+                                  ? <span className="tag tag-outro">resposta do atendo</span>
+                                  : m.virouTicket
+                                    ? <span className="tag tag-green">virou ticket</span>
+                                    : <span className="tag tag-amber">na fila</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p className="muted-sm">
+                        Nenhuma mensagem nos últimos {diag.janelaDias} dias. Se você acabou de enviar o teste, confira se ele
+                        caiu no spam do Gmail ou se foi entregue em outra conta.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </>

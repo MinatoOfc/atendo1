@@ -48,6 +48,16 @@ export interface Config {
 }
 
 export interface StatusEmail { ok: boolean | null; erro: string | null; verificadoEm: string | null }
+
+export interface MensagemCaixa {
+  de: string; assunto: string; data: string | null
+  lido: boolean; virouTicket: boolean; respostaDoAtendo: boolean
+}
+export interface Diagnostico {
+  ok: boolean; erro?: string; caixa?: string
+  totalNaCaixa?: number; janelaDias?: number; encontradosNaJanela?: number
+  mensagens?: MensagemCaixa[]
+}
 export interface Integracoes {
   email: boolean; shopify: boolean; ia: boolean
   emailStatus: StatusEmail
@@ -114,6 +124,7 @@ interface Store extends ServerState {
   conectarShopify: () => void
   limparTudo: () => void
   testarEmail: () => Promise<StatusEmail>
+  diagnosticarEmail: () => Promise<Diagnostico>
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -212,6 +223,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const r = (await api('/email/testar')) as { state?: ServerState; status: StatusEmail }
       aplicar(r)
       return r.status
+    },
+
+    diagnosticarEmail: async () => {
+      const r = (await api('/email/diagnostico')) as { state?: ServerState; diagnostico: Diagnostico }
+      aplicar(r)
+      return r.diagnostico
     },
   }), [state, carregado, tipsFechados])
 
