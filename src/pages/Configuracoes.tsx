@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy } from 'lucide-react'
+import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle } from 'lucide-react'
 import { useStore } from '../store'
 
 function EnvVars({ vars }: { vars: [string, string][] }) {
@@ -23,6 +23,13 @@ function EnvVars({ vars }: { vars: [string, string][] }) {
 export default function Configuracoes() {
   const s = useStore()
   const [email, setEmail] = useState(s.config.emailConectado ?? '')
+  const [testando, setTestando] = useState(false)
+  const status = s.integracoes.emailStatus
+
+  const testar = async () => {
+    setTestando(true)
+    try { await s.testarEmail() } finally { setTestando(false) }
+  }
 
   const Section = ({ icon, title, desc, children }: { icon: React.ReactNode; title: string; desc: string; children: React.ReactNode }) => (
     <div className="card mb-16" style={{ padding: '18px 20px' }}>
@@ -61,11 +68,30 @@ export default function Configuracoes() {
 
       <Section icon={<Mail size={15} />} title="E-mail de atendimento" desc="A caixa que o atendo lê (IMAP) e pela qual responde (SMTP).">
         {s.integracoes.email ? (
-          <div className="row gap-10">
-            <span className="tag tag-green"><Check size={11} style={{ marginRight: 4 }} /> Conectado</span>
-            <span className="muted">{s.config.emailConectado}</span>
-            <span className="muted-sm">lendo a caixa a cada 60 s</span>
-          </div>
+          <>
+            <div className="row gap-10" style={{ flexWrap: 'wrap' }}>
+              {status?.ok === false ? (
+                <span className="tag tag-reembolso"><AlertTriangle size={11} style={{ marginRight: 4 }} /> Login recusado</span>
+              ) : status?.ok ? (
+                <span className="tag tag-green"><Check size={11} style={{ marginRight: 4 }} /> Conectado</span>
+              ) : (
+                <span className="tag tag-outro">Verificando…</span>
+              )}
+              <span className="muted">{s.config.emailConectado}</span>
+              {status?.ok && <span className="muted-sm">lendo a caixa a cada 60 s</span>}
+              <button className="btn btn-sm" onClick={testar} disabled={testando}>
+                {testando ? 'Testando…' : 'Testar conexão'}
+              </button>
+            </div>
+            {status?.ok === false && status.erro && (
+              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: '#fecaca', background: '#fef7f7' }}>
+                <div className="row gap-8 mb-8" style={{ color: 'var(--red)' }}>
+                  <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>O servidor de e-mail recusou a conexão</b>
+                </div>
+                <p className="muted-sm" style={{ lineHeight: 1.6 }}>{status.erro}</p>
+              </div>
+            )}
+          </>
         ) : (
           <>
             <span className="tag tag-amber">Não configurado — e-mails de demonstração</span>

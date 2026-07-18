@@ -7,7 +7,7 @@ import {
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
 import { processarEmail, iaConfigurada } from './ai.js'
-import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal } from './mail.js'
+import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, statusEmail } from './mail.js'
 import { shopifyConfigurada, buscarPedidosShopify } from './shopify.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -35,6 +35,7 @@ function visao() {
       email: emailConfigurado,
       shopify: shopifyConfigurada,
       ia: iaConfigurada,
+      emailStatus: { ...statusEmail },
     },
   }
 }
@@ -177,9 +178,14 @@ app.post('/api/sync', async (req, res) => {
     const novos = await sincronizar()
     res.json({ novos, state: visao() })
   } catch (err) {
-    console.error('[sync]', err)
+    console.error('[sync]', err.message)
     res.status(500).json({ erro: err.message, state: visao() })
   }
+})
+
+app.post('/api/email/testar', async (req, res) => {
+  const s = await verificarConexao()
+  res.json({ status: s, state: visao() })
 })
 
 const acharTicket = (req, res) => {
@@ -319,9 +325,19 @@ app.use(express.static(dist))
 app.get(/^(?!\/api).*/, (req, res) => res.sendFile(path.join(dist, 'index.html')))
 
 const PORT = Number(process.env.PORT || 8787)
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`atendo servidor na porta ${PORT}`)
   console.log(`  e-mail:  ${emailConfigurado ? enderecoEmail : 'não configurado (modo demo)'}`)
   console.log(`  shopify: ${shopifyConfigurada ? process.env.SHOPIFY_STORE : 'não configurada (modo demo)'}`)
   console.log(`  ia:      ${iaConfigurada ? 'Claude conectado' : 'não configurada (respostas por regras)'}`)
+
+  if (emailConfigurado) {
+    const s = await verificarConexao()
+    if (s.ok) {
+      console.log(`  login IMAP OK — lendo ${enderecoEmail} a cada 60 s`)
+      sincronizar().catch(err => console.error('[sync]', err.message))
+    } else {
+      console.error(`  LOGIN IMAP FALHOU: ${s.erro}`)
+    }
+  }
 })

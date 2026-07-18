@@ -47,7 +47,11 @@ export interface Config {
   assinatura: string
 }
 
-export interface Integracoes { email: boolean; shopify: boolean; ia: boolean }
+export interface StatusEmail { ok: boolean | null; erro: string | null; verificadoEm: string | null }
+export interface Integracoes {
+  email: boolean; shopify: boolean; ia: boolean
+  emailStatus: StatusEmail
+}
 
 interface ServerState {
   tickets: Ticket[]
@@ -67,7 +71,7 @@ const configPadrao: Config = {
 const estadoVazio: ServerState = {
   tickets: [], politicas: [], faqs: [], pedidos: [],
   config: configPadrao,
-  integracoes: { email: false, shopify: false, ia: false },
+  integracoes: { email: false, shopify: false, ia: false, emailStatus: { ok: null, erro: null, verificadoEm: null } },
 }
 
 /* ---------------- API ---------------- */
@@ -109,6 +113,7 @@ interface Store extends ServerState {
   preencherPoliticas: () => void
   conectarShopify: () => void
   limparTudo: () => void
+  testarEmail: () => Promise<StatusEmail>
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -202,6 +207,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     conectarShopify: () => api('/shopify/demo').then(aplicar),
     limparTudo: () => api('/reset').then(aplicar),
+
+    testarEmail: async () => {
+      const r = (await api('/email/testar')) as { state?: ServerState; status: StatusEmail }
+      aplicar(r)
+      return r.status
+    },
   }), [state, carregado, tipsFechados])
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>
