@@ -1,6 +1,24 @@
 import { useState } from 'react'
-import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug } from 'lucide-react'
+import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy } from 'lucide-react'
 import { useStore } from '../store'
+
+function EnvVars({ vars }: { vars: [string, string][] }) {
+  const [copiado, setCopiado] = useState(false)
+  const texto = vars.map(([k, v]) => `${k}=${v}`).join('\n')
+  return (
+    <div style={{ position: 'relative', marginTop: 10 }}>
+      <pre style={{
+        background: '#17151f', color: '#e8e6f0', borderRadius: 10, padding: '12px 14px',
+        fontSize: 12, lineHeight: 1.7, overflowX: 'auto',
+      }}>{vars.map(([k, v]) => <div key={k}><span style={{ color: '#c084fc' }}>{k}</span>=<span style={{ color: '#86efac' }}>{v}</span></div>)}</pre>
+      <button
+        onClick={() => { navigator.clipboard.writeText(texto); setCopiado(true); setTimeout(() => setCopiado(false), 2000) }}
+        style={{ position: 'absolute', top: 8, right: 8, color: '#a09da8', padding: 4 }}
+        title="Copiar"
+      >{copiado ? <Check size={14} color="#86efac" /> : <Copy size={14} />}</button>
+    </div>
+  )
+}
 
 export default function Configuracoes() {
   const s = useStore()
@@ -9,7 +27,7 @@ export default function Configuracoes() {
   const Section = ({ icon, title, desc, children }: { icon: React.ReactNode; title: string; desc: string; children: React.ReactNode }) => (
     <div className="card mb-16" style={{ padding: '18px 20px' }}>
       <div className="row gap-10 mb-8">
-        <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--purple-soft)', color: 'var(--purple)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{icon}</div>
+        <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--purple-soft)', color: 'var(--purple)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon}</div>
         <div>
           <b style={{ fontSize: 14.5 }}>{title}</b>
           <div className="muted-sm">{desc}</div>
@@ -20,39 +38,90 @@ export default function Configuracoes() {
   )
 
   return (
-    <div className="content-narrow" style={{ maxWidth: 720 }}>
+    <div className="content-narrow" style={{ maxWidth: 760 }}>
       <h1 className="h1 mb-8" style={{ fontSize: 22 }}>Configurações</h1>
-      <p className="muted mb-24">Conexões, automação e preferências da sua conta.</p>
+      <p className="muted mb-24">
+        As integrações reais são configuradas por <b>variáveis de ambiente</b> — no Railway: seu serviço → aba <b>Variables</b>. Nenhuma senha passa por esta tela. Depois de salvar as variáveis, o Railway reinicia o app e a integração liga sozinha.
+      </p>
 
-      <Section icon={<Mail size={15} />} title="E-mail de atendimento" desc="A caixa que o atendo lê e pela qual responde. Gmail, Outlook, Yahoo, iCloud ou domínio próprio.">
-        {s.config.emailConectado ? (
+      <Section icon={<Sparkles size={15} />} title="Inteligência artificial (Claude)" desc="Classifica cada e-mail e escreve a resposta no idioma do cliente, usando suas políticas como fonte de verdade.">
+        {s.integracoes.ia ? (
+          <span className="tag tag-green"><Check size={11} style={{ marginRight: 4 }} /> Conectada — respostas geradas por IA</span>
+        ) : (
+          <>
+            <span className="tag tag-amber">Não configurada — respostas por regras simples</span>
+            <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
+              1. Crie uma conta em <b>console.anthropic.com</b> e gere uma chave de API (custo por uso — centavos por e-mail respondido).<br />
+              2. Adicione no Railway:
+            </p>
+            <EnvVars vars={[['ANTHROPIC_API_KEY', 'sk-ant-...sua-chave...']]} />
+          </>
+        )}
+      </Section>
+
+      <Section icon={<Mail size={15} />} title="E-mail de atendimento" desc="A caixa que o atendo lê (IMAP) e pela qual responde (SMTP).">
+        {s.integracoes.email ? (
           <div className="row gap-10">
             <span className="tag tag-green"><Check size={11} style={{ marginRight: 4 }} /> Conectado</span>
             <span className="muted">{s.config.emailConectado}</span>
-            <button className="btn btn-sm" onClick={() => { s.setConfig({ emailConectado: null }); setEmail('') }}><Unplug size={13} /> Desconectar</button>
+            <span className="muted-sm">lendo a caixa a cada 60 s</span>
           </div>
         ) : (
-          <div className="row gap-8">
-            <input value={email} onChange={e => setEmail(e.target.value)} placeholder="suporte@sualoja.com"
-              style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px', outline: 'none' }} />
-            <button className="btn btn-primary" disabled={!email.includes('@')} style={!email.includes('@') ? { opacity: 0.5 } : undefined}
-              onClick={() => s.setConfig({ emailConectado: email.trim() })}>Conectar</button>
-          </div>
+          <>
+            <span className="tag tag-amber">Não configurado — e-mails de demonstração</span>
+            <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
+              Para Gmail: ative a verificação em duas etapas e gere uma <b>senha de app</b> em myaccount.google.com → Segurança → Senhas de app. Depois adicione no Railway:
+            </p>
+            <EnvVars vars={[
+              ['EMAIL_PROVIDER', 'gmail'],
+              ['EMAIL_USER', 'suporte@sualoja.com'],
+              ['EMAIL_PASS', 'senha-de-app-de-16-letras'],
+            ]} />
+            <p className="muted-sm" style={{ marginTop: 8 }}>
+              Outros provedores: <code>EMAIL_PROVIDER</code> aceita <b>outlook</b>, <b>yahoo</b> e <b>icloud</b>. Domínio próprio: troque por <code>EMAIL_IMAP_HOST</code> e <code>EMAIL_SMTP_HOST</code>.
+            </p>
+            <div className="row gap-8" style={{ marginTop: 12 }}>
+              <input value={email} onChange={e => setEmail(e.target.value)} placeholder="ou registre um e-mail só para visual (demo)"
+                style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px', outline: 'none', fontSize: 13 }} />
+              {s.config.emailConectado ? (
+                <button className="btn btn-sm" onClick={() => { s.setConfig({ emailConectado: null }); setEmail('') }}><Unplug size={13} /> Remover</button>
+              ) : (
+                <button className="btn btn-sm" disabled={!email.includes('@')} style={!email.includes('@') ? { opacity: 0.5 } : undefined}
+                  onClick={() => s.setConfig({ emailConectado: email.trim() })}>Salvar (demo)</button>
+              )}
+            </div>
+          </>
         )}
-        <p className="muted-sm" style={{ marginTop: 10 }}>
-          Nesta versão pessoal a conexão é simulada — nenhuma senha é pedida e nenhum e-mail real é enviado. Use o botão Sincronizar para receber e-mails de demonstração.
-        </p>
       </Section>
 
       <Section icon={<ShoppingBag size={15} />} title="Shopify" desc="Pedidos, rastreio e clientes entram sozinhos — o atendo usa esses dados nas respostas.">
-        {s.config.shopifyConectada ? (
+        {s.integracoes.shopify ? (
           <div className="row gap-10">
             <span className="tag tag-green"><Check size={11} style={{ marginRight: 4 }} /> Conectada</span>
             <span className="muted">{s.pedidos.length} pedidos sincronizados</span>
-            <button className="btn btn-sm" onClick={() => s.setConfig({ shopifyConectada: false })}><Unplug size={13} /> Desconectar</button>
           </div>
         ) : (
-          <button className="btn btn-primary" onClick={s.conectarShopify}>Conectar Shopify (demonstração)</button>
+          <>
+            <span className="tag tag-amber">Não configurada</span>
+            <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
+              No admin da sua loja: <b>Configurações → Apps e canais de venda → Desenvolver apps → Criar app</b>. Dê permissão de leitura em <b>Orders</b> e <b>Customers</b>, instale o app e copie o <b>Admin API access token</b>. Depois adicione no Railway:
+            </p>
+            <EnvVars vars={[
+              ['SHOPIFY_STORE', 'sualoja.myshopify.com'],
+              ['SHOPIFY_ADMIN_TOKEN', 'shpat_...seu-token...'],
+            ]} />
+            <div style={{ marginTop: 12 }}>
+              {s.config.shopifyConectada ? (
+                <div className="row gap-10">
+                  <span className="tag tag-outro">Demonstração ativa</span>
+                  <span className="muted-sm">{s.pedidos.length} pedidos de exemplo</span>
+                  <button className="btn btn-sm" onClick={() => s.setConfig({ shopifyConectada: false })}><Unplug size={13} /> Desligar demo</button>
+                </div>
+              ) : (
+                <button className="btn btn-sm" onClick={s.conectarShopify}>Usar dados de demonstração</button>
+              )}
+            </div>
+          </>
         )}
       </Section>
 
@@ -87,8 +156,8 @@ export default function Configuracoes() {
         </div>
       </Section>
 
-      <Section icon={<Database size={15} />} title="Dados" desc="Tudo fica salvo localmente no seu navegador — nada sai da sua máquina.">
-        <button className="btn btn-danger" onClick={() => { if (confirm('Apagar todos os tickets, políticas, FAQs e conexões?')) s.limparTudo() }}>
+      <Section icon={<Database size={15} />} title="Dados" desc="Tickets, políticas e FAQs ficam salvos no servidor (arquivo em disco).">
+        <button className="btn btn-danger" onClick={() => { if (confirm('Apagar todos os tickets, políticas, FAQs e conexões de demonstração?')) s.limparTudo() }}>
           Apagar todos os dados
         </button>
       </Section>

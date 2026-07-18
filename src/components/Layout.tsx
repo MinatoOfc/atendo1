@@ -22,14 +22,17 @@ export default function Layout() {
   const [girando, setGirando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
 
-  const onSync = () => {
+  const onSync = async () => {
     setGirando(true)
-    const n = sincronizar()
-    setTimeout(() => {
-      setGirando(false)
+    try {
+      const n = await sincronizar()
       setAviso(n > 0 ? `${n} novo${n > 1 ? 's' : ''} e-mail${n > 1 ? 's' : ''} sincronizado${n > 1 ? 's' : ''}` : 'Tudo em dia — nenhum e-mail novo')
+    } catch {
+      setAviso('Falha ao sincronizar — o servidor está no ar?')
+    } finally {
+      setGirando(false)
       setTimeout(() => setAviso(null), 3500)
-    }, 900)
+    }
   }
 
   const item = (to: string, icon: React.ReactNode, label: string, extra?: React.ReactNode) => (

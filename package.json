@@ -1,17 +1,22 @@
 {
   "name": "atendo",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:server": "node server/index.js",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "start": "serve -s dist -l ${PORT:-3000}"
+    "start": "node server/index.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.3",
+    "express": "^4.21.2",
+    "imapflow": "^1.0.191",
     "lucide-react": "^0.525.0",
-    "serve": "^14.2.4",
+    "mailparser": "^3.7.4",
+    "nodemailer": "^9.0.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.0"

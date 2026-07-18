@@ -1,43 +1,75 @@
 # atendo.
 
-Atendimento ao cliente para lojas Shopify que se responde sozinho. Lê cada e-mail, classifica por tipo de solicitação, puxa o pedido real e rascunha a resposta no idioma do cliente — você só entra quando um humano precisa decidir.
+Atendimento ao cliente para lojas Shopify que se responde sozinho. Lê cada e-mail da caixa de atendimento, classifica por tipo de solicitação, puxa o pedido real da Shopify e escreve a resposta com IA no idioma do cliente — você só entra quando um humano precisa decidir.
 
-Uso pessoal. Todos os dados ficam no navegador (localStorage); nenhuma informação sai da máquina.
+## Arquitetura
+
+- **Frontend**: React + TypeScript + Vite (pasta `src/`)
+- **Backend**: Node + Express (pasta `server/`) — lê IMAP, envia SMTP, consulta a Shopify Admin API e gera respostas com o Claude
+- **Estado**: arquivo JSON em `data/` (no Railway, use um volume)
+
+Toda integração é opcional e configurada por variável de ambiente. O que não estiver configurado roda em **modo demonstração** (e-mails de exemplo, pedidos de exemplo, respostas por regras).
 
 ## Rodando localmente
 
 ```bash
 npm install
-npm run dev
+npm run build          # gera dist/
+npm start              # backend + frontend em http://localhost:8787
 ```
 
-Abre em `http://localhost:5199`.
+Para desenvolvimento com hot-reload: `npm run dev:server` em um terminal e `npm run dev` em outro (o Vite faz proxy de `/api` para a porta 8787).
 
-## Build de produção
+## Variáveis de ambiente
 
-```bash
-npm run build   # gera dist/
-npm start       # serve dist/ na porta $PORT (padrão 3000)
-```
+No Railway: serviço → aba **Variables**. Todas são opcionais.
+
+### IA (Claude) — gera as respostas de verdade
+
+| Variável | Exemplo |
+|---|---|
+| `ANTHROPIC_API_KEY` | `sk-ant-...` (crie em console.anthropic.com) |
+| `ATENDO_MODEL` | opcional, padrão `claude-opus-4-8` |
+
+Sem a chave, as respostas são geradas por regras simples baseadas nas políticas cadastradas.
+
+### E-mail de atendimento — leitura (IMAP) e envio (SMTP)
+
+| Variável | Exemplo |
+|---|---|
+| `EMAIL_PROVIDER` | `gmail`, `outlook`, `yahoo` ou `icloud` |
+| `EMAIL_USER` | `suporte@sualoja.com` |
+| `EMAIL_PASS` | senha de app (Gmail: myaccount.google.com → Segurança → Senhas de app) |
+
+Domínio próprio: em vez de `EMAIL_PROVIDER`, use `EMAIL_IMAP_HOST`, `EMAIL_SMTP_HOST` e, se necessário, `EMAIL_IMAP_PORT` (padrão 993) e `EMAIL_SMTP_PORT` (padrão 465).
+
+Com o e-mail configurado, o servidor lê a caixa a cada 60 segundos, transforma cada e-mail não lido em ticket com resposta pronta, e envia as respostas aprovadas de verdade.
+
+### Shopify — pedidos e rastreio reais
+
+| Variável | Exemplo |
+|---|---|
+| `SHOPIFY_STORE` | `sualoja.myshopify.com` |
+| `SHOPIFY_ADMIN_TOKEN` | `shpat_...` |
+
+Para obter o token: admin da loja → **Configurações → Apps e canais de venda → Desenvolver apps → Criar app**, permissão de leitura em Orders e Customers, instalar e copiar o Admin API access token.
+
+### Persistência
+
+| Variável | Exemplo |
+|---|---|
+| `DATA_DIR` | `/data` |
+
+No Railway, crie um **Volume** montado em `/data` e defina `DATA_DIR=/data` — sem isso, tickets e configurações são zerados a cada deploy.
+
+## Como funciona o fluxo
+
+1. E-mail novo chega (IMAP real ou demonstração) → classificado como spam ou solicitação de cliente
+2. O Claude lê o e-mail + o pedido do cliente na Shopify + suas políticas/FAQs e escreve a resposta no idioma do cliente
+3. Reembolsos, casos sensíveis e baixa confiança vão para **Atendimento humano**; o resto vai para **Aprovações**
+4. Com a automação ligada, respostas confiáveis são enviadas sozinhas após o atraso configurado (contador ao vivo)
+5. A **Base de Conhecimento** é a fonte de verdade: o que não está lá nunca é prometido ao cliente
 
 ## Deploy no Railway
 
-O `railway.json` já está configurado: build com `npm run build`, start com `npm start`. O Railway injeta `$PORT` automaticamente. Basta conectar o repositório e fazer deploy — nenhuma variável de ambiente é necessária.
-
-## Como funciona
-
-O botão **Sincronizar** traz e-mails de demonstração em seis idiomas. Cada um é classificado (rastreio, troca, reembolso, produto, entrega) e recebe uma resposta gerada a partir das políticas cadastradas e do pedido do cliente:
-
-- Reembolsos e casos de baixa confiança vão para **Atendimento humano**
-- O restante vai para **Aprovações**, para você revisar e enviar
-- Com a automação ligada, respostas confiáveis saem sozinhas após o atraso configurado, com contador regressivo ao vivo
-
-A **Base de Conhecimento** é a fonte de verdade: o que não estiver cadastrado lá nunca é prometido ao cliente.
-
-## Estado atual
-
-As conexões de e-mail e Shopify são simuladas — nenhuma senha é pedida e nenhum e-mail real é enviado. Conectar contas de verdade exigiria um backend com OAuth.
-
-## Stack
-
-React 19, TypeScript, Vite, React Router, lucide-react.
+O `railway.json` já configura build (`npm run build`) e start (`npm start`). Conecte o repositório, adicione as variáveis desejadas e o volume, e faça deploy.

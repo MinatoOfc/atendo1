@@ -89,7 +89,9 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           <div className="row gap-8 mb-12">
             <Sparkles size={15} color="var(--purple)" />
             <span className="h3" style={{ color: 'var(--purple)' }}>Resposta sugerida</span>
-            <span className="muted-sm">gerada a partir das suas políticas e do pedido</span>
+            <span className="muted-sm">
+              {t.geradoPorIA ? 'gerada pelo Claude a partir das suas políticas e do pedido' : 'gerada por regras — conecte a IA nas Configurações'}
+            </span>
           </div>
           <textarea value={texto} onChange={e => { setTexto(e.target.value); editarRascunho(t.id, e.target.value) }} />
           <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
