@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   Home, Inbox, Send, CheckSquare, Users, BookOpen, Shield, Trash2,
   Package, Truck, Tag, TrendingUp, HelpCircle, MessageSquare, Settings,
-  PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone, Moon, Sun,
+  PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone, Moon, Sun, Store, Plus,
 } from 'lucide-react'
 import { useStore } from '../store'
 import ComposeModal from './ComposeModal'
@@ -15,8 +15,54 @@ const titulos: Record<string, string> = {
   '/produtos': 'Produtos', '/ganhos': 'Ganhos', '/configuracoes': 'Configurações',
 }
 
+function SeletorLoja() {
+  const { lojas, lojasVisiveis, lojaAtiva, setLojaAtiva, atualizarLoja, config } = useStore()
+  const [aberto, setAberto] = useState(false)
+
+  const rotulo = lojaAtiva === 'todas'
+    ? (lojasVisiveis.length > 1 ? 'Todas as lojas' : lojasVisiveis[0]?.nome ?? config.nomeLoja)
+    : lojas.find(l => l.id === lojaAtiva)?.nome ?? config.nomeLoja
+  const loja2 = lojas.find(l => l.id === 'loja2')
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="sidebar-account" style={{ width: '100%', textAlign: 'left' }} onClick={() => setAberto(a => !a)}>
+        <div className="avatar">{(rotulo[0] ?? 'A').toUpperCase()}</div>
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rotulo}</span>
+        <ChevronDown size={14} color="var(--text-3)" style={{ transform: aberto ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }} />
+      </button>
+      {aberto && (
+        <div className="card" style={{
+          position: 'absolute', top: '100%', left: 4, right: 4, zIndex: 30,
+          padding: 6, boxShadow: 'var(--shadow)',
+        }}>
+          {lojasVisiveis.length > 1 && (
+            <button className={'nav-item' + (lojaAtiva === 'todas' ? ' active' : '')}
+              onClick={() => { setLojaAtiva('todas'); setAberto(false) }}>
+              <Store /><span>Todas as lojas</span>
+            </button>
+          )}
+          {lojasVisiveis.map(l => (
+            <button key={l.id} className={'nav-item' + (lojaAtiva === l.id ? ' active' : '')}
+              onClick={() => { setLojaAtiva(l.id); setAberto(false) }}>
+              <Store /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.nome}</span>
+              {(l.email.configurado || l.shopify.conectada) && <span className="badge-count" title="Integrações conectadas">●</span>}
+            </button>
+          ))}
+          {loja2 && !loja2.ativa && (
+            <button className="nav-item" style={{ color: 'var(--purple)' }}
+              onClick={() => { atualizarLoja('loja2', { ativa: true }); setLojaAtiva('loja2'); setAberto(false) }}>
+              <Plus /><span>Adicionar segunda loja</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Layout() {
-  const { config, naoLidos, aguardandoAprovacao, casosHumanos, sincronizar } = useStore()
+  const { naoLidos, aguardandoAprovacao, casosHumanos, sincronizar } = useStore()
   const loc = useLocation()
   const [compor, setCompor] = useState(false)
   const [girando, setGirando] = useState(false)
@@ -51,11 +97,7 @@ export default function Layout() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="sidebar-account">
-          <div className="avatar">A</div>
-          <span style={{ flex: 1 }}>{config.nomeLoja}</span>
-          <ChevronDown size={14} color="var(--text-3)" />
-        </div>
+        <SeletorLoja />
 
         <div className="sidebar-label">Atendimento</div>
         {item('/', <Home />, 'Início')}

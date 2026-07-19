@@ -7,16 +7,11 @@ import {
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
 import { processarEmail, iaConfigurada, testarIA, statusIA, traduzirMensagens } from './ai.js'
-import {
-  emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal,
-  verificarConexao, verificarEnvio, diagnosticar, statusEmail,
-  envioPorApi, enderecoRemetente,
-} from './mail.js'
+import { contas, contaDaLoja, algumEmailConfigurado, envioPorApi } from './mail.js'
 import crypto from 'crypto'
 import {
-  buscarPedidosShopify, buscarProdutosShopify, testarShopify, statusShopify,
-  oauthDisponivel, shopifyPronta, carregarSessao,
-  urlInstalacao, hmacValido, trocarCodigoPorToken,
+  buscarPedidosShopify, buscarProdutosShopify, testarShopify,
+  oauthDisponivel, conexaoDaLoja, urlInstalacao, hmacValido, trocarCodigoPorToken,
 } from './shopify.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -26,42 +21,77 @@ app.use(express.json({ limit: '1mb' }))
 
 let state = carregar()
 const persistir = () => salvar(state)
-carregarSessao(state.shopify)
 
 // Nonces de OAuth em memória (curta duração, uso único)
 const noncesOAuth = new Map()
 const baseUrl = req => (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '')
 
+/* ---------------- Lojas ---------------- */
+
+// Status da Shopify por loja, em memória (nunca contém o token)
+const statusShopifyPorLoja = {}
+
+const conexaoLoja = lojaId => {
+  const i = state.lojas.findIndex(l => l.id === lojaId)
+  return i < 0 ? null : conexaoDaLoja(state.lojas[i], i)
+}
+
+function algumaShopify() {
+  return state.lojas.some((l, i) => conexaoDaLoja(l, i))
+}
+
 /* ---------------- Visão para o frontend ---------------- */
 
-const statusEmailCompleto = () => ({
-  ...statusEmail,
-  envioPorApi,
-  remetente: enderecoRemetente,
-})
+function visaoLojas() {
+  return state.lojas.map((l, i) => {
+    const conta = contas[i]
+    const cx = conexaoDaLoja(l, i)
+    return {
+      id: l.id,
+      nome: l.nome,
+      ativa: l.ativa !== false,
+      moeda: l.moeda || 'EUR',
+      email: {
+        configurado: conta?.configurado ?? false,
+        endereco: conta?.endereco ?? null,
+        status: conta ? { ...conta.status, envioPorApi, remetente: conta.remetente } : null,
+      },
+      shopify: {
+        conectada: !!cx,
+        dominio: cx?.loja ?? null,
+        modo: cx?.modo ?? null,
+        status: statusShopifyPorLoja[l.id] ?? null,
+      },
+    }
+  })
+}
 
 function visao() {
+  const conta1 = contas[0]
+  const loja1 = state.lojas[0]
   return {
     tickets: state.tickets,
     politicas: state.politicas,
     faqs: state.faqs,
     pedidos: state.pedidos,
     produtos: state.produtos ?? [],
-    moeda: state.moedaLoja || 'EUR',
+    moeda: loja1?.moeda || 'EUR',
+    lojas: visaoLojas(),
     config: {
       ...state.config,
+      nomeLoja: loja1?.nome ?? state.config.nomeLoja,
       // integrações reais têm precedência sobre as conexões de demonstração
-      emailConectado: enderecoEmail ?? state.config.emailConectado,
-      shopifyConectada: shopifyPronta() || state.config.shopifyConectada,
+      emailConectado: conta1?.endereco ?? state.config.emailConectado,
+      shopifyConectada: algumaShopify() || state.config.shopifyConectada,
     },
     integracoes: {
-      email: emailConfigurado,
-      shopify: shopifyPronta(),
+      email: algumEmailConfigurado,
+      shopify: algumaShopify(),
       shopifyOauth: oauthDisponivel,
       ia: iaConfigurada,
-      emailStatus: statusEmailCompleto(),
+      emailStatus: conta1 ? { ...conta1.status, envioPorApi, remetente: conta1.remetente } : null,
       iaStatus: { ...statusIA },
-      shopifyStatus: { ...statusShopify },
+      shopifyStatus: statusShopifyPorLoja.loja1 ?? { ok: null, erro: null, verificadoEm: null },
     },
   }
 }
@@ -95,9 +125,9 @@ function aplicarResultado(t, r) {
   }
 }
 
-async function criarTicket({ nome, de, assunto, corpo, data, messageId }) {
+async function criarTicket({ nome, de, assunto, corpo, data, messageId }, lojaId = 'loja1') {
   const base = {
-    id: uid(), nome, de, assunto, corpo,
+    id: uid(), nome, de, assunto, corpo, lojaId,
     data: data || new Date().toISOString(),
     lido: false, origem: 'cliente',
     categoria: classificarLocal(assunto + ' ' + corpo),
@@ -126,9 +156,10 @@ async function criarTicket({ nome, de, assunto, corpo, data, messageId }) {
 const normalizarAssunto = s =>
   String(s || '').replace(/^\s*((re|fwd?|enc|aw|sv)\s*:\s*)+/i, '').trim().toLowerCase()
 
-function acharConversa(de, assunto) {
+function acharConversa(de, assunto, lojaId) {
   const alvo = normalizarAssunto(assunto)
   return state.tickets.find(t =>
+    (t.lojaId ?? 'loja1') === lojaId &&
     t.de.toLowerCase() === de.toLowerCase() &&
     normalizarAssunto(t.assunto) === alvo &&
     !['spam', 'lixeira'].includes(t.status))
@@ -176,25 +207,36 @@ async function sincronizar() {
   try {
     let novos = 0
 
-    // Pedidos e catálogo reais da Shopify
-    if (shopifyPronta()) {
-      const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
-      if (pedidos) state.pedidos = pedidos
-      if (produtos) state.produtos = produtos
+    // Pedidos e catálogo reais da Shopify, loja a loja
+    for (const [i, loja] of state.lojas.entries()) {
+      const cx = conexaoDaLoja(loja, i)
+      if (!cx) continue
+      const [rp, rprod] = await Promise.all([buscarPedidosShopify(cx), buscarProdutosShopify(cx)])
+      if (rp.pedidos) {
+        const meus = rp.pedidos.map(p => ({ ...p, lojaId: loja.id }))
+        state.pedidos = [...state.pedidos.filter(p => (p.lojaId ?? 'loja1') !== loja.id), ...meus]
+      }
+      if (rprod.produtos) {
+        const meus = rprod.produtos.map(p => ({ ...p, lojaId: loja.id }))
+        state.produtos = [...(state.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== loja.id), ...meus]
+      }
     }
 
-    if (emailConfigurado) {
-      // E-mails reais via IMAP
-      const emails = await buscarNovosEmails(state.emailsProcessados)
-      for (const e of emails) {
-        // resposta de uma conversa existente entra no mesmo ticket
-        const conversa = acharConversa(e.de, e.assunto)
-        if (conversa) {
-          await anexarNaConversa(conversa, e)
-        } else {
-          state.tickets.unshift(await criarTicket(e))
+    if (algumEmailConfigurado) {
+      // E-mails reais via IMAP — cada conta alimenta a caixa unificada com a sua loja
+      for (const conta of contas) {
+        if (!conta.configurado) continue
+        const emails = await conta.buscarNovos(state.emailsProcessados)
+        for (const e of emails) {
+          // resposta de uma conversa existente entra no mesmo ticket
+          const conversa = acharConversa(e.de, e.assunto, conta.id)
+          if (conversa) {
+            await anexarNaConversa(conversa, e)
+          } else {
+            state.tickets.unshift(await criarTicket(e, conta.id))
+          }
+          novos++
         }
-        novos++
       }
     } else {
       // Modo demonstração
@@ -227,9 +269,11 @@ async function sincronizar() {
 /* ---------------- Envio ---------------- */
 
 async function enviarResposta(ticket, texto) {
-  // só envia e-mail de verdade quando a caixa real está conectada
-  if (emailConfigurado) {
-    await enviarEmailReal({ para: ticket.de, assunto: ticket.assunto, corpo: texto })
+  // envia pela conta da loja dona do ticket (ou pela primeira configurada)
+  const conta = contaDaLoja(ticket.lojaId ?? 'loja1')
+  const canal = conta.configurado || envioPorApi ? conta : contas.find(c => c.configurado)
+  if (canal) {
+    await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto })
   }
   ticket.status = 'enviado'
   ticket.resposta = texto
@@ -278,7 +322,7 @@ setInterval(async () => {
 }, 5000)
 
 // Sincronização periódica quando há caixa real conectada
-if (emailConfigurado) {
+if (algumEmailConfigurado) {
   setInterval(() => sincronizar().catch(err => console.error('[sync]', err.message)), 60_000)
 }
 
@@ -297,10 +341,17 @@ app.post('/api/sync', async (req, res) => {
 })
 
 app.post('/api/email/testar', async (req, res) => {
-  // Leitura e envio são canais separados: um pode funcionar sem o outro
-  await verificarConexao()
-  statusEmail.envio = await verificarEnvio()
-  res.json({ status: statusEmailCompleto(), state: visao() })
+  // Leitura e envio são canais separados: um pode funcionar sem o outro.
+  // Testa a conta pedida (?loja=loja2) ou todas as configuradas.
+  const alvo = req.query.loja
+  for (const conta of contas) {
+    if (alvo && conta.id !== alvo) continue
+    if (!conta.configurado && !envioPorApi) continue
+    await conta.verificarConexao()
+    conta.status.envio = await conta.verificarEnvio()
+  }
+  const conta1 = contas.find(c => c.id === (alvo || 'loja1')) ?? contas[0]
+  res.json({ status: { ...conta1.status, envioPorApi, remetente: conta1.remetente }, state: visao() })
 })
 
 app.post('/api/ia/testar', async (req, res) => {
@@ -310,12 +361,34 @@ app.post('/api/ia/testar', async (req, res) => {
 
 /* ---- OAuth da Shopify ---- */
 
+// Sincroniza pedidos, produtos e moeda de uma loja específica
+async function sincronizarLoja(lojaId) {
+  const loja = state.lojas.find(l => l.id === lojaId)
+  const cx = conexaoLoja(lojaId)
+  if (!loja || !cx) return { ok: false, erro: 'Shopify não conectada para esta loja.' }
+  const t = await testarShopify(cx)
+  statusShopifyPorLoja[lojaId] = { ok: t.ok, erro: t.erro, verificadoEm: t.verificadoEm, loja: cx.loja, modo: cx.modo }
+  if (!t.ok) return t
+  if (t.moeda) loja.moeda = t.moeda
+  const [rp, rprod] = await Promise.all([buscarPedidosShopify(cx), buscarProdutosShopify(cx)])
+  if (rp.pedidos) {
+    state.pedidos = [...state.pedidos.filter(p => (p.lojaId ?? 'loja1') !== lojaId), ...rp.pedidos.map(p => ({ ...p, lojaId }))]
+  }
+  if (rprod.produtos) {
+    state.produtos = [...(state.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== lojaId), ...rprod.produtos.map(p => ({ ...p, lojaId }))]
+  }
+  statusShopifyPorLoja[lojaId].pedidos = state.pedidos.filter(p => p.lojaId === lojaId).length
+  persistir()
+  return t
+}
+
 app.get('/api/shopify/instalar', (req, res) => {
   try {
+    const lojaId = state.lojas.some(l => l.id === req.query.lojaId) ? req.query.lojaId : 'loja1'
     const nonce = crypto.randomBytes(16).toString('hex')
     const redirectUri = `${baseUrl(req)}/api/shopify/callback`
     const { url, loja } = urlInstalacao(req.query.loja, redirectUri, nonce)
-    noncesOAuth.set(nonce, { loja, criadoEm: Date.now() })
+    noncesOAuth.set(nonce, { loja, lojaId, criadoEm: Date.now() })
     // limpa nonces com mais de 10 minutos
     for (const [k, v] of noncesOAuth) if (Date.now() - v.criadoEm > 600_000) noncesOAuth.delete(k)
     res.redirect(url)
@@ -336,14 +409,12 @@ app.get('/api/shopify/callback', async (req, res) => {
 
   try {
     const { loja, token } = await trocarCodigoPorToken(shop, code)
-    state.shopify = { loja, token, instaladoEm: new Date().toISOString() }
-    const t = await testarShopify()
-    if (t.moeda) state.moedaLoja = t.moeda
-    const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
-    if (pedidos) state.pedidos = pedidos
-    if (produtos) state.produtos = produtos
+    const alvo = state.lojas.find(l => l.id === pendente.lojaId) ?? state.lojas[0]
+    alvo.shopify = { loja, token, instaladoEm: new Date().toISOString() }
+    alvo.ativa = true
     persistir()
-    console.log(`[shopify] conectada via OAuth: ${loja} (${state.pedidos.length} pedidos, ${state.produtos.length} produtos)`)
+    await sincronizarLoja(alvo.id)
+    console.log(`[shopify] ${alvo.id} conectada via OAuth: ${loja}`)
     res.redirect('/#/configuracoes')
   } catch (err) {
     console.error('[shopify] OAuth falhou:', err.message)
@@ -352,27 +423,36 @@ app.get('/api/shopify/callback', async (req, res) => {
 })
 
 app.post('/api/shopify/desconectar', (req, res) => {
-  state.shopify = { loja: null, token: null, instaladoEm: null }
-  carregarSessao(null)
-  state.pedidos = []
+  const lojaId = req.body?.lojaId ?? 'loja1'
+  const loja = state.lojas.find(l => l.id === lojaId)
+  if (loja) {
+    loja.shopify = { loja: null, token: null, instaladoEm: null }
+    state.pedidos = state.pedidos.filter(p => (p.lojaId ?? 'loja1') !== lojaId)
+    state.produtos = (state.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== lojaId)
+    delete statusShopifyPorLoja[lojaId]
+  }
   persistir(); ok(res)
 })
 
 app.post('/api/shopify/testar', async (req, res) => {
-  const s = await testarShopify()
-  if (s.ok) {
-    if (s.moeda) state.moedaLoja = s.moeda
-    const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
-    if (pedidos) state.pedidos = pedidos
-    if (produtos) state.produtos = produtos
-    persistir()
-  }
-  res.json({ status: { ...statusShopify }, state: visao() })
+  const lojaId = req.query.lojaId ?? req.body?.lojaId ?? 'loja1'
+  const s = await sincronizarLoja(lojaId)
+  res.json({ status: statusShopifyPorLoja[lojaId] ?? s, state: visao() })
+})
+
+app.post('/api/lojas', (req, res) => {
+  const { id, nome, ativa } = req.body ?? {}
+  const loja = state.lojas.find(l => l.id === id)
+  if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao() })
+  if (typeof nome === 'string' && nome.trim()) loja.nome = nome.trim()
+  if (typeof ativa === 'boolean' && loja.id !== 'loja1') loja.ativa = ativa
+  persistir(); ok(res)
 })
 
 app.post('/api/email/diagnostico', async (req, res) => {
   try {
-    const d = await diagnosticar(state.emailsProcessados)
+    const conta = contaDaLoja(req.query.loja ?? 'loja1')
+    const d = await conta.diagnosticar(state.emailsProcessados)
     res.json({ diagnostico: d, state: visao() })
   } catch (err) {
     res.json({ diagnostico: { ok: false, erro: err.message }, state: visao() })
@@ -457,9 +537,13 @@ app.post('/api/compose', async (req, res) => {
   const { para, assunto, corpo } = req.body
   if (!para || !assunto) return res.status(400).json({ erro: 'para e assunto são obrigatórios', state: visao() })
   try {
-    if (emailConfigurado) await enviarEmailReal({ para, assunto: assunto.replace(/^Re: /, ''), corpo: corpo || '' })
+    const lojaId = state.lojas.some(l => l.id === req.body.lojaId) ? req.body.lojaId : 'loja1'
+    const conta = contaDaLoja(lojaId)
+    if (conta.configurado || envioPorApi) {
+      await conta.enviar({ para, assunto: assunto.replace(/^Re: /, ''), corpo: corpo || '' })
+    }
     state.tickets.unshift({
-      id: uid(), nome: para.split('@')[0], de: para, assunto, corpo: '',
+      id: uid(), nome: para.split('@')[0], de: para, assunto, corpo: '', lojaId,
       data: new Date().toISOString(), lido: true, origem: 'cliente',
       categoria: 'outro', idioma: 'pt', status: 'enviado',
       resposta: corpo || '', respondidoEm: new Date().toISOString(),
@@ -513,18 +597,22 @@ app.post('/api/faqs/biblioteca', (req, res) => {
 /* ---- Config ---- */
 
 app.post('/api/config', (req, res) => {
-  const permitidos = ['nomeLoja', 'assinatura', 'atrasoMinutos', 'automacaoAtiva', 'tomDetectado', 'emailConectado', 'shopifyConectada', 'escalarSensiveis', 'confiancaMinima']
+  const permitidos = ['assinatura', 'atrasoMinutos', 'automacaoAtiva', 'tomDetectado', 'emailConectado', 'shopifyConectada', 'escalarSensiveis', 'confiancaMinima']
   for (const k of permitidos) {
     if (k in req.body) state.config[k] = req.body[k]
+  }
+  // o nome da loja agora vive na loja 1 (compatibilidade com a tela antiga)
+  if (typeof req.body.nomeLoja === 'string' && req.body.nomeLoja.trim()) {
+    state.lojas[0].nome = req.body.nomeLoja.trim()
   }
   persistir(); ok(res)
 })
 
 app.post('/api/shopify/demo', (req, res) => {
   // conexão de demonstração — só quando a Shopify real não está configurada
-  if (!shopifyPronta()) {
+  if (!algumaShopify()) {
     state.config.shopifyConectada = true
-    state.pedidos = demoPedidos
+    state.pedidos = demoPedidos.map(p => ({ ...p, lojaId: 'loja1' }))
   }
   persistir(); ok(res)
 })
@@ -543,8 +631,10 @@ app.get(/^(?!\/api).*/, (req, res) => res.sendFile(path.join(dist, 'index.html')
 const PORT = Number(process.env.PORT || 8787)
 app.listen(PORT, async () => {
   console.log(`atendo servidor na porta ${PORT}`)
-  console.log(`  e-mail:  ${emailConfigurado ? enderecoEmail : 'não configurado (modo demo)'}`)
-  console.log(`  shopify: ${shopifyPronta() ? `${statusShopify.loja}` : oauthDisponivel ? 'aguardando instalação (OAuth pronto)' : 'não configurada (modo demo)'}`)
+  for (const [i, conta] of contas.entries()) {
+    console.log(`  e-mail ${conta.id}: ${conta.configurado ? conta.endereco : i === 0 ? 'não configurado (modo demo)' : 'não configurado'}`)
+  }
+  console.log(`  oauth shopify: ${oauthDisponivel ? 'pronto' : 'não configurado'}`)
   console.log(`  ia:      ${iaConfigurada ? 'Claude conectado' : 'não configurada (respostas por regras)'}`)
 
   if (iaConfigurada) {
@@ -552,27 +642,24 @@ app.listen(PORT, async () => {
     console.log(t.ok ? `  IA OK — usando ${t.modelo}` : `  IA FALHOU: ${t.erro}`)
   }
 
-  if (shopifyPronta()) {
-    const t = await testarShopify()
+  for (const loja of state.lojas) {
+    if (!conexaoLoja(loja.id)) continue
+    const t = await sincronizarLoja(loja.id)
     if (t.ok) {
-      if (t.moeda) state.moedaLoja = t.moeda
-      const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
-      if (pedidos) state.pedidos = pedidos
-      if (produtos) state.produtos = produtos
-      persistir()
-      console.log(`  Shopify OK — ${state.pedidos.length} pedidos e ${state.produtos.length} produtos de ${t.loja}`)
+      console.log(`  Shopify OK (${loja.id}) — ${state.pedidos.filter(p => p.lojaId === loja.id).length} pedidos de ${statusShopifyPorLoja[loja.id]?.loja}`)
     } else {
-      console.error(`  SHOPIFY FALHOU: ${t.erro}`)
+      console.error(`  SHOPIFY FALHOU (${loja.id}): ${t.erro}`)
     }
   }
 
-  if (emailConfigurado) {
-    const s = await verificarConexao()
+  for (const conta of contas) {
+    if (!conta.configurado) continue
+    const s = await conta.verificarConexao()
     if (s.ok) {
-      console.log(`  login IMAP OK — lendo ${enderecoEmail} a cada 60 s`)
-      sincronizar().catch(err => console.error('[sync]', err.message))
+      console.log(`  login IMAP OK (${conta.id}) — lendo ${conta.endereco} a cada 60 s`)
     } else {
-      console.error(`  LOGIN IMAP FALHOU: ${s.erro}`)
+      console.error(`  LOGIN IMAP FALHOU (${conta.id}): ${s.erro}`)
     }
   }
+  if (algumEmailConfigurado) sincronizar().catch(err => console.error('[sync]', err.message))
 })

@@ -28,6 +28,7 @@ export interface Ticket {
   geradoPorIA?: boolean
   erroEnvio?: string
   tentativasEnvio?: number
+  lojaId?: string
   historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string; traducao?: string }[]
   resumoSituacao?: string
   custoIA?: number
@@ -41,13 +42,13 @@ export interface Faq { id: string; pergunta: string; resposta: string; ativa: bo
 export interface Produto {
   id: string; titulo: string; tipo: string; marca: string; tags: string[]
   precoMin: number; precoMax: number; estoque: number; ativo: boolean
-  variantes: string[]; url: string; descricao: string
+  variantes: string[]; url: string; descricao: string; lojaId?: string
 }
 
 export interface Pedido {
   id: string; numero: string; cliente: string; email: string; pais: string
   valor: number; status: 'aguardando' | 'transito' | 'entregue' | 'problema'
-  rastreio: string; criadoEm: string
+  rastreio: string; criadoEm: string; lojaId?: string
 }
 
 export interface Config {
@@ -82,6 +83,15 @@ export interface StatusShopify {
   ok: boolean | null; erro: string | null; verificadoEm: string | null
   loja?: string | null; pedidos?: number; modo?: 'token' | 'oauth' | null
 }
+
+export interface Loja {
+  id: string
+  nome: string
+  ativa: boolean
+  moeda: string
+  email: { configurado: boolean; endereco: string | null; status: StatusEmail | null }
+  shopify: { conectada: boolean; dominio: string | null; modo: 'token' | 'oauth' | null; status: StatusShopify | null }
+}
 export interface Integracoes {
   email: boolean; shopify: boolean; ia: boolean
   shopifyOauth: boolean
@@ -97,6 +107,7 @@ interface ServerState {
   pedidos: Pedido[]
   produtos: Produto[]
   moeda: string
+  lojas: Loja[]
   config: Config
   integracoes: Integracoes
 }
@@ -109,7 +120,7 @@ const configPadrao: Config = {
 }
 
 const estadoVazio: ServerState = {
-  tickets: [], politicas: [], faqs: [], pedidos: [], produtos: [], moeda: 'EUR',
+  tickets: [], politicas: [], faqs: [], pedidos: [], produtos: [], moeda: 'EUR', lojas: [],
   config: configPadrao,
   integracoes: {
     email: false, shopify: false, ia: false, shopifyOauth: false,
@@ -135,6 +146,11 @@ async function api(caminho: string, metodo = 'POST', body?: unknown): Promise<{ 
 interface Store extends ServerState {
   carregado: boolean
   tipsFechados: string[]
+  /** 'todas' ou o id da loja selecionada na seta do topo da barra lateral */
+  lojaAtiva: string
+  setLojaAtiva: (id: string) => void
+  lojasVisiveis: Loja[]
+  atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean }) => void
   naoLidos: number
   aguardandoAprovacao: Ticket[]
   casosHumanos: Ticket[]
@@ -158,11 +174,11 @@ interface Store extends ServerState {
   preencherPoliticas: () => void
   conectarShopify: () => void
   limparTudo: () => void
-  testarEmail: () => Promise<StatusEmail>
-  diagnosticarEmail: () => Promise<Diagnostico>
+  testarEmail: (lojaId?: string) => Promise<StatusEmail>
+  diagnosticarEmail: (lojaId?: string) => Promise<Diagnostico>
   testarIA: () => Promise<StatusIA>
-  testarShopify: () => Promise<StatusShopify>
-  desconectarShopify: () => void
+  testarShopify: (lojaId?: string) => Promise<StatusShopify>
+  desconectarShopify: (lojaId?: string) => void
   pausarIA: (id: string, pausar: boolean) => void
   traduzirTicket: (id: string) => Promise<boolean>
 }
@@ -178,6 +194,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [tipsFechados, setTipsFechados] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem(TIPS_KEY) ?? '[]') } catch { return [] }
   })
+  const [lojaAtiva, setLojaAtivaState] = useState<string>(() => localStorage.getItem('atendo-loja-ativa') ?? 'todas')
   const debounces = useRef<Record<string, number>>({})
 
   useEffect(() => { localStorage.setItem(TIPS_KEY, JSON.stringify(tipsFechados)) }, [tipsFechados])
@@ -193,13 +210,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => { ativo = false; clearInterval(i) }
   }, [])
 
-  const store = useMemo<Store>(() => ({
+  const store = useMemo<Store>(() => {
+    const lojasVisiveis = state.lojas.filter(l => l.ativa)
+    // Com uma loja específica selecionada, todas as listas do app são filtradas;
+    // em "todas as lojas" a caixa é unificada.
+    const daLoja = <T extends { lojaId?: string }>(x: T) =>
+      lojaAtiva === 'todas' || (x.lojaId ?? 'loja1') === lojaAtiva
+    const tickets = state.tickets.filter(daLoja)
+    const pedidos = state.pedidos.filter(daLoja)
+    const produtos = state.produtos.filter(daLoja)
+    const lojaSel = state.lojas.find(l => l.id === lojaAtiva)
+
+    return {
     ...state,
+    tickets,
+    pedidos,
+    produtos,
+    moeda: lojaSel?.moeda ?? state.moeda,
     carregado,
     tipsFechados,
-    naoLidos: state.tickets.filter(t => ['inbox', 'aprovacao', 'humano'].includes(t.status) && !t.lido).length,
-    aguardandoAprovacao: state.tickets.filter(t => t.status === 'aprovacao'),
-    casosHumanos: state.tickets.filter(t => t.status === 'humano'),
+    lojaAtiva,
+    lojasVisiveis,
+    setLojaAtiva: id => { setLojaAtivaState(id); localStorage.setItem('atendo-loja-ativa', id) },
+    atualizarLoja: (id, patch) => {
+      setState(s => ({ ...s, lojas: s.lojas.map(l => (l.id === id ? { ...l, ...patch } : l)) }))
+      api('/lojas', 'POST', { id, ...patch }).then(aplicar)
+    },
+    naoLidos: tickets.filter(t => ['inbox', 'aprovacao', 'humano'].includes(t.status) && !t.lido).length,
+    aguardandoAprovacao: tickets.filter(t => t.status === 'aprovacao'),
+    casosHumanos: tickets.filter(t => t.status === 'humano'),
 
     fecharTip: id => setTipsFechados(x => [...x, id]),
 
@@ -259,14 +298,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     conectarShopify: () => api('/shopify/demo').then(aplicar),
     limparTudo: () => api('/reset').then(aplicar),
 
-    testarEmail: async () => {
-      const r = (await api('/email/testar')) as { state?: ServerState; status: StatusEmail }
+    testarEmail: async (lojaId = 'loja1') => {
+      const r = (await api(`/email/testar?loja=${lojaId}`)) as { state?: ServerState; status: StatusEmail }
       aplicar(r)
       return r.status
     },
 
-    diagnosticarEmail: async () => {
-      const r = (await api('/email/diagnostico')) as { state?: ServerState; diagnostico: Diagnostico }
+    diagnosticarEmail: async (lojaId = 'loja1') => {
+      const r = (await api(`/email/diagnostico?loja=${lojaId}`)) as { state?: ServerState; diagnostico: Diagnostico }
       aplicar(r)
       return r.diagnostico
     },
@@ -277,13 +316,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return r.status
     },
 
-    testarShopify: async () => {
-      const r = (await api('/shopify/testar')) as { state?: ServerState; status: StatusShopify }
+    testarShopify: async (lojaId = 'loja1') => {
+      const r = (await api(`/shopify/testar?lojaId=${lojaId}`)) as { state?: ServerState; status: StatusShopify }
       aplicar(r)
       return r.status
     },
 
-    desconectarShopify: () => api('/shopify/desconectar').then(aplicar),
+    desconectarShopify: (lojaId = 'loja1') => api('/shopify/desconectar', 'POST', { lojaId }).then(aplicar),
 
     pausarIA: (id, pausar) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, iaPausada: pausar, enviaEm: pausar ? undefined : t.enviaEm } : t)) }))
@@ -296,7 +335,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       aplicar(r)
       return true
     },
-  }), [state, carregado, tipsFechados])
+    }
+  }, [state, carregado, tipsFechados, lojaAtiva])
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>
 }

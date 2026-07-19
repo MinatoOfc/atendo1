@@ -18,6 +18,15 @@ export const configPadrao = {
   assinatura: 'Equipe de atendimento',
 }
 
+export const lojaPadrao = (id, nome) => ({
+  id,
+  nome,
+  ativa: id === 'loja1',
+  moeda: 'EUR',
+  // Credencial obtida via OAuth da Shopify. NUNCA é enviada ao frontend.
+  shopify: { loja: null, token: null, instaladoEm: null },
+})
+
 export const estadoInicial = {
   tickets: [],
   politicas: [],
@@ -26,9 +35,7 @@ export const estadoInicial = {
   produtos: [],
   config: { ...configPadrao },
   emailsProcessados: [], // message-ids já transformados em ticket
-  moedaLoja: 'EUR', // moeda dos preços; atualizada pela Shopify quando conectada
-  // Credencial obtida via OAuth da Shopify. NUNCA é enviada ao frontend.
-  shopify: { loja: null, token: null, instaladoEm: null },
+  lojas: [lojaPadrao('loja1', 'minha loja'), lojaPadrao('loja2', 'segunda loja')],
 }
 
 export function carregar() {
@@ -41,7 +48,25 @@ export function carregar() {
   try {
     // remove BOM, que alguns editores adicionam e faz o JSON.parse falhar
     const s = JSON.parse(raw.replace(/^﻿/, ''))
-    return { ...estadoInicial, ...s, config: { ...configPadrao, ...s.config } }
+    const estado = { ...estadoInicial, ...s, config: { ...configPadrao, ...s.config } }
+
+    // Migração do formato de loja única para multi-loja: os dados antigos
+    // (shopify, moeda, nome) passam a pertencer à loja 1.
+    if (!Array.isArray(s.lojas) || !s.lojas.length) {
+      estado.lojas = [lojaPadrao('loja1', s.config?.nomeLoja || 'minha loja'), lojaPadrao('loja2', 'segunda loja')]
+      if (s.shopify?.token) estado.lojas[0].shopify = s.shopify
+      if (s.moedaLoja) estado.lojas[0].moeda = s.moedaLoja
+    } else {
+      estado.lojas = s.lojas.map((l, i) => ({ ...lojaPadrao(`loja${i + 1}`, l.nome || `loja ${i + 1}`), ...l }))
+      while (estado.lojas.length < 2) estado.lojas.push(lojaPadrao(`loja${estado.lojas.length + 1}`, 'segunda loja'))
+    }
+    delete estado.shopify
+    delete estado.moedaLoja
+    // todo ticket/pedido/produto antigo pertence à loja 1
+    for (const t of estado.tickets) if (!t.lojaId) t.lojaId = 'loja1'
+    for (const p of estado.pedidos) if (!p.lojaId) p.lojaId = 'loja1'
+    for (const p of estado.produtos ?? []) if (!p.lojaId) p.lojaId = 'loja1'
+    return estado
   } catch (err) {
     // Nunca descartar dados em silêncio: preserva o arquivo ilegível para inspeção
     const backup = `${FILE}.corrompido-${Date.now()}`

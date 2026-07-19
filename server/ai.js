@@ -112,12 +112,20 @@ function montarCatalogo(produtos, moeda) {
   return linhas.join('\n') + extra
 }
 
-export function montarSystem(state) {
+function lojaDoTicket(state, ticket) {
+  return (state.lojas ?? []).find(l => l.id === ticket?.lojaId) ?? state.lojas?.[0] ?? null
+}
+
+export function montarSystem(state, ticket) {
+  const loja = lojaDoTicket(state, ticket)
+  const nomeLoja = loja?.nome ?? state.config.nomeLoja
+  const moeda = loja?.moeda ?? 'EUR'
   const politicas = state.politicas.filter(p => p.ativa)
   const faqs = state.faqs.filter(f => f.ativa)
-  const produtos = state.produtos ?? []
+  // cada loja só enxerga o próprio catálogo
+  const produtos = (state.produtos ?? []).filter(p => !p.lojaId || !loja || p.lojaId === loja.id)
   return [
-    `Você é o atendimento ao cliente da loja "${state.config.nomeLoja}", um e-commerce.`,
+    `Você é o atendimento ao cliente da loja "${nomeLoja}", um e-commerce.`,
     `Sua tarefa: ler o e-mail do cliente, classificá-lo e escrever a resposta no idioma do cliente.`,
     ``,
     `Regras invioláveis:`,
@@ -147,15 +155,17 @@ export function montarSystem(state) {
     `FAQs:`,
     faqs.length ? faqs.map(f => `- P: ${f.pergunta}\n  R: ${f.resposta}`).join('\n') : '(nenhuma cadastrada)',
     ``,
-    `Catálogo de produtos da loja (preços em ${state.moedaLoja || 'EUR'}):`,
-    montarCatalogo(produtos, state.moedaLoja || 'EUR'),
+    `Catálogo de produtos da loja (preços em ${moeda}):`,
+    montarCatalogo(produtos, moeda),
   ].join('\n')
 }
 
 export async function processarEmailIA(state, ticket) {
   if (!client) return null
   const emailCliente = ticket.de.trim().toLowerCase()
+  const lojaTicket = lojaDoTicket(state, ticket)
   const pedidosCliente = state.pedidos
+    .filter(p => !p.lojaId || !lojaTicket || p.lojaId === lojaTicket.id)
     .filter(p => p.email && p.email.trim().toLowerCase() === emailCliente)
     .slice(0, 3)
   const historico = (ticket.historico ?? [])
@@ -181,7 +191,7 @@ export async function processarEmailIA(state, ticket) {
       model: MODEL,
       max_tokens: 1500,
       ...(suportaAdaptive ? { thinking: { type: 'adaptive' } } : {}),
-      system: montarSystem(state),
+      system: montarSystem(state, ticket),
       messages: [{ role: 'user', content: user }],
       output_config: { format: { type: 'json_schema', schema: SCHEMA } },
     })

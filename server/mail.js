@@ -12,274 +12,288 @@ const presets = {
   zoho: { imap: 'imap.zoho.com', smtp: 'smtp.zoho.com' },
 }
 
-const provider = (process.env.EMAIL_PROVIDER || '').trim().toLowerCase()
-const user = (process.env.EMAIL_USER || '').trim()
-// Senhas de app do Google são exibidas em blocos ("abcd efgh ijkl mnop") e quase
-// sempre chegam aqui com espaços; o servidor IMAP as rejeita nesse formato.
-const pass = (process.env.EMAIL_PASS || '').replace(/\s+/g, '')
-const imapHost = (process.env.EMAIL_IMAP_HOST || presets[provider]?.imap || '').trim()
-const smtpHost = (process.env.EMAIL_SMTP_HOST || presets[provider]?.smtp || '').trim()
-const imapPort = Number(process.env.EMAIL_IMAP_PORT || 993)
-const smtpPort = Number(process.env.EMAIL_SMTP_PORT || 465)
-// Janela de busca: e-mails mais antigos que isso são ignorados
-const diasJanela = Number(process.env.EMAIL_DIAS || 3)
 // Envio por API HTTP (porta 443), alternativa quando a hospedagem bloqueia SMTP
 const resendKey = (process.env.RESEND_API_KEY || '').trim()
-const remetente = (process.env.EMAIL_FROM || '').trim()
+export const envioPorApi = !!resendKey
+
+const diasJanela = Number(process.env.EMAIL_DIAS || 3)
 const MAX_POR_SYNC = 20
 
 // Marca as respostas que o próprio atendo envia, para nunca reprocessá-las
 const HEADER_AUTO = 'x-atendo-auto'
 
-export const emailConfigurado = !!(user && pass && imapHost && smtpHost)
-export const enderecoEmail = emailConfigurado ? user : null
-export const envioPorApi = !!resendKey
-export const enderecoRemetente = remetente || user
-
-// Estado da conexão, exposto na interface para não depender dos logs do servidor
-export const statusEmail = { ok: null, erro: null, verificadoEm: null }
-
-function traduzirErro(err) {
-  const m = String(err?.responseText || err?.message || err)
-  if (/AUTHENTICATION\s*FAILED|Invalid credentials|Username and Password not accepted|LOGIN\s*failed|AUTHENTICATE\s*failed|535|\bEAUTH\b/i.test(m)) {
-    if (provider === 'gmail' || /gmail|google/i.test(imapHost)) {
-      return 'O Gmail recusou o login. Use uma SENHA DE APP de 16 letras (não a senha normal da conta) — exige verificação em duas etapas ativa — e confirme que o IMAP está ligado em Gmail → Configurações → Encaminhamento e POP/IMAP.'
-    }
-    if (/hostinger|titan/i.test(provider) || /hostinger|titan/i.test(imapHost)) {
-      return `O servidor recusou o login de ${user}. Use a senha da CAIXA DE E-MAIL (a que você definiu ao criar a conta no hPanel), não a senha do painel da Hostinger. Se esqueceu, redefina em hPanel → E-mails → Contas de e-mail → Alterar senha. Confirme também que o endereço existe exatamente assim.`
-    }
-    return `Usuário ou senha recusados pelo servidor de e-mail (${user}). Confirme as credenciais e se o provedor exige senha de aplicativo.`
-  }
-  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) return `Servidor não encontrado (${imapHost}). Verifique EMAIL_PROVIDER ou EMAIL_IMAP_HOST.`
-  if (/ETIMEDOUT|ECONNREFUSED|ECONNRESET/i.test(m)) return `Sem conexão com ${imapHost}:${imapPort}. Verifique host e porta.`
-  if (/certificate|self.signed/i.test(m)) return 'Certificado TLS do servidor não pôde ser validado.'
-  return m.slice(0, 300)
-}
-
-function novoClienteImap() {
-  return new ImapFlow({
-    host: imapHost, port: imapPort, secure: true,
-    auth: { user, pass }, logger: false,
-  })
-}
-
-const desde = () => new Date(Date.now() - diasJanela * 24 * 3600_000)
-
-export async function verificarConexao() {
-  if (!emailConfigurado) {
-    Object.assign(statusEmail, { ok: null, erro: null, verificadoEm: null })
-    return statusEmail
-  }
-  const client = novoClienteImap()
-  try {
-    await client.connect()
-    await client.logout().catch(() => {})
-    Object.assign(statusEmail, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
-  } catch (err) {
-    Object.assign(statusEmail, { ok: false, erro: traduzirErro(err), verificadoEm: new Date().toISOString() })
-  }
-  return statusEmail
-}
-
 /**
- * Diagnóstico: mostra o que o app realmente enxerga na caixa de entrada,
- * e por que cada mensagem recente virou ou não virou ticket.
+ * Cada loja tem sua conta de e-mail, lida das variáveis de ambiente:
+ * loja 1 usa EMAIL_USER/EMAIL_PASS/..., loja 2 usa EMAIL2_USER/EMAIL2_PASS/...
  */
-export async function diagnosticar(jaProcessados = []) {
-  if (!emailConfigurado) return { ok: false, erro: 'E-mail não configurado.' }
-  const client = novoClienteImap()
-  try {
-    await client.connect()
-  } catch (err) {
-    const erro = traduzirErro(err)
-    Object.assign(statusEmail, { ok: false, erro, verificadoEm: new Date().toISOString() })
-    return { ok: false, erro }
-  }
-
-  const lock = await client.getMailboxLock('INBOX')
-  try {
-    const caixa = client.mailbox
-    const uids = await client.search({ since: desde() }, { uid: true })
-    const recentes = (uids || []).slice(-15).reverse()
-    const mensagens = []
-    for (const uid of recentes) {
-      const msg = await client.fetchOne(uid, { envelope: true, flags: true, headers: [HEADER_AUTO] }, { uid: true })
-      if (!msg?.envelope) continue
-      const de = msg.envelope.from?.[0]
-      const id = msg.envelope.messageId
-      const auto = String(msg.headers ?? '').toLowerCase().includes(HEADER_AUTO)
-      mensagens.push({
-        de: de?.address ?? '(sem remetente)',
-        assunto: msg.envelope.subject || '(sem assunto)',
-        data: msg.envelope.date?.toISOString?.() ?? null,
-        lido: !!msg.flags?.has?.('\\Seen'),
-        virouTicket: id ? jaProcessados.includes(id) : false,
-        respostaDoAtendo: auto,
-      })
-    }
-    Object.assign(statusEmail, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
-    return {
-      ok: true,
-      caixa: enderecoEmail,
-      totalNaCaixa: caixa?.exists ?? 0,
-      janelaDias: diasJanela,
-      encontradosNaJanela: (uids || []).length,
-      mensagens,
-    }
-  } finally {
-    lock.release()
-    await client.logout().catch(() => {})
+function lerConfig(sufixo) {
+  const env = k => (process.env[`EMAIL${sufixo}_${k}`] || '').trim()
+  const provider = env('PROVIDER').toLowerCase()
+  return {
+    provider,
+    user: env('USER'),
+    // Senhas de app do Google vêm em blocos com espaços; o IMAP as rejeita assim
+    pass: (process.env[`EMAIL${sufixo}_PASS`] || '').replace(/\s+/g, ''),
+    imapHost: env('IMAP_HOST') || presets[provider]?.imap || '',
+    smtpHost: env('SMTP_HOST') || presets[provider]?.smtp || '',
+    imapPort: Number(env('IMAP_PORT') || 993),
+    smtpPort: Number(env('SMTP_PORT') || 465),
+    from: env('FROM'), // remetente na Resend (domínio verificado)
   }
 }
 
-export async function buscarNovosEmails(jaProcessados) {
-  if (!emailConfigurado) return []
-  const client = novoClienteImap()
-  const novos = []
-  try {
-    await client.connect()
-  } catch (err) {
-    Object.assign(statusEmail, { ok: false, erro: traduzirErro(err), verificadoEm: new Date().toISOString() })
-    throw new Error(statusEmail.erro)
-  }
+function criarConta(id, sufixo) {
+  const cfg = lerConfig(sufixo)
+  const configurado = !!(cfg.user && cfg.pass && cfg.imapHost && cfg.smtpHost)
+  const status = { ok: null, erro: null, verificadoEm: null, envio: null }
+  const desde = () => new Date(Date.now() - diasJanela * 24 * 3600_000)
 
-  const lock = await client.getMailboxLock('INBOX')
-  try {
-    // Busca por data, não pelo flag de lido: um e-mail que você abriu no Gmail
-    // continua sendo um e-mail de cliente que precisa de resposta.
-    const uids = await client.search({ since: desde() }, { uid: true })
-    const recentes = (uids || []).slice(-MAX_POR_SYNC * 3).reverse()
-
-    for (const uid of recentes) {
-      if (novos.length >= MAX_POR_SYNC) break
-      const msg = await client.fetchOne(uid, { source: true }, { uid: true })
-      if (!msg?.source) continue
-      const parsed = await simpleParser(msg.source)
-      const id = parsed.messageId || `uid-${uid}-${parsed.date?.getTime()}`
-      if (jaProcessados.includes(id)) continue
-      // nunca reprocessa uma resposta enviada pelo próprio atendo
-      if (parsed.headers?.get?.(HEADER_AUTO)) continue
-      const remetente = parsed.from?.value?.[0]
-      if (!remetente?.address) continue
-
-      novos.push({
-        messageId: id,
-        nome: remetente.name || remetente.address.split('@')[0],
-        de: remetente.address,
-        assunto: parsed.subject || '(sem assunto)',
-        corpo: (parsed.text || '').trim().slice(0, 8000),
-        data: (parsed.date || new Date()).toISOString(),
-      })
-      await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true }).catch(() => {})
-    }
-    Object.assign(statusEmail, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
-  } finally {
-    lock.release()
-    await client.logout().catch(() => {})
-  }
-  return novos
-}
-
-let transporte = null
-function getTransporte() {
-  if (!transporte) {
-    transporte = nodemailer.createTransport({
-      host: smtpHost, port: smtpPort, secure: smtpPort === 465,
-      auth: { user, pass },
-      // Sem estes limites, uma porta bloqueada deixa o envio pendurado para sempre
-      connectionTimeout: 20_000,
-      greetingTimeout: 15_000,
-      socketTimeout: 30_000,
-    })
-  }
-  return transporte
-}
-
-/** Valida o envio (SMTP) separadamente da leitura (IMAP). */
-export async function verificarEnvio() {
-  if (envioPorApi) {
-    try {
-      const resp = await fetch('https://api.resend.com/domains', {
-        headers: { Authorization: `Bearer ${resendKey}` },
-      })
-      if ([400, 401, 403].includes(resp.status)) {
-        return { ok: false, erro: 'A Resend recusou a chave de API. Confira RESEND_API_KEY — ela começa com "re_" e é gerada em resend.com → API Keys.' }
+  function traduzirErro(err) {
+    const m = String(err?.responseText || err?.message || err)
+    if (/AUTHENTICATION\s*FAILED|Invalid credentials|Username and Password not accepted|LOGIN\s*failed|AUTHENTICATE\s*failed|535|\bEAUTH\b/i.test(m)) {
+      if (cfg.provider === 'gmail' || /gmail|google/i.test(cfg.imapHost)) {
+        return `O Gmail recusou o login de ${cfg.user}. Use uma SENHA DE APP de 16 letras (não a senha normal da conta) e confirme que o IMAP está ligado.`
       }
-      if (!resp.ok) return { ok: false, erro: `A Resend respondeu ${resp.status} ao validar a chave.` }
-      return { ok: true, erro: null, via: 'resend' }
-    } catch (err) {
-      return { ok: false, erro: `Não foi possível alcançar a Resend: ${err.message}` }
+      if (/hostinger|titan/i.test(cfg.provider) || /hostinger|titan/i.test(cfg.imapHost)) {
+        return `O servidor recusou o login de ${cfg.user}. Use a senha da CAIXA DE E-MAIL (definida no hPanel), não a senha do painel da Hostinger.`
+      }
+      return `Usuário ou senha recusados pelo servidor de e-mail (${cfg.user}).`
     }
+    if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) return `Servidor não encontrado (${cfg.imapHost}). Verifique EMAIL${sufixo}_PROVIDER ou EMAIL${sufixo}_IMAP_HOST.`
+    if (/ETIMEDOUT|ECONNREFUSED|ECONNRESET/i.test(m)) return `Sem conexão com ${cfg.imapHost}:${cfg.imapPort}.`
+    if (/certificate|self.signed/i.test(m)) return 'Certificado TLS do servidor não pôde ser validado.'
+    return m.slice(0, 300)
   }
-  if (!emailConfigurado) return { ok: null, erro: null }
-  try {
-    await getTransporte().verify()
-    return { ok: true, erro: null, via: 'smtp' }
-  } catch (err) {
-    return { ok: false, erro: traduzirErroEnvio(err) }
-  }
-}
 
-function traduzirErroEnvio(err) {
-  const m = String(err?.message || err)
-  const code = err?.code
-  if (/AUTHENTICATION\s*FAILED|Invalid login|535|\bEAUTH\b/i.test(m) || code === 'EAUTH') {
-    return `O servidor de envio recusou o login de ${user}. Confirme a senha da caixa de e-mail.`
+  function traduzirErroEnvio(err) {
+    const m = String(err?.message || err)
+    const code = err?.code
+    if (/AUTHENTICATION\s*FAILED|Invalid login|535|\bEAUTH\b/i.test(m) || code === 'EAUTH') {
+      return `O servidor de envio recusou o login de ${cfg.user}. Confirme a senha da caixa de e-mail.`
+    }
+    if (code === 'ETIMEDOUT' || code === 'ESOCKET' || code === 'ECONNREFUSED' || /timeout/i.test(m)) {
+      const alternativa = cfg.smtpPort === 465 ? 587 : 465
+      return `Não foi possível conectar em ${cfg.smtpHost}:${cfg.smtpPort}. `
+        + `Muitas hospedagens (Railway inclusive) bloqueiam a saída SMTP — se a porta ${alternativa} também falhar, o bloqueio é da hospedagem. `
+        + `Nesse caso, configure o envio por API definindo RESEND_API_KEY.`
+    }
+    if (code === 'EENVELOPE' || /recipient|sender|relay/i.test(m)) {
+      return `O servidor recusou o destinatário ou remetente: ${m.slice(0, 160)}`
+    }
+    return m.slice(0, 250)
   }
-  if (code === 'ETIMEDOUT' || code === 'ESOCKET' || code === 'ECONNREFUSED' || /timeout/i.test(m)) {
-    const alternativa = smtpPort === 465 ? 587 : 465
-    return `Não foi possível conectar em ${smtpHost}:${smtpPort}. `
-      + `Muitas hospedagens (Railway inclusive) bloqueiam a saída SMTP — se a porta ${alternativa} também falhar, o bloqueio é da hospedagem, não do seu e-mail. `
-      + `Nesse caso, configure o envio por API definindo RESEND_API_KEY (veja as Configurações).`
-  }
-  if (code === 'EENVELOPE' || /recipient|sender|relay/i.test(m)) {
-    return `O servidor recusou o destinatário ou remetente: ${m.slice(0, 160)}`
-  }
-  return m.slice(0, 250)
-}
 
-async function enviarPorApi({ para, assunto, corpo }) {
-  const resp = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: enderecoRemetente,
-      to: [para],
-      subject: assunto,
-      text: corpo,
-      reply_to: user,
-      headers: { 'X-Atendo-Auto': '1' },
-    }),
+  const novoClienteImap = () => new ImapFlow({
+    host: cfg.imapHost, port: cfg.imapPort, secure: true,
+    auth: { user: cfg.user, pass: cfg.pass }, logger: false,
   })
-  if (!resp.ok) {
-    const corpoErro = await resp.text().catch(() => '')
-    if (resp.status === 401 || resp.status === 403) {
-      throw new Error('A Resend recusou a chave de API. Confira RESEND_API_KEY.')
+
+  let transporte = null
+  function getTransporte() {
+    if (!transporte) {
+      transporte = nodemailer.createTransport({
+        host: cfg.smtpHost, port: cfg.smtpPort, secure: cfg.smtpPort === 465,
+        auth: { user: cfg.user, pass: cfg.pass },
+        // Sem estes limites, uma porta bloqueada deixa o envio pendurado para sempre
+        connectionTimeout: 20_000,
+        greetingTimeout: 15_000,
+        socketTimeout: 30_000,
+      })
     }
-    if (resp.status === 422 || /domain|from/i.test(corpoErro)) {
-      throw new Error(`A Resend recusou o remetente "${enderecoRemetente}". O domínio precisa estar verificado na Resend — ou use EMAIL_FROM com um endereço já verificado. Detalhe: ${corpoErro.slice(0, 160)}`)
-    }
-    throw new Error(`A Resend respondeu ${resp.status}: ${corpoErro.slice(0, 180)}`)
+    return transporte
   }
-  return true
-}
 
-export async function enviarEmailReal({ para, assunto, corpo }) {
-  if (!emailConfigurado && !envioPorApi) return false
-  const titulo = assunto.startsWith('Re:') ? assunto : `Re: ${assunto}`
+  async function verificarConexao() {
+    if (!configurado) {
+      Object.assign(status, { ok: null, erro: null, verificadoEm: null })
+      return status
+    }
+    const client = novoClienteImap()
+    try {
+      await client.connect()
+      await client.logout().catch(() => {})
+      Object.assign(status, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
+    } catch (err) {
+      Object.assign(status, { ok: false, erro: traduzirErro(err), verificadoEm: new Date().toISOString() })
+    }
+    return status
+  }
 
-  if (envioPorApi) return enviarPorApi({ para, assunto: titulo, corpo })
+  async function verificarEnvio() {
+    if (envioPorApi) {
+      try {
+        const resp = await fetch('https://api.resend.com/domains', {
+          headers: { Authorization: `Bearer ${resendKey}` },
+        })
+        if ([400, 401, 403].includes(resp.status)) {
+          return { ok: false, erro: 'A Resend recusou a chave de API. Confira RESEND_API_KEY.' }
+        }
+        if (!resp.ok) return { ok: false, erro: `A Resend respondeu ${resp.status} ao validar a chave.` }
+        return { ok: true, erro: null, via: 'resend' }
+      } catch (err) {
+        return { ok: false, erro: `Não foi possível alcançar a Resend: ${err.message}` }
+      }
+    }
+    if (!configurado) return { ok: null, erro: null }
+    try {
+      await getTransporte().verify()
+      return { ok: true, erro: null, via: 'smtp' }
+    } catch (err) {
+      return { ok: false, erro: traduzirErroEnvio(err) }
+    }
+  }
 
-  try {
-    await getTransporte().sendMail({
-      from: user,
-      to: para,
-      subject: titulo,
-      text: corpo,
-      headers: { 'X-Atendo-Auto': '1' },
+  async function diagnosticar(jaProcessados = []) {
+    if (!configurado) return { ok: false, erro: 'E-mail não configurado para esta loja.' }
+    const client = novoClienteImap()
+    try {
+      await client.connect()
+    } catch (err) {
+      const erro = traduzirErro(err)
+      Object.assign(status, { ok: false, erro, verificadoEm: new Date().toISOString() })
+      return { ok: false, erro }
+    }
+    const lock = await client.getMailboxLock('INBOX')
+    try {
+      const caixa = client.mailbox
+      const uids = await client.search({ since: desde() }, { uid: true })
+      const recentes = (uids || []).slice(-15).reverse()
+      const mensagens = []
+      for (const uid of recentes) {
+        const msg = await client.fetchOne(uid, { envelope: true, flags: true, headers: [HEADER_AUTO] }, { uid: true })
+        if (!msg?.envelope) continue
+        const de = msg.envelope.from?.[0]
+        const idMsg = msg.envelope.messageId
+        const auto = String(msg.headers ?? '').toLowerCase().includes(HEADER_AUTO)
+        mensagens.push({
+          de: de?.address ?? '(sem remetente)',
+          assunto: msg.envelope.subject || '(sem assunto)',
+          data: msg.envelope.date?.toISOString?.() ?? null,
+          lido: !!msg.flags?.has?.('\\Seen'),
+          virouTicket: idMsg ? jaProcessados.includes(idMsg) : false,
+          respostaDoAtendo: auto,
+        })
+      }
+      Object.assign(status, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
+      return {
+        ok: true,
+        caixa: cfg.user,
+        totalNaCaixa: caixa?.exists ?? 0,
+        janelaDias: diasJanela,
+        encontradosNaJanela: (uids || []).length,
+        mensagens,
+      }
+    } finally {
+      lock.release()
+      await client.logout().catch(() => {})
+    }
+  }
+
+  async function buscarNovos(jaProcessados) {
+    if (!configurado) return []
+    const client = novoClienteImap()
+    const novos = []
+    try {
+      await client.connect()
+    } catch (err) {
+      Object.assign(status, { ok: false, erro: traduzirErro(err), verificadoEm: new Date().toISOString() })
+      throw new Error(status.erro)
+    }
+    const lock = await client.getMailboxLock('INBOX')
+    try {
+      // Busca por data, não pelo flag de lido: um e-mail aberto no webmail
+      // continua sendo um e-mail de cliente que precisa de resposta.
+      const uids = await client.search({ since: desde() }, { uid: true })
+      const recentes = (uids || []).slice(-MAX_POR_SYNC * 3).reverse()
+      for (const uid of recentes) {
+        if (novos.length >= MAX_POR_SYNC) break
+        const msg = await client.fetchOne(uid, { source: true }, { uid: true })
+        if (!msg?.source) continue
+        const parsed = await simpleParser(msg.source)
+        const idMsg = parsed.messageId || `uid-${uid}-${parsed.date?.getTime()}`
+        if (jaProcessados.includes(idMsg)) continue
+        if (parsed.headers?.get?.(HEADER_AUTO)) continue // resposta do próprio atendo
+        const remetente = parsed.from?.value?.[0]
+        if (!remetente?.address) continue
+        novos.push({
+          messageId: idMsg,
+          nome: remetente.name || remetente.address.split('@')[0],
+          de: remetente.address,
+          assunto: parsed.subject || '(sem assunto)',
+          corpo: (parsed.text || '').trim().slice(0, 8000),
+          data: (parsed.date || new Date()).toISOString(),
+        })
+        await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true }).catch(() => {})
+      }
+      Object.assign(status, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
+    } finally {
+      lock.release()
+      await client.logout().catch(() => {})
+    }
+    return novos
+  }
+
+  async function enviarPorApiResend({ para, assunto, corpo }) {
+    const remetente = cfg.from || cfg.user
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: remetente,
+        to: [para],
+        subject: assunto,
+        text: corpo,
+        reply_to: cfg.user || remetente,
+        headers: { 'X-Atendo-Auto': '1' },
+      }),
     })
+    if (!resp.ok) {
+      const corpoErro = await resp.text().catch(() => '')
+      if (resp.status === 401 || resp.status === 403) {
+        throw new Error('A Resend recusou a chave de API. Confira RESEND_API_KEY.')
+      }
+      if (resp.status === 422 || /domain|from/i.test(corpoErro)) {
+        throw new Error(`A Resend recusou o remetente "${remetente}". O domínio precisa estar verificado na Resend — ou use EMAIL${sufixo}_FROM com um endereço verificado. Detalhe: ${corpoErro.slice(0, 160)}`)
+      }
+      throw new Error(`A Resend respondeu ${resp.status}: ${corpoErro.slice(0, 180)}`)
+    }
     return true
-  } catch (err) {
-    throw new Error(traduzirErroEnvio(err))
+  }
+
+  async function enviar({ para, assunto, corpo }) {
+    const podeApi = envioPorApi && (cfg.from || cfg.user)
+    if (!configurado && !podeApi) return false
+    const titulo = assunto.startsWith('Re:') ? assunto : `Re: ${assunto}`
+    if (podeApi) return enviarPorApiResend({ para, assunto: titulo, corpo })
+    try {
+      await getTransporte().sendMail({
+        from: cfg.user,
+        to: para,
+        subject: titulo,
+        text: corpo,
+        headers: { 'X-Atendo-Auto': '1' },
+      })
+      return true
+    } catch (err) {
+      throw new Error(traduzirErroEnvio(err))
+    }
+  }
+
+  return {
+    id,
+    configurado,
+    endereco: configurado ? cfg.user : null,
+    remetente: cfg.from || cfg.user || null,
+    status,
+    verificarConexao,
+    verificarEnvio,
+    diagnosticar,
+    buscarNovos,
+    enviar,
   }
 }
+
+// loja1 ← EMAIL_*, loja2 ← EMAIL2_*
+export const contas = [criarConta('loja1', ''), criarConta('loja2', '2')]
+export const contaDaLoja = lojaId => contas.find(c => c.id === lojaId) ?? contas[0]
+export const algumEmailConfigurado = contas.some(c => c.configurado)

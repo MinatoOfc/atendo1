@@ -20,6 +20,17 @@ npm start              # backend + frontend em http://localhost:8787
 
 Para desenvolvimento com hot-reload: `npm run dev:server` em um terminal e `npm run dev` em outro (o Vite faz proxy de `/api` para a porta 8787).
 
+## Duas lojas
+
+O atendo suporta duas lojas ao mesmo tempo, com **caixa de entrada unificada**: os e-mails das duas caem juntos, cada ticket com a etiqueta da sua loja, e a seta no topo da barra lateral alterna entre "Todas as lojas", loja 1 e loja 2 — o filtro vale para caixa, pedidos, produtos e configurações.
+
+- **Loja 1** usa as variáveis normais (`EMAIL_USER`, `EMAIL_PASS`, ...)
+- **Loja 2** usa as mesmas variáveis com o prefixo `EMAIL2_` (`EMAIL2_PROVIDER`, `EMAIL2_USER`, `EMAIL2_PASS`, `EMAIL2_FROM`, ...)
+- Cada loja conecta sua própria Shopify pelo botão em Configurações (o app da Shopify precisa estar distribuído para as duas lojas)
+- A IA responde cada ticket com o catálogo, os pedidos, o nome e a moeda da loja dona dele
+
+Para ativar a segunda loja: seta no topo da barra lateral → **Adicionar segunda loja**.
+
 ## Variáveis de ambiente
 
 No Railway: serviço → aba **Variables**. Todas são opcionais.

@@ -1,9 +1,5 @@
 import crypto from 'crypto'
 
-const lojaBruta = (process.env.SHOPIFY_STORE || '').trim()
-// Token fixo (apps personalizados antigos). Lojas migradas para o Dev Dashboard
-// não têm mais essa opção e usam o fluxo OAuth abaixo.
-const tokenFixo = (process.env.SHOPIFY_ADMIN_TOKEN || '').trim()
 const clientId = (process.env.SHOPIFY_CLIENT_ID || '').trim()
 const clientSecret = (process.env.SHOPIFY_CLIENT_SECRET || '').trim()
 const versao = (process.env.SHOPIFY_API_VERSION || '2026-07').trim()
@@ -16,31 +12,26 @@ function normalizar(v) {
   return /\.myshopify\.com$/.test(limpo) ? limpo : `${limpo}.myshopify.com`
 }
 
-const lojaEnv = normalizar(lojaBruta)
+// Token fixo por variável de ambiente (apps personalizados antigos) — vale para a loja 1
+const lojaEnv = normalizar(process.env.SHOPIFY_STORE || '')
+const tokenEnv = (process.env.SHOPIFY_ADMIN_TOKEN || '').trim()
 
 export const oauthDisponivel = !!(clientId && clientSecret)
-export const statusShopify = { ok: null, erro: null, verificadoEm: null, loja: lojaEnv || null, pedidos: 0, modo: null, moeda: null }
+export const conexaoEnv = lojaEnv && tokenEnv ? { loja: lojaEnv, token: tokenEnv, modo: 'token' } : null
 
-// Token obtido via OAuth, injetado pelo index.js a partir do estado persistido
-let sessao = { loja: null, token: null }
-export function carregarSessao(s) {
-  if (s?.token && s?.loja) sessao = { loja: s.loja, token: s.token }
-}
-
-function credenciais() {
-  if (tokenFixo && lojaEnv) return { loja: lojaEnv, token: tokenFixo, modo: 'token' }
-  if (sessao.token && sessao.loja) return { loja: sessao.loja, token: sessao.token, modo: 'oauth' }
+/** Conexão efetiva de uma loja: env (só a loja 1) tem precedência sobre o OAuth salvo. */
+export function conexaoDaLoja(lojaState, indice) {
+  if (indice === 0 && conexaoEnv) return conexaoEnv
+  if (lojaState?.shopify?.token && lojaState?.shopify?.loja) {
+    return { loja: lojaState.shopify.loja, token: lojaState.shopify.token, modo: 'oauth' }
+  }
   return null
-}
-
-export function shopifyPronta() {
-  return !!credenciais()
 }
 
 /* ---------------- OAuth ---------------- */
 
-export function urlInstalacao(lojaPedida, redirectUri, nonce) {
-  const loja = normalizar(lojaPedida || lojaEnv)
+export function urlInstalacao(dominioPedido, redirectUri, nonce) {
+  const loja = normalizar(dominioPedido)
   if (!loja) throw new Error('Informe o endereço da loja (ex.: sualoja.myshopify.com).')
   if (!oauthDisponivel) throw new Error('Faltam SHOPIFY_CLIENT_ID e SHOPIFY_CLIENT_SECRET.')
   const q = new URLSearchParams({
@@ -63,8 +54,8 @@ export function hmacValido(query) {
   return a.length === b.length && crypto.timingSafeEqual(a, b)
 }
 
-export async function trocarCodigoPorToken(lojaPedida, code) {
-  const loja = normalizar(lojaPedida)
+export async function trocarCodigoPorToken(dominioPedido, code) {
+  const loja = normalizar(dominioPedido)
   if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(loja)) {
     throw new Error('Domínio de loja inválido.')
   }
@@ -78,8 +69,6 @@ export async function trocarCodigoPorToken(lojaPedida, code) {
   }
   const dados = await resp.json()
   if (!dados.access_token) throw new Error('A Shopify não devolveu um token de acesso.')
-  sessao = { loja, token: dados.access_token }
-  registrar(true, null)
   return { loja, token: dados.access_token, escopos: dados.scope }
 }
 
@@ -87,29 +76,34 @@ export async function trocarCodigoPorToken(lojaPedida, code) {
 
 const nomesStatus = { fulfilled: 'entregue', partial: 'transito', restocked: 'problema' }
 
-function registrar(ok, erro) {
-  const c = credenciais()
-  Object.assign(statusShopify, {
-    ok, erro,
-    verificadoEm: new Date().toISOString(),
-    loja: c?.loja ?? lojaEnv ?? null,
-    modo: c?.modo ?? null,
-  })
-}
-
-function traduzirErro(status, corpo) {
+function traduzirErro(status, corpo, cx) {
   if (status === 401 || status === 403) {
-    return 'A Shopify recusou o acesso. Reinstale o app pelo botão "Conectar Shopify" — o token pode ter sido revogado ou faltam permissões de leitura em Pedidos.'
+    return 'A Shopify recusou o acesso. Reconecte a loja — o token pode ter sido revogado ou faltam permissões de leitura.'
   }
   if (status === 404) {
-    return `Loja ou versão da API não encontrada. A versão em uso é ${versao}; se ela tiver sido aposentada, defina SHOPIFY_API_VERSION com uma mais recente.`
+    return `Loja ou versão da API não encontrada (${cx.loja}, versão ${versao}). Se a versão foi aposentada, defina SHOPIFY_API_VERSION com uma mais recente.`
   }
   if (status === 429) return 'Limite de requisições da Shopify atingido. Tente de novo em alguns segundos.'
   if (status >= 500) return 'A API da Shopify está instável no momento. A sincronização volta sozinha.'
   return `A Shopify respondeu ${status}: ${String(corpo).slice(0, 200)}`
 }
 
-function mapear(o) {
+async function chamar(cx, caminho) {
+  if (!cx) return { erro: 'Shopify não conectada.' }
+  try {
+    const resp = await fetch(`https://${cx.loja}/admin/api/${versao}/${caminho}`, {
+      headers: { 'X-Shopify-Access-Token': cx.token },
+    })
+    if (!resp.ok) {
+      return { erro: traduzirErro(resp.status, await resp.text().catch(() => ''), cx) }
+    }
+    return { dados: await resp.json() }
+  } catch (err) {
+    return { erro: `Não foi possível alcançar ${cx.loja}: ${err.message}` }
+  }
+}
+
+function mapearPedido(o) {
   const f = o.fulfillments?.find(x => x.tracking_number) ?? o.fulfillments?.[0]
   let status
   if (o.cancelled_at) status = 'problema'
@@ -132,37 +126,7 @@ function mapear(o) {
   }
 }
 
-async function chamar(caminho) {
-  const c = credenciais()
-  if (!c) return { erro: 'Shopify não conectada.' }
-  try {
-    const resp = await fetch(`https://${c.loja}/admin/api/${versao}/${caminho}`, {
-      headers: { 'X-Shopify-Access-Token': c.token },
-    })
-    if (!resp.ok) {
-      const erro = traduzirErro(resp.status, await resp.text().catch(() => ''))
-      registrar(false, erro)
-      return { erro }
-    }
-    return { dados: await resp.json() }
-  } catch (err) {
-    const erro = `Não foi possível alcançar ${c.loja}: ${err.message}`
-    registrar(false, erro)
-    return { erro }
-  }
-}
-
-export async function buscarPedidosShopify() {
-  const campos = 'id,name,email,contact_email,total_price,created_at,cancelled_at,fulfillment_status,fulfillments,customer,shipping_address'
-  const { dados, erro } = await chamar(`orders.json?status=any&limit=250&fields=${campos}`)
-  if (erro) return null
-  const pedidos = (dados.orders || []).map(mapear)
-  registrar(true, null)
-  statusShopify.pedidos = pedidos.length
-  return pedidos
-}
-
-function mapearProduto(p, loja) {
+function mapearProduto(p, dominio) {
   const variantes = p.variants || []
   const precos = variantes.map(v => Number(v.price || 0)).filter(n => n > 0)
   const estoque = variantes.reduce((soma, v) => soma + (Number(v.inventory_quantity) || 0), 0)
@@ -177,36 +141,38 @@ function mapearProduto(p, loja) {
     estoque,
     ativo: p.status === 'active',
     variantes: variantes.map(v => v.title).filter(t => t && t !== 'Default Title'),
-    url: `https://${loja}/products/${p.handle}`,
-    // descrição sem HTML, curta — vai para o contexto da IA
+    url: `https://${dominio}/products/${p.handle}`,
     descricao: String(p.body_html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300),
   }
 }
 
-export async function buscarProdutosShopify() {
-  const c = credenciais()
-  if (!c) return null
-  const campos = 'id,title,body_html,vendor,product_type,handle,status,tags,variants'
-  const { dados, erro } = await chamar(`products.json?limit=250&fields=${campos}`)
-  if (erro) {
-    // Sem o escopo read_products a Shopify devolve 403; avisa de forma específica
-    if (/403|recusou o acesso/i.test(erro)) {
-      registrar(false, 'Faltou a permissão de leitura de produtos. No app da Shopify, adicione o escopo read_products aos Scopes, libere uma nova versão e reinstale o app.')
-    }
-    return null
-  }
-  return (dados.products || []).map(p => mapearProduto(p, c.loja))
+export async function buscarPedidosShopify(cx) {
+  const campos = 'id,name,email,contact_email,total_price,created_at,cancelled_at,fulfillment_status,fulfillments,customer,shipping_address'
+  const { dados, erro } = await chamar(cx, `orders.json?status=any&limit=250&fields=${campos}`)
+  if (erro) return { erro }
+  return { pedidos: (dados.orders || []).map(mapearPedido) }
 }
 
-export async function testarShopify() {
-  if (!credenciais()) {
-    Object.assign(statusShopify, { ok: null, erro: null, verificadoEm: null, modo: null })
-    return statusShopify
+export async function buscarProdutosShopify(cx) {
+  const campos = 'id,title,body_html,vendor,product_type,handle,status,tags,variants'
+  const { dados, erro } = await chamar(cx, `products.json?limit=250&fields=${campos}`)
+  if (erro) {
+    if (/403|recusou o acesso/i.test(erro)) {
+      return { erro: 'Faltou a permissão de leitura de produtos. Adicione o escopo read_products no app da Shopify, libere uma nova versão e reconecte.' }
+    }
+    return { erro }
   }
-  const { dados, erro } = await chamar('shop.json?fields=name,domain,currency')
-  if (!erro) {
-    registrar(true, null)
-    statusShopify.moeda = dados?.shop?.currency || statusShopify.moeda || null
+  return { produtos: (dados.products || []).map(p => mapearProduto(p, cx.loja)) }
+}
+
+/** Chamada leve para validar loja, token e permissões; devolve também a moeda. */
+export async function testarShopify(cx) {
+  const { dados, erro } = await chamar(cx, 'shop.json?fields=name,domain,currency')
+  if (erro) return { ok: false, erro, verificadoEm: new Date().toISOString() }
+  return {
+    ok: true,
+    erro: null,
+    verificadoEm: new Date().toISOString(),
+    moeda: dados?.shop?.currency || null,
   }
-  return statusShopify
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle, Search } from 'lucide-react'
+import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle, Search, Store } from 'lucide-react'
 import { useStore } from '../store'
 import type { Diagnostico } from '../store'
 
@@ -80,9 +80,16 @@ export default function Configuracoes() {
   const [testandoIa, setTestandoIa] = useState(false)
   const [testandoShop, setTestandoShop] = useState(false)
   const [lojaShop, setLojaShop] = useState('')
-  const status = s.integracoes.emailStatus
+
+  // Configura a loja escolhida na seta do topo da barra lateral
+  const lojaSel = s.lojas.find(l => l.id === s.lojaAtiva) ?? s.lojas.find(l => l.id === 'loja1') ?? null
+  const lojaId = lojaSel?.id ?? 'loja1'
+  const sufixo = lojaId === 'loja2' ? '2' : ''
+  const emailOk = lojaSel ? lojaSel.email.configurado : s.integracoes.email
+  const status = lojaSel?.email.status ?? s.integracoes.emailStatus
   const ia = s.integracoes.iaStatus
-  const shop = s.integracoes.shopifyStatus
+  const shopConectada = lojaSel ? lojaSel.shopify.conectada : s.integracoes.shopify
+  const shop = lojaSel?.shopify.status ?? s.integracoes.shopifyStatus
 
   const testarIa = async () => {
     setTestandoIa(true)
@@ -91,17 +98,17 @@ export default function Configuracoes() {
 
   const testarShop = async () => {
     setTestandoShop(true)
-    try { await s.testarShopify() } finally { setTestandoShop(false) }
+    try { await s.testarShopify(lojaId) } finally { setTestandoShop(false) }
   }
 
   const testar = async () => {
     setTestando(true)
-    try { await s.testarEmail() } finally { setTestando(false) }
+    try { await s.testarEmail(lojaId) } finally { setTestando(false) }
   }
 
   const diagnosticar = async () => {
     setDiagnosticando(true)
-    try { setDiag(await s.diagnosticarEmail()) } finally { setDiagnosticando(false) }
+    try { setDiag(await s.diagnosticarEmail(lojaId)) } finally { setDiagnosticando(false) }
   }
 
   return (
@@ -110,6 +117,17 @@ export default function Configuracoes() {
       <p className="muted mb-24">
         As integrações reais são configuradas por <b>variáveis de ambiente</b> — no Railway: seu serviço → aba <b>Variables</b>. Nenhuma senha passa por esta tela. Depois de salvar as variáveis, o Railway reinicia o app e a integração liga sozinha.
       </p>
+
+      {s.lojasVisiveis.length > 1 && (
+        <div className="banner card-purple mb-16">
+          <Store size={15} color="var(--purple)" />
+          <span>
+            Configurando a loja <b>{lojaSel?.nome}</b>
+            {lojaId === 'loja2' && <> — o e-mail dela usa as variáveis <code>EMAIL2_*</code></>}.
+            Para trocar de loja, use a seta no topo da barra lateral.
+          </span>
+        </div>
+      )}
 
       <Section icon={<Sparkles size={15} />} title="Inteligência artificial (Claude)" desc="Classifica cada e-mail e escreve a resposta no idioma do cliente, usando suas políticas como fonte de verdade.">
         {s.integracoes.ia ? (
@@ -152,7 +170,7 @@ export default function Configuracoes() {
       </Section>
 
       <Section icon={<Mail size={15} />} title="E-mail de atendimento" desc="A caixa que o atendo lê (IMAP) e pela qual responde (SMTP).">
-        {s.integracoes.email ? (
+        {emailOk ? (
           <>
             <div className="row gap-10" style={{ flexWrap: 'wrap' }}>
               {status?.ok === false ? (
@@ -162,7 +180,7 @@ export default function Configuracoes() {
               ) : (
                 <span className="tag tag-outro">Verificando…</span>
               )}
-              <span className="muted">{s.config.emailConectado}</span>
+              <span className="muted">{lojaSel?.email.endereco ?? s.config.emailConectado}</span>
               {status?.ok && <span className="muted-sm">lendo a cada 60 s{status.envioPorApi ? ' · enviando pela Resend' : ''}</span>}
               <button className="btn btn-sm" onClick={testar} disabled={testando}>
                 {testando ? 'Testando…' : 'Testar conexão'}
@@ -261,9 +279,9 @@ export default function Configuracoes() {
               <b>Hostinger:</b> crie a caixa em hPanel → E-mails → Contas de e-mail. Use a senha da própria caixa (não a do painel da Hostinger) e adicione no Railway:
             </p>
             <EnvVars vars={[
-              ['EMAIL_PROVIDER', 'hostinger'],
-              ['EMAIL_USER', 'suporte@sualoja.com'],
-              ['EMAIL_PASS', 'a-senha-da-caixa'],
+              [`EMAIL${sufixo}_PROVIDER`, 'hostinger'],
+              [`EMAIL${sufixo}_USER`, 'suporte@sualoja.com'],
+              [`EMAIL${sufixo}_PASS`, 'a-senha-da-caixa'],
             ]} />
             <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
               <code>EMAIL_PROVIDER</code> também aceita <b>gmail</b> (exige senha de app), <b>outlook</b>, <b>yahoo</b>, <b>icloud</b>, <b>titan</b> e <b>zoho</b>.
@@ -284,7 +302,7 @@ export default function Configuracoes() {
       </Section>
 
       <Section icon={<ShoppingBag size={15} />} title="Shopify" desc="Pedidos, rastreio e clientes entram sozinhos — o atendo usa esses dados nas respostas.">
-        {s.integracoes.shopify ? (
+        {shopConectada ? (
           <>
             <div className="row gap-10" style={{ flexWrap: 'wrap' }}>
               {shop?.ok === false ? (
@@ -294,13 +312,13 @@ export default function Configuracoes() {
               ) : (
                 <span className="tag tag-outro">Verificando…</span>
               )}
-              {shop?.loja && <span className="muted">{shop.loja}</span>}
+              {(lojaSel?.shopify.dominio ?? shop?.loja) && <span className="muted">{lojaSel?.shopify.dominio ?? shop?.loja}</span>}
               {shop?.ok && <span className="muted-sm">{s.pedidos.length} pedidos sincronizados</span>}
               <button className="btn btn-sm" onClick={testarShop} disabled={testandoShop}>
                 {testandoShop ? 'Testando…' : 'Testar e sincronizar'}
               </button>
-              {shop?.modo === 'oauth' && (
-                <button className="btn btn-sm" onClick={() => { if (confirm('Desconectar a Shopify?')) s.desconectarShopify() }}>
+              {lojaSel?.shopify.modo === 'oauth' && (
+                <button className="btn btn-sm" onClick={() => { if (confirm(`Desconectar a Shopify da loja "${lojaSel?.nome}"?`)) s.desconectarShopify(lojaId) }}>
                   <Unplug size={13} /> Desconectar
                 </button>
               )}
@@ -327,7 +345,7 @@ export default function Configuracoes() {
                   style={{ marginTop: 12 }}
                   onSubmit={e => {
                     e.preventDefault()
-                    if (lojaShop.trim()) window.location.href = `/api/shopify/instalar?loja=${encodeURIComponent(lojaShop.trim())}`
+                    if (lojaShop.trim()) window.location.href = `/api/shopify/instalar?loja=${encodeURIComponent(lojaShop.trim())}&lojaId=${lojaId}`
                   }}
                 >
                   <input value={lojaShop} onChange={e => setLojaShop(e.target.value)} placeholder="sualoja.myshopify.com"
@@ -432,7 +450,7 @@ export default function Configuracoes() {
 
       <Section icon={<PenLine size={15} />} title="Identidade" desc="Nome da loja e assinatura usada no fim de cada resposta.">
         <div className="grid-2">
-          <CampoTexto label="Nome da loja" valor={s.config.nomeLoja} aoSalvar={v => s.setConfig({ nomeLoja: v })} />
+          <CampoTexto label={`Nome da loja${sufixo ? ' 2' : ''}`} valor={lojaSel?.nome ?? s.config.nomeLoja} aoSalvar={v => s.atualizarLoja(lojaId, { nome: v })} />
           <CampoTexto label="Assinatura" valor={s.config.assinatura} aoSalvar={v => s.setConfig({ assinatura: v })} />
         </div>
       </Section>

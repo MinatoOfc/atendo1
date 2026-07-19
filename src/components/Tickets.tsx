@@ -6,6 +6,10 @@ import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
 
 export function TicketRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
+  const { lojasVisiveis, lojaAtiva } = useStore()
+  const nomeLojaDona = lojaAtiva === 'todas' && lojasVisiveis.length > 1
+    ? lojasVisiveis.find(l => l.id === (t.lojaId ?? 'loja1'))?.nome
+    : null
   return (
     <button className="ticket-row" onClick={() => onOpen(t)}>
       <span className={'dot' + (t.lido ? ' read' : '')} />
@@ -17,6 +21,7 @@ export function TicketRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => voi
         <b>{t.assunto}</b>{' '}
         <span className="preview">— {(t.resposta ?? t.corpo).slice(0, 90)}</span>
       </span>
+      {nomeLojaDona && <span className="tag tag-purple">{nomeLojaDona}</span>}
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}
