@@ -8,7 +8,7 @@ import {
 } from './logic.js'
 import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
 import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, diagnosticar, statusEmail } from './mail.js'
-import { shopifyConfigurada, buscarPedidosShopify } from './shopify.js'
+import { shopifyConfigurada, buscarPedidosShopify, testarShopify, statusShopify } from './shopify.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -37,6 +37,7 @@ function visao() {
       ia: iaConfigurada,
       emailStatus: { ...statusEmail },
       iaStatus: { ...statusIA },
+      shopifyStatus: { ...statusShopify },
     },
   }
 }
@@ -198,6 +199,15 @@ app.post('/api/ia/testar', async (req, res) => {
   res.json({ status: s, state: visao() })
 })
 
+app.post('/api/shopify/testar', async (req, res) => {
+  const s = await testarShopify()
+  if (s.ok) {
+    const pedidos = await buscarPedidosShopify()
+    if (pedidos) { state.pedidos = pedidos; persistir() }
+  }
+  res.json({ status: { ...statusShopify }, state: visao() })
+})
+
 app.post('/api/email/diagnostico', async (req, res) => {
   try {
     const d = await diagnosticar(state.emailsProcessados)
@@ -353,6 +363,17 @@ app.listen(PORT, async () => {
   if (iaConfigurada) {
     const t = await testarIA()
     console.log(t.ok ? `  IA OK — usando ${t.modelo}` : `  IA FALHOU: ${t.erro}`)
+  }
+
+  if (shopifyConfigurada) {
+    const t = await testarShopify()
+    if (t.ok) {
+      const pedidos = await buscarPedidosShopify()
+      if (pedidos) { state.pedidos = pedidos; persistir() }
+      console.log(`  Shopify OK — ${state.pedidos.length} pedidos de ${t.loja}`)
+    } else {
+      console.error(`  SHOPIFY FALHOU: ${t.erro}`)
+    }
   }
 
   if (emailConfigurado) {

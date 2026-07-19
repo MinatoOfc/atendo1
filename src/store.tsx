@@ -61,10 +61,12 @@ export interface Diagnostico {
   mensagens?: MensagemCaixa[]
 }
 export interface StatusIA { ok: boolean | null; erro: string | null; verificadoEm: string | null; modelo?: string }
+export interface StatusShopify { ok: boolean | null; erro: string | null; verificadoEm: string | null; loja?: string | null; pedidos?: number }
 export interface Integracoes {
   email: boolean; shopify: boolean; ia: boolean
   emailStatus: StatusEmail
   iaStatus: StatusIA
+  shopifyStatus: StatusShopify
 }
 
 interface ServerState {
@@ -90,6 +92,7 @@ const estadoVazio: ServerState = {
     email: false, shopify: false, ia: false,
     emailStatus: { ok: null, erro: null, verificadoEm: null },
     iaStatus: { ok: null, erro: null, verificadoEm: null },
+    shopifyStatus: { ok: null, erro: null, verificadoEm: null },
   },
 }
 
@@ -135,6 +138,7 @@ interface Store extends ServerState {
   testarEmail: () => Promise<StatusEmail>
   diagnosticarEmail: () => Promise<Diagnostico>
   testarIA: () => Promise<StatusIA>
+  testarShopify: () => Promise<StatusShopify>
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -243,6 +247,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     testarIA: async () => {
       const r = (await api('/ia/testar')) as { state?: ServerState; status: StatusIA }
+      aplicar(r)
+      return r.status
+    },
+
+    testarShopify: async () => {
+      const r = (await api('/shopify/testar')) as { state?: ServerState; status: StatusShopify }
       aplicar(r)
       return r.status
     },

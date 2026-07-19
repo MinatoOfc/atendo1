@@ -28,12 +28,19 @@ export default function Configuracoes() {
   const [diag, setDiag] = useState<Diagnostico | null>(null)
   const [diagnosticando, setDiagnosticando] = useState(false)
   const [testandoIa, setTestandoIa] = useState(false)
+  const [testandoShop, setTestandoShop] = useState(false)
   const status = s.integracoes.emailStatus
   const ia = s.integracoes.iaStatus
+  const shop = s.integracoes.shopifyStatus
 
   const testarIa = async () => {
     setTestandoIa(true)
     try { await s.testarIA() } finally { setTestandoIa(false) }
+  }
+
+  const testarShop = async () => {
+    setTestandoShop(true)
+    try { await s.testarShopify() } finally { setTestandoShop(false) }
   }
 
   const testar = async () => {
@@ -205,20 +212,45 @@ export default function Configuracoes() {
 
       <Section icon={<ShoppingBag size={15} />} title="Shopify" desc="Pedidos, rastreio e clientes entram sozinhos — o atendo usa esses dados nas respostas.">
         {s.integracoes.shopify ? (
-          <div className="row gap-10">
-            <span className="tag tag-green"><Check size={11} style={{ marginRight: 4 }} /> Conectada</span>
-            <span className="muted">{s.pedidos.length} pedidos sincronizados</span>
-          </div>
+          <>
+            <div className="row gap-10" style={{ flexWrap: 'wrap' }}>
+              {shop?.ok === false ? (
+                <span className="tag tag-reembolso"><AlertTriangle size={11} style={{ marginRight: 4 }} /> Não conectou</span>
+              ) : shop?.ok ? (
+                <span className="tag tag-green"><Check size={11} style={{ marginRight: 4 }} /> Conectada</span>
+              ) : (
+                <span className="tag tag-outro">Verificando…</span>
+              )}
+              {shop?.loja && <span className="muted">{shop.loja}</span>}
+              {shop?.ok && <span className="muted-sm">{s.pedidos.length} pedidos sincronizados</span>}
+              <button className="btn btn-sm" onClick={testarShop} disabled={testandoShop}>
+                {testandoShop ? 'Testando…' : 'Testar e sincronizar'}
+              </button>
+            </div>
+            {shop?.ok === false && shop.erro && (
+              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: '#fecaca', background: '#fef7f7' }}>
+                <div className="row gap-8 mb-8" style={{ color: 'var(--red)' }}>
+                  <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>A Shopify recusou a conexão</b>
+                </div>
+                <p className="muted-sm" style={{ lineHeight: 1.6 }}>{shop.erro}</p>
+              </div>
+            )}
+          </>
         ) : (
           <>
             <span className="tag tag-amber">Não configurada</span>
             <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
-              No admin da sua loja: <b>Configurações → Apps e canais de venda → Desenvolver apps → Criar app</b>. Dê permissão de leitura em <b>Orders</b> e <b>Customers</b>, instale o app e copie o <b>Admin API access token</b>. Depois adicione no Railway:
+              No admin da loja: <b>Configurações → Apps e canais de venda → Desenvolver apps → Criar um app</b>.
+              Em <b>Configuração → Admin API</b>, marque <code>read_orders</code>, <code>read_customers</code> e <code>read_fulfillments</code>.
+              Salve, clique em <b>Instalar app</b> e copie o <b>Admin API access token</b> (aparece uma única vez). Depois adicione no Railway:
             </p>
             <EnvVars vars={[
               ['SHOPIFY_STORE', 'sualoja.myshopify.com'],
               ['SHOPIFY_ADMIN_TOKEN', 'shpat_...seu-token...'],
             ]} />
+            <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
+              Para o atendo enxergar pedidos com mais de 60 dias, peça também o escopo <code>read_all_orders</code> na mesma tela.
+            </p>
             <div style={{ marginTop: 12 }}>
               {s.config.shopifyConectada ? (
                 <div className="row gap-10">

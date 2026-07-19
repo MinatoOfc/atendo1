@@ -54,10 +54,13 @@ Com o e-mail configurado, o servidor lê a caixa a cada 60 segundos, transforma 
 
 | Variável | Exemplo |
 |---|---|
-| `SHOPIFY_STORE` | `sualoja.myshopify.com` |
+| `SHOPIFY_STORE` | `sualoja.myshopify.com` (aceita também só `sualoja` ou a URL completa) |
 | `SHOPIFY_ADMIN_TOKEN` | `shpat_...` |
+| `SHOPIFY_API_VERSION` | opcional, padrão `2026-01` |
 
-Para obter o token: admin da loja → **Configurações → Apps e canais de venda → Desenvolver apps → Criar app**, permissão de leitura em Orders e Customers, instalar e copiar o Admin API access token.
+Para obter o token: admin da loja → **Configurações → Apps e canais de venda → Desenvolver apps → Criar um app**. Em *Configuração → Admin API*, marque `read_orders`, `read_customers` e `read_fulfillments` (e `read_all_orders` para enxergar pedidos com mais de 60 dias). Salve, clique em **Instalar app** e copie o Admin API access token — ele aparece uma única vez.
+
+A Shopify aposenta cada versão da API depois de cerca de 12 meses. Quando a padrão expirar, defina `SHOPIFY_API_VERSION` com uma mais recente — a tela de Configurações avisa quando isso acontece.
 
 ### Persistência
 
