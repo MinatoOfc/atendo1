@@ -12,7 +12,8 @@ import { processarEmail, iaConfigurada, testarIA, statusIA, traduzirMensagens } 
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
   buscarPedidosShopify, buscarProdutosShopify, testarShopify,
-  oauthDisponivel, conexaoDaLoja, urlInstalacao, hmacValido, trocarCodigoPorToken,
+  oauthDisponivel, credenciaisEnv, conexaoDaLoja, urlInstalacao, hmacValido,
+  trocarCodigoPorToken, normalizarDominio, escoposNecessarios,
 } from './shopify.js'
 import * as db from './db.js'
 import {
@@ -110,6 +111,21 @@ const conexaoLoja = (estado, lojaId) => {
 
 const algumaShopify = estado => estado.lojas.some((l, i) => conexaoDaLoja(l, i))
 
+/**
+ * Credenciais do app da Shopify a usar para uma loja: o app próprio dela
+ * (cadastrado pelo site, com secret cifrado) tem precedência; sem ele, vale o
+ * app do servidor (env). Necessário porque apps do Dev Dashboard só instalam
+ * em lojas da mesma organização — cada amigo usa o app da organização dele.
+ */
+function appDaLoja(estado, lojaId) {
+  const loja = estado.lojas.find(l => l.id === lojaId)
+  if (loja?.shopifyApp?.clientId && loja.shopifyApp.secretCifrado) {
+    const secret = decifrar(loja.shopifyApp.secretCifrado, segredo)
+    if (secret) return { clientId: loja.shopifyApp.clientId, clientSecret: secret, proprio: true }
+  }
+  return credenciaisEnv ? { ...credenciaisEnv, proprio: false } : null
+}
+
 /* ---------------- Cotações (moeda de exibição) ---------------- */
 
 // Taxas do BCE via frankfurter.app, base EUR, renovadas 1x por dia.
@@ -156,6 +172,9 @@ function visaoLojas(wsId, estado) {
         dominio: cx?.loja ?? null,
         modo: cx?.modo ?? null,
         status: statusShopifyPorLoja.get(`${wsId}:${l.id}`) ?? null,
+        oauthDisponivel: !!appDaLoja(estado, l.id),
+        appProprio: !!l.shopifyApp?.clientId,
+        appClientId: l.shopifyApp?.clientId ?? null,
       },
     }
   })
@@ -176,6 +195,7 @@ function visao(wsId) {
     lojas: visaoLojas(wsId, estado),
     provedoresEmail: presetsDisponiveis,
     cotacoes: taxasAtuais(),
+    escoposShopify: escoposNecessarios,
     config: {
       ...estado.config,
       nomeLoja: loja1?.nome ?? estado.config.nomeLoja,
@@ -649,15 +669,56 @@ async function sincronizarLoja(wsId, lojaId) {
 app.get('/api/shopify/instalar', (req, res) => {
   try {
     const lojaId = req.estado.lojas.some(l => l.id === req.query.lojaId) ? req.query.lojaId : 'loja1'
+    const cred = appDaLoja(req.estado, lojaId)
     const nonce = crypto.randomBytes(16).toString('hex')
     const redirectUri = `${baseUrl(req)}/api/shopify/callback`
-    const { url } = urlInstalacao(req.query.loja, redirectUri, nonce)
+    const { url } = urlInstalacao(cred, req.query.loja, redirectUri, nonce)
     noncesOAuth.set(nonce, { wsId: req.wsId, lojaId, criadoEm: Date.now() })
     for (const [k, v] of noncesOAuth) if (Date.now() - v.criadoEm > 600_000) noncesOAuth.delete(k)
     res.redirect(url)
   } catch (err) {
     res.status(400).send(`Não foi possível iniciar a instalação: ${err.message}`)
   }
+})
+
+/** App próprio da Shopify por loja (cada organização usa o seu). */
+app.post('/api/lojas/:id/shopify-app', (req, res) => {
+  const loja = req.estado.lojas.find(l => l.id === req.params.id)
+  if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
+  const clientId = String(req.body?.clientId || '').trim()
+  const clientSecret = String(req.body?.clientSecret || '').trim()
+  if (!clientId || !clientSecret) {
+    return res.status(400).json({ erro: 'Preencha o Client ID e o Client secret do app.', state: visao(req.wsId) })
+  }
+  loja.shopifyApp = { clientId, secretCifrado: cifrar(clientSecret, segredo) }
+  salvar(req.wsId); ok(req, res)
+})
+
+app.delete('/api/lojas/:id/shopify-app', (req, res) => {
+  const loja = req.estado.lojas.find(l => l.id === req.params.id)
+  if (loja) { delete loja.shopifyApp; salvar(req.wsId) }
+  ok(req, res)
+})
+
+/** Conexão direta com um Admin API access token colado (lojas com app personalizado antigo). */
+app.post('/api/lojas/:id/shopify-token', async (req, res) => {
+  const loja = req.estado.lojas.find(l => l.id === req.params.id)
+  if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
+  const dominio = normalizarDominio(req.body?.dominio || '')
+  const token = String(req.body?.token || '').trim()
+  if (!dominio || !token) {
+    return res.status(400).json({ erro: 'Preencha o endereço da loja e o token de acesso.', state: visao(req.wsId) })
+  }
+  // valida antes de salvar
+  const teste = await testarShopify({ loja: dominio, token })
+  if (!teste.ok) {
+    return res.status(400).json({ erro: teste.erro || 'A Shopify recusou o token.', state: visao(req.wsId) })
+  }
+  loja.shopify = { loja: dominio, token, instaladoEm: new Date().toISOString() }
+  loja.ativa = true
+  salvar(req.wsId)
+  await sincronizarLoja(req.wsId, loja.id)
+  ok(req, res)
 })
 
 app.get('/api/shopify/callback', async (req, res) => {
@@ -667,13 +728,15 @@ app.get('/api/shopify/callback', async (req, res) => {
 
   if (!pendente) return falhar('Pedido de instalação expirado ou desconhecido. Tente conectar novamente.')
   noncesOAuth.delete(nonce)
-  if (!hmacValido(req.query)) return falhar('Assinatura inválida no retorno da Shopify. A instalação foi cancelada por segurança.')
+  const estadoWs = workspaces.get(pendente.wsId)
+  if (!estadoWs) return falhar('Sessão não encontrada. Entre no atendo e tente de novo.')
+  const cred = appDaLoja(estadoWs, pendente.lojaId)
+  if (!hmacValido(req.query, cred?.clientSecret)) return falhar('Assinatura inválida no retorno da Shopify. A instalação foi cancelada por segurança.')
   if (!shop || !code) return falhar('A Shopify não devolveu os dados esperados.')
 
   try {
-    const { loja, token } = await trocarCodigoPorToken(shop, code)
-    const estado = workspaces.get(pendente.wsId)
-    if (!estado) return falhar('Sessão não encontrada. Entre no atendo e tente de novo.')
+    const { loja, token } = await trocarCodigoPorToken(cred, shop, code)
+    const estado = estadoWs
     const alvo = estado.lojas.find(l => l.id === pendente.lojaId) ?? estado.lojas[0]
     alvo.shopify = { loja, token, instaladoEm: new Date().toISOString() }
     alvo.ativa = true

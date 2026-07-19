@@ -93,7 +93,10 @@ export interface Loja {
     configurado: boolean; endereco: string | null; status: StatusEmail | null
     provider?: string | null; remetenteNome?: string | null; origem?: 'site' | 'env' | null
   }
-  shopify: { conectada: boolean; dominio: string | null; modo: 'token' | 'oauth' | null; status: StatusShopify | null }
+  shopify: {
+    conectada: boolean; dominio: string | null; modo: 'token' | 'oauth' | null; status: StatusShopify | null
+    oauthDisponivel?: boolean; appProprio?: boolean; appClientId?: string | null
+  }
 }
 
 export interface Usuario { id: string; nome: string; email: string }
@@ -142,6 +145,7 @@ interface ServerState {
   lojas: Loja[]
   provedoresEmail?: string[]
   cotacoes?: Record<string, number> | null
+  escoposShopify?: string
   config: Config
   integracoes: Integracoes
 }
@@ -189,6 +193,9 @@ interface Store extends ServerState {
   salvarEmailLoja: (lojaId: string, cfg: ConfigEmail) => Promise<string | null>
   removerEmailLoja: (lojaId: string) => void
   testarEmailConfig: (cfg: ConfigEmail) => Promise<ResultadoTesteEmail>
+  salvarShopifyApp: (lojaId: string, clientId: string, clientSecret: string) => Promise<string | null>
+  removerShopifyApp: (lojaId: string) => void
+  conectarShopifyToken: (lojaId: string, dominio: string, token: string) => Promise<string | null>
   prefs: Prefs
   setPref: (patch: Partial<Prefs>) => void
   /** Formata um valor na moeda de exibição preferida (converte pela cotação do dia). */
@@ -355,6 +362,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return null
     },
     removerEmailLoja: lojaId => api(`/lojas/${lojaId}/email`, 'DELETE').then(aplicar),
+    salvarShopifyApp: async (lojaId, clientId, clientSecret) => {
+      const r = await api(`/lojas/${lojaId}/shopify-app`, 'POST', { clientId, clientSecret })
+      if (r.erro) return r.erro
+      aplicar(r)
+      return null
+    },
+    removerShopifyApp: lojaId => api(`/lojas/${lojaId}/shopify-app`, 'DELETE').then(aplicar),
+    conectarShopifyToken: async (lojaId, dominio, token) => {
+      const r = await api(`/lojas/${lojaId}/shopify-token`, 'POST', { dominio, token })
+      if (r.erro) return r.erro
+      aplicar(r)
+      return null
+    },
     testarEmailConfig: async cfg => {
       const r = (await api('/email/testar-config', 'POST', cfg)) as unknown as { resultado: ResultadoTesteEmail }
       return r.resultado ?? { ok: false, erro: 'Sem resposta do servidor.' }

@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 
-const clientId = (process.env.SHOPIFY_CLIENT_ID || '').trim()
-const clientSecret = (process.env.SHOPIFY_CLIENT_SECRET || '').trim()
+const envClientId = (process.env.SHOPIFY_CLIENT_ID || '').trim()
+const envClientSecret = (process.env.SHOPIFY_CLIENT_SECRET || '').trim()
 const versao = (process.env.SHOPIFY_API_VERSION || '2026-07').trim()
 const escopos = (process.env.SHOPIFY_SCOPES || 'read_orders,read_all_orders,read_customers,read_fulfillments,read_products').trim()
 
@@ -16,8 +16,12 @@ function normalizar(v) {
 const lojaEnv = normalizar(process.env.SHOPIFY_STORE || '')
 const tokenEnv = (process.env.SHOPIFY_ADMIN_TOKEN || '').trim()
 
-export const oauthDisponivel = !!(clientId && clientSecret)
+export const oauthDisponivel = !!(envClientId && envClientSecret)
+// Credenciais do app configurado no servidor (o app do dono). Cada loja pode
+// ter o seu próprio app — nesse caso as credenciais vêm do estado da loja.
+export const credenciaisEnv = oauthDisponivel ? { clientId: envClientId, clientSecret: envClientSecret } : null
 export const conexaoEnv = lojaEnv && tokenEnv ? { loja: lojaEnv, token: tokenEnv, modo: 'token' } : null
+export const normalizarDominio = normalizar
 
 /** Conexão efetiva de uma loja: env (só a loja 1) tem precedência sobre o OAuth salvo. */
 export function conexaoDaLoja(lojaState, indice) {
@@ -30,12 +34,12 @@ export function conexaoDaLoja(lojaState, indice) {
 
 /* ---------------- OAuth ---------------- */
 
-export function urlInstalacao(dominioPedido, redirectUri, nonce) {
+export function urlInstalacao(cred, dominioPedido, redirectUri, nonce) {
   const loja = normalizar(dominioPedido)
   if (!loja) throw new Error('Informe o endereço da loja (ex.: sualoja.myshopify.com).')
-  if (!oauthDisponivel) throw new Error('Faltam SHOPIFY_CLIENT_ID e SHOPIFY_CLIENT_SECRET.')
+  if (!cred?.clientId) throw new Error('Nenhum app da Shopify configurado para esta loja.')
   const q = new URLSearchParams({
-    client_id: clientId,
+    client_id: cred.clientId,
     scope: escopos,
     redirect_uri: redirectUri,
     state: nonce,
@@ -43,8 +47,8 @@ export function urlInstalacao(dominioPedido, redirectUri, nonce) {
   return { url: `https://${loja}/admin/oauth/authorize?${q}`, loja }
 }
 
-/** Confere a assinatura HMAC que a Shopify anexa ao callback. */
-export function hmacValido(query) {
+/** Confere a assinatura HMAC que a Shopify anexa ao callback (com o secret do app usado). */
+export function hmacValido(query, clientSecret) {
   const { hmac, signature, ...resto } = query
   if (!hmac || !clientSecret) return false
   const base = Object.keys(resto).sort().map(k => `${k}=${resto[k]}`).join('&')
@@ -54,7 +58,7 @@ export function hmacValido(query) {
   return a.length === b.length && crypto.timingSafeEqual(a, b)
 }
 
-export async function trocarCodigoPorToken(dominioPedido, code) {
+export async function trocarCodigoPorToken(cred, dominioPedido, code) {
   const loja = normalizar(dominioPedido)
   if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(loja)) {
     throw new Error('Domínio de loja inválido.')
@@ -62,7 +66,7 @@ export async function trocarCodigoPorToken(dominioPedido, code) {
   const resp = await fetch(`https://${loja}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+    body: JSON.stringify({ client_id: cred.clientId, client_secret: cred.clientSecret, code }),
   })
   if (!resp.ok) {
     throw new Error(`A Shopify recusou a troca do código (${resp.status}). Confira o Client Secret e a Redirect URL cadastrada no app.`)
@@ -71,6 +75,9 @@ export async function trocarCodigoPorToken(dominioPedido, code) {
   if (!dados.access_token) throw new Error('A Shopify não devolveu um token de acesso.')
   return { loja, token: dados.access_token, escopos: dados.scope }
 }
+
+/** Escopos que o app precisa — mostrados nas instruções de "criar seu app". */
+export const escoposNecessarios = escopos
 
 /* ---------------- Admin API ---------------- */
 

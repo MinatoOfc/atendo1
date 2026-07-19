@@ -219,6 +219,129 @@ function FormularioEmail({ lojaId }: { lojaId: string }) {
   )
 }
 
+/**
+ * Conexão da Shopify quando o app do servidor não serve — apps do Dev Dashboard
+ * só instalam em lojas da mesma organização. Cada pessoa cadastra o app dela
+ * (Client ID/Secret) ou cola um Admin API access token direto.
+ */
+function OpcoesShopifyProprio({ lojaId }: { lojaId: string }) {
+  const s = useStore()
+  const loja = s.lojas.find(l => l.id === lojaId)
+  const [aberto, setAberto] = useState<'' | 'app' | 'token'>('')
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [dominio, setDominio] = useState('')
+  const [token, setToken] = useState('')
+  const [ocupado, setOcupado] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
+  const [okMsg, setOkMsg] = useState<string | null>(null)
+
+  const escopos = s.escoposShopify ?? 'read_orders,read_all_orders,read_customers,read_fulfillments,read_products'
+  const redirectUrl = `${window.location.origin}/api/shopify/callback`
+
+  const salvarApp = async () => {
+    setOcupado(true); setErro(null); setOkMsg(null)
+    try {
+      const falha = await s.salvarShopifyApp(lojaId, clientId.trim(), clientSecret.trim())
+      if (falha) setErro(falha)
+      else { setOkMsg('App salvo — agora use o campo acima para conectar a loja.'); setClientSecret('') }
+    } finally { setOcupado(false) }
+  }
+
+  const conectarToken = async () => {
+    setOcupado(true); setErro(null); setOkMsg(null)
+    try {
+      const falha = await s.conectarShopifyToken(lojaId, dominio.trim(), token.trim())
+      if (falha) setErro(falha)
+      else { setOkMsg('Loja conectada!'); setToken('') }
+    } finally { setOcupado(false) }
+  }
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="card-soft" style={{ padding: '12px 14px' }}>
+        <b style={{ fontSize: 13 }}>A Shopify disse que "o app não pode ser instalado nesta loja"?</b>
+        <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.6 }}>
+          Isso acontece porque o app pertence a outra organização da Shopify. A solução é usar um app <b>seu</b>:
+          crie um no Dev Dashboard da sua organização (leva ~5 minutos) ou cole um token de acesso direto.
+        </p>
+        <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+          <button className={'chip' + (aberto === 'app' ? ' active-purple' : '')} onClick={() => setAberto(a => (a === 'app' ? '' : 'app'))}>
+            Usar meu próprio app {loja?.shopify.appProprio && '✓'}
+          </button>
+          <button className={'chip' + (aberto === 'token' ? ' active-purple' : '')} onClick={() => setAberto(a => (a === 'token' ? '' : 'token'))}>
+            Colar um token de acesso
+          </button>
+        </div>
+
+        {aberto === 'app' && (
+          <div style={{ marginTop: 12 }}>
+            <p className="muted-sm" style={{ lineHeight: 1.7 }}>
+              1. Acesse <b>dev.shopify.com</b> com a conta da sua loja → <b>Create app</b> (nome livre, ex.: atendo)<br />
+              2. Em <b>Configuration → API access</b>, cole nos <b>Scopes</b>:
+            </p>
+            <EnvVars vars={[['Scopes', escopos]]} />
+            <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.7 }}>
+              3. No campo <b>Redirect URLs</b> (mesma página), cole:
+            </p>
+            <EnvVars vars={[['Redirect URL', redirectUrl]]} />
+            <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.7 }}>
+              4. Salve e <b>libere a versão</b> (Release) · 5. Em <b>Settings</b>, copie o Client ID e o Client secret e cole aqui:
+            </p>
+            <div className="grid-2" style={{ marginTop: 10 }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Client ID</label>
+                <input value={clientId} onChange={e => setClientId(e.target.value)} placeholder={loja?.shopify.appClientId ?? '3526f9...'} autoComplete="off" />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Client secret</label>
+                <input type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)} placeholder="Guardado cifrado no servidor" autoComplete="new-password" />
+              </div>
+            </div>
+            <div className="row gap-8" style={{ marginTop: 10 }}>
+              <button className="btn btn-primary btn-sm" onClick={salvarApp} disabled={!clientId.trim() || !clientSecret.trim() || ocupado}>
+                {ocupado ? 'Salvando…' : 'Salvar app'}
+              </button>
+              {loja?.shopify.appProprio && (
+                <button className="btn btn-sm" onClick={() => s.removerShopifyApp(lojaId)}>Remover app salvo</button>
+              )}
+            </div>
+            <p className="muted-sm" style={{ marginTop: 8 }}>
+              Depois de salvar, digite o endereço da loja no campo lá em cima e clique em <b>Conectar com a Shopify</b> — a instalação vai usar o seu app.
+            </p>
+          </div>
+        )}
+
+        {aberto === 'token' && (
+          <div style={{ marginTop: 12 }}>
+            <p className="muted-sm" style={{ lineHeight: 1.7 }}>
+              Se a sua loja ainda oferece apps personalizados no admin (Configurações → Apps → Desenvolver apps), crie um
+              com os escopos de leitura, instale e cole o <b>Admin API access token</b> (começa com <code>shpat_</code>):
+            </p>
+            <div className="grid-2" style={{ marginTop: 10 }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Endereço da loja</label>
+                <input value={dominio} onChange={e => setDominio(e.target.value)} placeholder="sualoja.myshopify.com" autoComplete="off" />
+              </div>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Admin API access token</label>
+                <input type="password" value={token} onChange={e => setToken(e.target.value)} placeholder="shpat_..." autoComplete="new-password" />
+              </div>
+            </div>
+            <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={conectarToken}
+              disabled={!dominio.trim() || !token.trim() || ocupado}>
+              {ocupado ? 'Validando…' : 'Conectar com o token'}
+            </button>
+          </div>
+        )}
+
+        {erro && <p className="muted-sm" style={{ color: 'var(--red)', marginTop: 10 }}>{erro}</p>}
+        {okMsg && <p className="muted-sm" style={{ color: 'var(--green)', marginTop: 10 }}><Check size={12} style={{ verticalAlign: -2, marginRight: 4 }} />{okMsg}</p>}
+      </div>
+    </div>
+  )
+}
+
 // Campo de texto que edita localmente e salva com atraso — sem isso, cada
 // tecla dispara um POST e a atualização periódica da tela pode sobrescrever
 // o que o usuário ainda está digitando.
@@ -675,11 +798,12 @@ export default function Configuracoes() {
           </>
         ) : (
           <>
-            {s.integracoes.shopifyOauth ? (
+            {(lojaSel?.shopify.oauthDisponivel ?? s.integracoes.shopifyOauth) ? (
               <>
                 <p className="muted-sm" style={{ lineHeight: 1.6 }}>
                   A conexão acontece na própria Shopify: digite o endereço da loja, clique abaixo, instale o atendo e aprove
                   as permissões — sua loja conecta sozinha, sem digitar mais nada.
+                  {lojaSel?.shopify.appProprio && <b> Usando o seu app próprio ({lojaSel.shopify.appClientId?.slice(0, 8)}…).</b>}
                 </p>
                 <form
                   className="row gap-8"
@@ -711,6 +835,7 @@ export default function Configuracoes() {
                 <EnvVars vars={[['Redirect URL', `${window.location.origin}/api/shopify/callback`]]} />
               </>
             )}
+            <OpcoesShopifyProprio lojaId={lojaId} />
             <div style={{ marginTop: 12 }}>
               {s.config.shopifyConectada ? (
                 <div className="row gap-10">
