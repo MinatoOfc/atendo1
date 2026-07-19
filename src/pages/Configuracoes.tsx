@@ -1,7 +1,57 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle, Search } from 'lucide-react'
 import { useStore } from '../store'
 import type { Diagnostico } from '../store'
+
+// Definido FORA do componente da página: definir componentes dentro do render
+// faz o React recriá-los a cada tecla digitada — os campos perdem o foco e a
+// rolagem volta ao topo.
+function Section({ icon, title, desc, children }: { icon: React.ReactNode; title: string; desc: string; children: React.ReactNode }) {
+  return (
+    <div className="card mb-16" style={{ padding: '18px 20px' }}>
+      <div className="row gap-10 mb-8">
+        <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--purple-soft)', color: 'var(--purple)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon}</div>
+        <div>
+          <b style={{ fontSize: 14.5 }}>{title}</b>
+          <div className="muted-sm">{desc}</div>
+        </div>
+      </div>
+      <div style={{ paddingLeft: 42 }}>{children}</div>
+    </div>
+  )
+}
+
+// Campo de texto que edita localmente e salva com atraso — sem isso, cada
+// tecla dispara um POST e a atualização periódica da tela pode sobrescrever
+// o que o usuário ainda está digitando.
+function CampoTexto({ label, valor, aoSalvar }: { label: string; valor: string; aoSalvar: (v: string) => void }) {
+  const [texto, setTexto] = useState(valor)
+  const editando = useRef(false)
+  const timer = useRef<number>(0)
+
+  // acompanha o servidor apenas quando o usuário não está no meio da digitação
+  useEffect(() => { if (!editando.current) setTexto(valor) }, [valor])
+
+  return (
+    <div className="field" style={{ marginBottom: 0 }}>
+      <label>{label}</label>
+      <input
+        value={texto}
+        onFocus={() => { editando.current = true }}
+        onChange={e => {
+          setTexto(e.target.value)
+          clearTimeout(timer.current)
+          timer.current = window.setTimeout(() => aoSalvar(e.target.value), 700)
+        }}
+        onBlur={e => {
+          editando.current = false
+          clearTimeout(timer.current)
+          if (e.target.value !== valor) aoSalvar(e.target.value)
+        }}
+      />
+    </div>
+  )
+}
 
 function EnvVars({ vars }: { vars: [string, string][] }) {
   const [copiado, setCopiado] = useState(false)
@@ -53,19 +103,6 @@ export default function Configuracoes() {
     setDiagnosticando(true)
     try { setDiag(await s.diagnosticarEmail()) } finally { setDiagnosticando(false) }
   }
-
-  const Section = ({ icon, title, desc, children }: { icon: React.ReactNode; title: string; desc: string; children: React.ReactNode }) => (
-    <div className="card mb-16" style={{ padding: '18px 20px' }}>
-      <div className="row gap-10 mb-8">
-        <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--purple-soft)', color: 'var(--purple)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon}</div>
-        <div>
-          <b style={{ fontSize: 14.5 }}>{title}</b>
-          <div className="muted-sm">{desc}</div>
-        </div>
-      </div>
-      <div style={{ paddingLeft: 42 }}>{children}</div>
-    </div>
-  )
 
   return (
     <div className="content-narrow" style={{ maxWidth: 760 }}>
@@ -395,14 +432,8 @@ export default function Configuracoes() {
 
       <Section icon={<PenLine size={15} />} title="Identidade" desc="Nome da loja e assinatura usada no fim de cada resposta.">
         <div className="grid-2">
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>Nome da loja</label>
-            <input value={s.config.nomeLoja} onChange={e => s.setConfig({ nomeLoja: e.target.value })} />
-          </div>
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>Assinatura</label>
-            <input value={s.config.assinatura} onChange={e => s.setConfig({ assinatura: e.target.value })} />
-          </div>
+          <CampoTexto label="Nome da loja" valor={s.config.nomeLoja} aoSalvar={v => s.setConfig({ nomeLoja: v })} />
+          <CampoTexto label="Assinatura" valor={s.config.assinatura} aoSalvar={v => s.setConfig({ assinatura: v })} />
         </div>
       </Section>
 
