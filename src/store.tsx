@@ -26,6 +26,8 @@ export interface Ticket {
   respondidoEm?: string
   enviaEm?: number
   geradoPorIA?: boolean
+  erroEnvio?: string
+  tentativasEnvio?: number
 }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }

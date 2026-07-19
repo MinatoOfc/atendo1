@@ -7,7 +7,7 @@ import {
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
 import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
-import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, diagnosticar, statusEmail } from './mail.js'
+import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, verificarEnvio, diagnosticar, statusEmail } from './mail.js'
 import crypto from 'crypto'
 import {
   buscarPedidosShopify, buscarProdutosShopify, testarShopify, statusShopify,
@@ -169,19 +169,42 @@ async function enviarResposta(ticket, texto) {
   ticket.lido = true
 }
 
-// Timer do envio automático agendado
+// Timer do envio automático agendado.
+// A trava evita que um envio lento seja disparado de novo a cada tique,
+// o que reenviaria o mesmo e-mail várias vezes em paralelo.
+const enviando = new Set()
+const MAX_TENTATIVAS = 3
+
 setInterval(async () => {
   const agora = Date.now()
-  const vencidos = state.tickets.filter(t => t.status === 'aprovacao' && t.enviaEm && t.enviaEm <= agora)
+  const vencidos = state.tickets.filter(t =>
+    t.status === 'aprovacao' && t.enviaEm && t.enviaEm <= agora && !enviando.has(t.id))
+  if (!vencidos.length) return
+
   for (const t of vencidos) {
+    enviando.add(t.id)
     try {
       await enviarResposta(t, t.rascunho || '')
+      t.erroEnvio = undefined
+      t.tentativasEnvio = undefined
     } catch (err) {
-      console.error('[auto-envio] falhou para', t.de, err.message)
-      t.enviaEm = agora + 5 * 60_000 // tenta de novo em 5 min
+      t.tentativasEnvio = (t.tentativasEnvio || 0) + 1
+      t.erroEnvio = err.message
+      console.error(`[auto-envio] tentativa ${t.tentativasEnvio}/${MAX_TENTATIVAS} falhou para ${t.de}: ${err.message}`)
+
+      if (t.tentativasEnvio >= MAX_TENTATIVAS) {
+        // Para de tentar em silêncio: manda para você decidir, com o motivo à vista
+        t.status = 'humano'
+        t.enviaEm = undefined
+        t.motivoEscalada = `Não foi possível enviar após ${MAX_TENTATIVAS} tentativas: ${err.message}`
+      } else {
+        t.enviaEm = agora + t.tentativasEnvio * 60_000 // 1 min, depois 2 min
+      }
+    } finally {
+      enviando.delete(t.id)
     }
   }
-  if (vencidos.length) persistir()
+  persistir()
 }, 5000)
 
 // Sincronização periódica quando há caixa real conectada
@@ -204,8 +227,13 @@ app.post('/api/sync', async (req, res) => {
 })
 
 app.post('/api/email/testar', async (req, res) => {
-  const s = await verificarConexao()
-  res.json({ status: s, state: visao() })
+  const leitura = await verificarConexao()
+  const envio = await verificarEnvio()
+  // A leitura pode estar OK e o envio não — o usuário precisa ver os dois
+  if (leitura.ok && envio.ok === false) {
+    Object.assign(statusEmail, { ok: false, erro: `Leitura (IMAP) OK, mas o envio falhou. ${envio.erro}` })
+  }
+  res.json({ status: { ...statusEmail }, state: visao() })
 })
 
 app.post('/api/ia/testar', async (req, res) => {

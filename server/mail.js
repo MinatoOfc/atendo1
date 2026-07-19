@@ -181,9 +181,42 @@ function getTransporte() {
     transporte = nodemailer.createTransport({
       host: smtpHost, port: smtpPort, secure: smtpPort === 465,
       auth: { user, pass },
+      // Sem estes limites, uma porta bloqueada deixa o envio pendurado para sempre
+      connectionTimeout: 20_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
     })
   }
   return transporte
+}
+
+/** Valida o envio (SMTP) separadamente da leitura (IMAP). */
+export async function verificarEnvio() {
+  if (!emailConfigurado) return { ok: null, erro: null }
+  try {
+    await getTransporte().verify()
+    return { ok: true, erro: null }
+  } catch (err) {
+    return { ok: false, erro: traduzirErroEnvio(err) }
+  }
+}
+
+function traduzirErroEnvio(err) {
+  const m = String(err?.message || err)
+  const code = err?.code
+  if (/AUTHENTICATION\s*FAILED|Invalid login|535|\bEAUTH\b/i.test(m) || code === 'EAUTH') {
+    return `O servidor de envio recusou o login de ${user}. Confirme a senha da caixa de e-mail.`
+  }
+  if (code === 'ETIMEDOUT' || code === 'ESOCKET' || /timeout/i.test(m)) {
+    return `Tempo esgotado ao conectar em ${smtpHost}:${smtpPort}. Se o servidor bloqueia a porta ${smtpPort}, tente a alternativa definindo EMAIL_SMTP_PORT=587.`
+  }
+  if (code === 'ECONNREFUSED') {
+    return `Conexão recusada em ${smtpHost}:${smtpPort}. Verifique host e porta (tente EMAIL_SMTP_PORT=587).`
+  }
+  if (code === 'EENVELOPE' || /recipient|sender|relay/i.test(m)) {
+    return `O servidor recusou o destinatário ou remetente: ${m.slice(0, 160)}`
+  }
+  return m.slice(0, 250)
 }
 
 export async function enviarEmailReal({ para, assunto, corpo }) {
@@ -198,6 +231,6 @@ export async function enviarEmailReal({ para, assunto, corpo }) {
     })
     return true
   } catch (err) {
-    throw new Error(traduzirErro(err))
+    throw new Error(traduzirErroEnvio(err))
   }
 }

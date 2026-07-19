@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  ArrowLeft, Check, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send,
+  ArrowLeft, Check, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
@@ -31,6 +31,7 @@ export function CountdownPill({ ate }: { ate: number }) {
     return () => clearInterval(i)
   }, [])
   const resta = Math.max(0, Math.floor((ate - Date.now()) / 1000))
+  if (resta === 0) return <span className="timer-pill"><Send size={11} /> enviando…</span>
   const mm = String(Math.floor(resta / 60)).padStart(2, '0')
   const ss = String(resta % 60).padStart(2, '0')
   return <span className="timer-pill"><Clock size={12} /> envia em {mm}:{ss}</span>
@@ -62,6 +63,15 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
 
       {t.motivoEscalada && t.status === 'humano' && (
         <div className="banner card-purple mb-12"><Users size={15} color="var(--purple)" /> <b>Sinalizado para você:</b> {t.motivoEscalada}</div>
+      )}
+
+      {t.erroEnvio && (
+        <div className="banner mb-12" style={{ borderColor: '#fecaca', background: '#fef7f7', alignItems: 'flex-start' }}>
+          <AlertTriangle size={15} color="var(--red)" style={{ marginTop: 2 }} />
+          <span>
+            <b>O envio falhou{t.tentativasEnvio ? ` (tentativa ${t.tentativasEnvio})` : ''}:</b> {t.erroEnvio}
+          </span>
+        </div>
       )}
 
       {t.corpo && (
