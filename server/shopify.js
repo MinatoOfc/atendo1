@@ -2,7 +2,7 @@ const lojaBruta = (process.env.SHOPIFY_STORE || '').trim()
 const token = (process.env.SHOPIFY_ADMIN_TOKEN || '').trim()
 // A Shopify aposenta cada versão da API depois de ~12 meses; deixe configurável
 // para não quebrar quando esta expirar.
-const versao = (process.env.SHOPIFY_API_VERSION || '2026-01').trim()
+const versao = (process.env.SHOPIFY_API_VERSION || '2026-07').trim()
 
 // Aceita "loja", "loja.myshopify.com" ou a URL completa colada do navegador
 const loja = lojaBruta
