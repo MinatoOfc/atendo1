@@ -49,6 +49,7 @@ export interface Pedido {
   id: string; numero: string; cliente: string; email: string; pais: string
   valor: number; status: 'aguardando' | 'transito' | 'entregue' | 'problema'
   rastreio: string; criadoEm: string; lojaId?: string
+  urlRastreio?: string | null; transportadora?: string | null
 }
 
 export interface Config {

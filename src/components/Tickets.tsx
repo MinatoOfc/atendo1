@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Check, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
+  Package, ExternalLink,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
@@ -46,6 +47,72 @@ export function CountdownPill({ ate }: { ate: number }) {
   return <span className="timer-pill"><Clock size={12} /> envia em {mm}:{ss}</span>
 }
 
+const statusPedido: Record<string, { rotulo: string; cls: string }> = {
+  aguardando: { rotulo: 'Aguardando envio', cls: 'tag-amber' },
+  transito: { rotulo: 'Em trânsito', cls: 'tag-rastreio' },
+  entregue: { rotulo: 'Entregue', cls: 'tag-green' },
+  problema: { rotulo: 'Com problema', cls: 'tag-reembolso' },
+}
+
+/**
+ * Painel à direita do ticket: os pedidos do cliente, localizados pelo e-mail,
+ * para a equipe responder sem sair da conversa.
+ */
+function PainelPedidos({ t }: { t: Ticket }) {
+  const { pedidos, fmtMoeda } = useStore()
+  const emailCliente = t.de.trim().toLowerCase()
+  const doCliente = pedidos
+    .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
+    .filter(p => p.email && p.email.trim().toLowerCase() === emailCliente)
+    .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''))
+    .slice(0, 5)
+
+  return (
+    <aside style={{ width: 280, flexShrink: 0 }}>
+      <div className="card" style={{ padding: '14px 16px' }}>
+        <div className="row gap-8 mb-12">
+          <Package size={15} color="var(--purple)" />
+          <b style={{ fontSize: 13.5 }}>Pedidos do cliente</b>
+        </div>
+        {doCliente.length === 0 ? (
+          <p className="muted-sm" style={{ lineHeight: 1.6 }}>
+            Nenhum pedido localizado para <b>{t.de}</b>.
+            <br /><br />
+            O cliente pode ter comprado com outro e-mail — peça o número do pedido na resposta.
+          </p>
+        ) : (
+          doCliente.map(p => (
+            <div key={p.id} className="card-soft mb-8" style={{ padding: '10px 12px' }}>
+              <div className="row spread mb-8">
+                <b style={{ fontSize: 13 }}>{p.numero}</b>
+                <span className={`tag ${statusPedido[p.status]?.cls ?? 'tag-outro'}`}>
+                  {statusPedido[p.status]?.rotulo ?? p.status}
+                </span>
+              </div>
+              <div className="muted-sm" style={{ display: 'grid', gap: 3 }}>
+                <span>{fmtMoeda(p.valor)} · {p.pais}</span>
+                <span>{p.criadoEm && new Date(p.criadoEm + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
+                {p.rastreio && p.rastreio !== '—' && (
+                  <span style={{ fontFamily: 'monospace', fontSize: 11.5, wordBreak: 'break-all' }}>
+                    {p.rastreio}
+                    {p.urlRastreio && (
+                      <a href={p.urlRastreio} target="_blank" rel="noreferrer" title="Abrir rastreio"
+                        style={{ marginLeft: 6, color: 'var(--purple)', verticalAlign: -2 }}>
+                        <ExternalLink size={12} />
+                      </a>
+                    )}
+                  </span>
+                )}
+                {p.transportadora && <span>{p.transportadora}</span>}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </aside>
+  )
+}
+
 const rotuloStatus: Record<string, string> = {
   inbox: 'Aguardando primeira resposta',
   aprovacao: 'Aguardando sua aprovação',
@@ -87,7 +154,8 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   }
 
   return (
-    <div className="content-narrow">
+    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', maxWidth: 1180, margin: '0 auto' }}>
+    <div style={{ flex: 1, minWidth: 0 }}>
       <button className="btn btn-sm mb-16" onClick={onBack}><ArrowLeft size={14} /> Voltar</button>
 
       <div className="row gap-10 mb-12" style={{ flexWrap: 'wrap' }}>
@@ -232,6 +300,9 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           )}
         </div>
       )}
+    </div>
+
+    <PainelPedidos t={t} />
     </div>
   )
 }
