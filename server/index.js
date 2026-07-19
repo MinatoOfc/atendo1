@@ -10,7 +10,7 @@ import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
 import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, diagnosticar, statusEmail } from './mail.js'
 import crypto from 'crypto'
 import {
-  buscarPedidosShopify, testarShopify, statusShopify,
+  buscarPedidosShopify, buscarProdutosShopify, testarShopify, statusShopify,
   oauthDisponivel, shopifyPronta, carregarSessao,
   urlInstalacao, hmacValido, trocarCodigoPorToken,
 } from './shopify.js'
@@ -36,6 +36,7 @@ function visao() {
     politicas: state.politicas,
     faqs: state.faqs,
     pedidos: state.pedidos,
+    produtos: state.produtos ?? [],
     config: {
       ...state.config,
       // integrações reais têm precedência sobre as conexões de demonstração
@@ -111,10 +112,11 @@ async function sincronizar() {
   try {
     let novos = 0
 
-    // Pedidos reais da Shopify
+    // Pedidos e catálogo reais da Shopify
     if (shopifyPronta()) {
-      const pedidos = await buscarPedidosShopify()
+      const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
       if (pedidos) state.pedidos = pedidos
+      if (produtos) state.produtos = produtos
     }
 
     if (emailConfigurado) {
@@ -240,10 +242,11 @@ app.get('/api/shopify/callback', async (req, res) => {
   try {
     const { loja, token } = await trocarCodigoPorToken(shop, code)
     state.shopify = { loja, token, instaladoEm: new Date().toISOString() }
-    const pedidos = await buscarPedidosShopify()
+    const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
     if (pedidos) state.pedidos = pedidos
+    if (produtos) state.produtos = produtos
     persistir()
-    console.log(`[shopify] conectada via OAuth: ${loja} (${state.pedidos.length} pedidos)`)
+    console.log(`[shopify] conectada via OAuth: ${loja} (${state.pedidos.length} pedidos, ${state.produtos.length} produtos)`)
     res.redirect('/#/configuracoes')
   } catch (err) {
     console.error('[shopify] OAuth falhou:', err.message)
@@ -261,8 +264,10 @@ app.post('/api/shopify/desconectar', (req, res) => {
 app.post('/api/shopify/testar', async (req, res) => {
   const s = await testarShopify()
   if (s.ok) {
-    const pedidos = await buscarPedidosShopify()
-    if (pedidos) { state.pedidos = pedidos; persistir() }
+    const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
+    if (pedidos) state.pedidos = pedidos
+    if (produtos) state.produtos = produtos
+    persistir()
   }
   res.json({ status: { ...statusShopify }, state: visao() })
 })
@@ -427,9 +432,11 @@ app.listen(PORT, async () => {
   if (shopifyPronta()) {
     const t = await testarShopify()
     if (t.ok) {
-      const pedidos = await buscarPedidosShopify()
-      if (pedidos) { state.pedidos = pedidos; persistir() }
-      console.log(`  Shopify OK — ${state.pedidos.length} pedidos de ${t.loja}`)
+      const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
+      if (pedidos) state.pedidos = pedidos
+      if (produtos) state.produtos = produtos
+      persistir()
+      console.log(`  Shopify OK — ${state.pedidos.length} pedidos e ${state.produtos.length} produtos de ${t.loja}`)
     } else {
       console.error(`  SHOPIFY FALHOU: ${t.erro}`)
     }

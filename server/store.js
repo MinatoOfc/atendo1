@@ -23,6 +23,7 @@ export const estadoInicial = {
   politicas: [],
   faqs: [],
   pedidos: [],
+  produtos: [],
   config: { ...configPadrao },
   emailsProcessados: [], // message-ids já transformados em ticket
   // Credencial obtida via OAuth da Shopify. NUNCA é enviada ao frontend.
@@ -30,11 +31,21 @@ export const estadoInicial = {
 }
 
 export function carregar() {
+  let raw
   try {
-    const raw = fs.readFileSync(FILE, 'utf8')
-    const s = JSON.parse(raw)
-    return { ...estadoInicial, ...s, config: { ...configPadrao, ...s.config } }
+    raw = fs.readFileSync(FILE, 'utf8')
   } catch {
+    return structuredClone(estadoInicial) // primeira execução: arquivo ainda não existe
+  }
+  try {
+    // remove BOM, que alguns editores adicionam e faz o JSON.parse falhar
+    const s = JSON.parse(raw.replace(/^﻿/, ''))
+    return { ...estadoInicial, ...s, config: { ...configPadrao, ...s.config } }
+  } catch (err) {
+    // Nunca descartar dados em silêncio: preserva o arquivo ilegível para inspeção
+    const backup = `${FILE}.corrompido-${Date.now()}`
+    try { fs.copyFileSync(FILE, backup) } catch {}
+    console.error(`[store] ${FILE} está ilegível (${err.message}). Uma cópia foi salva em ${backup} e o app começou com o estado vazio.`)
     return structuredClone(estadoInicial)
   }
 }

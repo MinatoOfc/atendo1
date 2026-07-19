@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Plug, Wand2, Zap, X, Mail, CheckSquare, Users, Package, Video,
+  Plug, Wand2, Zap, X, Mail, CheckSquare, Users, Package, Tag,
   ArrowRight, RefreshCw, Info, ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { useStore, saudacaoDia } from '../store'
@@ -25,7 +25,7 @@ export default function Inicio() {
     { icon: <CheckSquare size={15} />, label: 'Respostas aguardando aprovação', n: s.aguardandoAprovacao.length, to: '/aprovacoes' },
     { icon: <Users size={15} />, label: 'Casos que pedem você', n: s.casosHumanos.length, to: '/humano' },
     { icon: <Package size={15} />, label: 'Pedidos aguardando envio', n: aguardandoEnvio, to: '/pedidos' },
-    { icon: <Video size={15} />, label: 'UGC com conteúdo pendente', n: 0, to: '/ugc' },
+    { icon: <Tag size={15} />, label: 'Produtos esgotados no catálogo', n: s.produtos.filter(p => p.ativo && p.estoque <= 0).length, to: '/produtos' },
   ]
   const total = precisam.reduce((a, p) => a + p.n, 0)
 

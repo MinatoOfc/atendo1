@@ -10,7 +10,7 @@ import Spam from './pages/Spam'
 import Lixeira from './pages/Lixeira'
 import Pedidos from './pages/Pedidos'
 import Prazos from './pages/Prazos'
-import Ugc from './pages/Ugc'
+import Produtos from './pages/Produtos'
 import Ganhos from './pages/Ganhos'
 import Configuracoes from './pages/Configuracoes'
 
@@ -28,7 +28,9 @@ export default function App() {
         <Route path="/lixeira" element={<Lixeira />} />
         <Route path="/pedidos" element={<Pedidos />} />
         <Route path="/prazos" element={<Prazos />} />
-        <Route path="/ugc" element={<Ugc />} />
+        <Route path="/produtos" element={<Produtos />} />
+        {/* rota antiga da UGC, agora substituída por Produtos */}
+        <Route path="/ugc" element={<Navigate to="/produtos" replace />} />
         <Route path="/ganhos" element={<Ganhos />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
         <Route path="*" element={<Navigate to="/" replace />} />

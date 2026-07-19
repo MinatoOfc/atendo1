@@ -62,15 +62,39 @@ const SCHEMA = {
   },
 }
 
-function montarSystem(state) {
+function preco(p) {
+  if (!p.precoMin) return 'preço sob consulta'
+  return p.precoMin === p.precoMax ? `R$ ${p.precoMin.toFixed(2)}` : `R$ ${p.precoMin.toFixed(2)} a R$ ${p.precoMax.toFixed(2)}`
+}
+
+function montarCatalogo(produtos) {
+  const ativos = produtos.filter(p => p.ativo)
+  if (!ativos.length) return '(catálogo não sincronizado — não afirme quais produtos a loja vende; peça ao cliente o que ele procura)'
+  const linhas = ativos.slice(0, 120).map(p => {
+    const partes = [`- ${p.titulo} — ${preco(p)}`]
+    if (p.tipo) partes.push(`categoria: ${p.tipo}`)
+    if (p.variantes.length) partes.push(`opções: ${p.variantes.slice(0, 8).join(', ')}`)
+    partes.push(p.estoque > 0 ? `em estoque (${p.estoque})` : 'sem estoque no momento')
+    if (p.descricao) partes.push(p.descricao.slice(0, 140))
+    return partes.join(' | ') + `\n  link: ${p.url}`
+  })
+  const extra = ativos.length > 120 ? `\n(e mais ${ativos.length - 120} produtos — se o cliente procurar algo fora desta lista, peça mais detalhes)` : ''
+  return linhas.join('\n') + extra
+}
+
+export function montarSystem(state) {
   const politicas = state.politicas.filter(p => p.ativa)
   const faqs = state.faqs.filter(f => f.ativa)
+  const produtos = state.produtos ?? []
   return [
     `Você é o atendimento ao cliente da loja "${state.config.nomeLoja}", um e-commerce.`,
     `Sua tarefa: ler o e-mail do cliente, classificá-lo e escrever a resposta no idioma do cliente.`,
     ``,
     `Regras invioláveis:`,
-    `- As políticas e FAQs abaixo são a ÚNICA fonte de verdade. NUNCA invente prazos, valores, regras ou promessas que não estejam nelas.`,
+    `- As políticas, FAQs e o catálogo abaixo são a ÚNICA fonte de verdade. NUNCA invente prazos, valores, regras, produtos ou promessas que não estejam neles.`,
+    `- Ao falar de produtos, use apenas os do catálogo, com o nome e o preço exatos. Nunca invente um produto, preço ou disponibilidade.`,
+    `- Se o cliente perguntar o que a loja vende, responda citando os produtos reais do catálogo (os mais relevantes para a pergunta), com preço e link.`,
+    `- Se o cliente procurar algo que não existe no catálogo, diga com clareza que não trabalhamos com aquilo e sugira o que temos de mais próximo.`,
     `- Responda no idioma em que o cliente escreveu.`,
     `- Tom: cordial, direto, humano. Sem parecer robô. Termine com a assinatura: "${state.config.assinatura}".`,
     ``,
@@ -92,6 +116,9 @@ function montarSystem(state) {
     ``,
     `FAQs:`,
     faqs.length ? faqs.map(f => `- P: ${f.pergunta}\n  R: ${f.resposta}`).join('\n') : '(nenhuma cadastrada)',
+    ``,
+    `Catálogo de produtos da loja:`,
+    montarCatalogo(produtos),
   ].join('\n')
 }
 

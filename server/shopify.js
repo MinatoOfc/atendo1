@@ -7,7 +7,7 @@ const tokenFixo = (process.env.SHOPIFY_ADMIN_TOKEN || '').trim()
 const clientId = (process.env.SHOPIFY_CLIENT_ID || '').trim()
 const clientSecret = (process.env.SHOPIFY_CLIENT_SECRET || '').trim()
 const versao = (process.env.SHOPIFY_API_VERSION || '2026-07').trim()
-const escopos = (process.env.SHOPIFY_SCOPES || 'read_orders,read_all_orders,read_customers,read_fulfillments').trim()
+const escopos = (process.env.SHOPIFY_SCOPES || 'read_orders,read_all_orders,read_customers,read_fulfillments,read_products').trim()
 
 // Aceita "loja", "loja.myshopify.com" ou a URL completa colada do navegador
 function normalizar(v) {
@@ -160,6 +160,42 @@ export async function buscarPedidosShopify() {
   registrar(true, null)
   statusShopify.pedidos = pedidos.length
   return pedidos
+}
+
+function mapearProduto(p, loja) {
+  const variantes = p.variants || []
+  const precos = variantes.map(v => Number(v.price || 0)).filter(n => n > 0)
+  const estoque = variantes.reduce((soma, v) => soma + (Number(v.inventory_quantity) || 0), 0)
+  return {
+    id: String(p.id),
+    titulo: p.title,
+    tipo: p.product_type || '',
+    marca: p.vendor || '',
+    tags: (p.tags || '').split(',').map(t => t.trim()).filter(Boolean),
+    precoMin: precos.length ? Math.min(...precos) : 0,
+    precoMax: precos.length ? Math.max(...precos) : 0,
+    estoque,
+    ativo: p.status === 'active',
+    variantes: variantes.map(v => v.title).filter(t => t && t !== 'Default Title'),
+    url: `https://${loja}/products/${p.handle}`,
+    // descrição sem HTML, curta — vai para o contexto da IA
+    descricao: String(p.body_html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300),
+  }
+}
+
+export async function buscarProdutosShopify() {
+  const c = credenciais()
+  if (!c) return null
+  const campos = 'id,title,body_html,vendor,product_type,handle,status,tags,variants'
+  const { dados, erro } = await chamar(`products.json?limit=250&fields=${campos}`)
+  if (erro) {
+    // Sem o escopo read_products a Shopify devolve 403; avisa de forma específica
+    if (/403|recusou o acesso/i.test(erro)) {
+      registrar(false, 'Faltou a permissão de leitura de produtos. No app da Shopify, adicione o escopo read_products aos Scopes, libere uma nova versão e reinstale o app.')
+    }
+    return null
+  }
+  return (dados.products || []).map(p => mapearProduto(p, c.loja))
 }
 
 export async function testarShopify() {

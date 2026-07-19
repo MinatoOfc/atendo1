@@ -31,6 +31,12 @@ export interface Ticket {
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
 export interface Faq { id: string; pergunta: string; resposta: string; ativa: boolean }
 
+export interface Produto {
+  id: string; titulo: string; tipo: string; marca: string; tags: string[]
+  precoMin: number; precoMax: number; estoque: number; ativo: boolean
+  variantes: string[]; url: string; descricao: string
+}
+
 export interface Pedido {
   id: string; numero: string; cliente: string; email: string; pais: string
   valor: number; status: 'aguardando' | 'transito' | 'entregue' | 'problema'
@@ -78,6 +84,7 @@ interface ServerState {
   politicas: Politica[]
   faqs: Faq[]
   pedidos: Pedido[]
+  produtos: Produto[]
   config: Config
   integracoes: Integracoes
 }
@@ -90,7 +97,7 @@ const configPadrao: Config = {
 }
 
 const estadoVazio: ServerState = {
-  tickets: [], politicas: [], faqs: [], pedidos: [],
+  tickets: [], politicas: [], faqs: [], pedidos: [], produtos: [],
   config: configPadrao,
   integracoes: {
     email: false, shopify: false, ia: false, shopifyOauth: false,

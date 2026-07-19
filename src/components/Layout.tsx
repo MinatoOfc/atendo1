@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   Home, Inbox, Send, CheckSquare, Users, BookOpen, Shield, Trash2,
-  Package, Truck, Video, TrendingUp, HelpCircle, MessageSquare, Settings,
+  Package, Truck, Tag, TrendingUp, HelpCircle, MessageSquare, Settings,
   PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone,
 } from 'lucide-react'
 import { useStore } from '../store'
@@ -12,7 +12,7 @@ const titulos: Record<string, string> = {
   '/': 'Início', '/caixa': 'Caixa de Entrada', '/enviados': 'Enviados',
   '/aprovacoes': 'Aprovações', '/humano': 'Atendimento humano', '/conhecimento': 'Conhecimento',
   '/spam': 'Spam', '/lixeira': 'Lixeira', '/pedidos': 'Pedidos', '/prazos': 'Prazos de entrega',
-  '/ugc': 'UGC', '/ganhos': 'Ganhos', '/configuracoes': 'Configurações',
+  '/produtos': 'Produtos', '/ganhos': 'Ganhos', '/configuracoes': 'Configurações',
 }
 
 export default function Layout() {
@@ -66,7 +66,7 @@ export default function Layout() {
         <div className="sidebar-label">Loja</div>
         {item('/pedidos', <Package />, 'Pedidos')}
         {item('/prazos', <Truck />, 'Prazos de entrega')}
-        {item('/ugc', <Video />, 'UGC')}
+        {item('/produtos', <Tag />, 'Produtos')}
 
         <div className="sidebar-label">Crescimento</div>
         {item('/ganhos', <TrendingUp />, 'Ganhos')}
