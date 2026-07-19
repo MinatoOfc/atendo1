@@ -37,11 +37,16 @@ Sem a chave, as respostas são geradas por regras simples baseadas nas política
 
 | Variável | Exemplo |
 |---|---|
-| `EMAIL_PROVIDER` | `gmail`, `outlook`, `yahoo` ou `icloud` |
+| `EMAIL_PROVIDER` | `hostinger`, `gmail`, `outlook`, `yahoo`, `icloud`, `titan` ou `zoho` |
 | `EMAIL_USER` | `suporte@sualoja.com` |
-| `EMAIL_PASS` | senha de app (Gmail: myaccount.google.com → Segurança → Senhas de app) |
+| `EMAIL_PASS` | senha da caixa de e-mail |
+| `EMAIL_DIAS` | opcional, padrão `3` — janela de dias que o app considera ao ler a caixa |
 
-Domínio próprio: em vez de `EMAIL_PROVIDER`, use `EMAIL_IMAP_HOST`, `EMAIL_SMTP_HOST` e, se necessário, `EMAIL_IMAP_PORT` (padrão 993) e `EMAIL_SMTP_PORT` (padrão 465).
+**Hostinger** (e domínio próprio em geral): crie a caixa em hPanel → E-mails → Contas de e-mail e use a senha da própria caixa — não a senha do painel da Hostinger. Não precisa de senha de app.
+
+**Gmail**: exige verificação em duas etapas e uma *senha de app* de 16 letras gerada em myaccount.google.com/apppasswords. A senha normal da conta é sempre recusada.
+
+Outro servidor qualquer: em vez de `EMAIL_PROVIDER`, use `EMAIL_IMAP_HOST`, `EMAIL_SMTP_HOST` e, se necessário, `EMAIL_IMAP_PORT` (padrão 993) e `EMAIL_SMTP_PORT` (padrão 465).
 
 Com o e-mail configurado, o servidor lê a caixa a cada 60 segundos, transforma cada e-mail não lido em ticket com resposta pronta, e envia as respostas aprovadas de verdade.
 

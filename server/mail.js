@@ -7,6 +7,9 @@ const presets = {
   outlook: { imap: 'outlook.office365.com', smtp: 'smtp-mail.outlook.com' },
   yahoo: { imap: 'imap.mail.yahoo.com', smtp: 'smtp.mail.yahoo.com' },
   icloud: { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com' },
+  hostinger: { imap: 'imap.hostinger.com', smtp: 'smtp.hostinger.com' },
+  titan: { imap: 'imap.titan.email', smtp: 'smtp.titan.email' },
+  zoho: { imap: 'imap.zoho.com', smtp: 'smtp.zoho.com' },
 }
 
 const provider = (process.env.EMAIL_PROVIDER || '').trim().toLowerCase()
@@ -33,10 +36,14 @@ export const statusEmail = { ok: null, erro: null, verificadoEm: null }
 
 function traduzirErro(err) {
   const m = String(err?.responseText || err?.message || err)
-  if (/AUTHENTICATIONFAILED|Invalid credentials|Username and Password not accepted|535/i.test(m)) {
-    return provider === 'gmail' || /gmail|google/i.test(imapHost)
-      ? 'O Gmail recusou o login. Use uma SENHA DE APP de 16 letras (não a senha normal da conta) — exige verificação em duas etapas ativa — e confirme que o IMAP está ligado em Gmail → Configurações → Encaminhamento e POP/IMAP.'
-      : 'Usuário ou senha recusados pelo servidor de e-mail. Confirme as credenciais e se o provedor exige senha de aplicativo.'
+  if (/AUTHENTICATION\s*FAILED|Invalid credentials|Username and Password not accepted|LOGIN\s*failed|AUTHENTICATE\s*failed|535|\bEAUTH\b/i.test(m)) {
+    if (provider === 'gmail' || /gmail|google/i.test(imapHost)) {
+      return 'O Gmail recusou o login. Use uma SENHA DE APP de 16 letras (não a senha normal da conta) — exige verificação em duas etapas ativa — e confirme que o IMAP está ligado em Gmail → Configurações → Encaminhamento e POP/IMAP.'
+    }
+    if (/hostinger|titan/i.test(provider) || /hostinger|titan/i.test(imapHost)) {
+      return `O servidor recusou o login de ${user}. Use a senha da CAIXA DE E-MAIL (a que você definiu ao criar a conta no hPanel), não a senha do painel da Hostinger. Se esqueceu, redefina em hPanel → E-mails → Contas de e-mail → Alterar senha. Confirme também que o endereço existe exatamente assim.`
+    }
+    return `Usuário ou senha recusados pelo servidor de e-mail (${user}). Confirme as credenciais e se o provedor exige senha de aplicativo.`
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) return `Servidor não encontrado (${imapHost}). Verifique EMAIL_PROVIDER ou EMAIL_IMAP_HOST.`
   if (/ETIMEDOUT|ECONNREFUSED|ECONNRESET/i.test(m)) return `Sem conexão com ${imapHost}:${imapPort}. Verifique host e porta.`

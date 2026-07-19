@@ -166,7 +166,7 @@ export default function Configuracoes() {
                     ) : (
                       <p className="muted-sm">
                         Nenhuma mensagem nos últimos {diag.janelaDias} dias. Se você acabou de enviar o teste, confira se ele
-                        caiu no spam do Gmail ou se foi entregue em outra conta.
+                        caiu na pasta de spam da caixa ou se foi entregue em outro endereço.
                       </p>
                     )}
                   </>
@@ -178,15 +178,16 @@ export default function Configuracoes() {
           <>
             <span className="tag tag-amber">Não configurado — e-mails de demonstração</span>
             <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
-              Para Gmail: ative a verificação em duas etapas e gere uma <b>senha de app</b> em myaccount.google.com → Segurança → Senhas de app. Depois adicione no Railway:
+              <b>Hostinger:</b> crie a caixa em hPanel → E-mails → Contas de e-mail. Use a senha da própria caixa (não a do painel da Hostinger) e adicione no Railway:
             </p>
             <EnvVars vars={[
-              ['EMAIL_PROVIDER', 'gmail'],
+              ['EMAIL_PROVIDER', 'hostinger'],
               ['EMAIL_USER', 'suporte@sualoja.com'],
-              ['EMAIL_PASS', 'senha-de-app-de-16-letras'],
+              ['EMAIL_PASS', 'a-senha-da-caixa'],
             ]} />
-            <p className="muted-sm" style={{ marginTop: 8 }}>
-              Outros provedores: <code>EMAIL_PROVIDER</code> aceita <b>outlook</b>, <b>yahoo</b> e <b>icloud</b>. Domínio próprio: troque por <code>EMAIL_IMAP_HOST</code> e <code>EMAIL_SMTP_HOST</code>.
+            <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
+              <code>EMAIL_PROVIDER</code> também aceita <b>gmail</b> (exige senha de app), <b>outlook</b>, <b>yahoo</b>, <b>icloud</b>, <b>titan</b> e <b>zoho</b>.
+              Qualquer outro servidor: use <code>EMAIL_IMAP_HOST</code> e <code>EMAIL_SMTP_HOST</code> no lugar de <code>EMAIL_PROVIDER</code>.
             </p>
             <div className="row gap-8" style={{ marginTop: 12 }}>
               <input value={email} onChange={e => setEmail(e.target.value)} placeholder="ou registre um e-mail só para visual (demo)"
