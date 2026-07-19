@@ -89,8 +89,26 @@ export interface Loja {
   nome: string
   ativa: boolean
   moeda: string
-  email: { configurado: boolean; endereco: string | null; status: StatusEmail | null }
+  email: {
+    configurado: boolean; endereco: string | null; status: StatusEmail | null
+    provider?: string | null; remetenteNome?: string | null; origem?: 'site' | 'env' | null
+  }
   shopify: { conectada: boolean; dominio: string | null; modo: 'token' | 'oauth' | null; status: StatusShopify | null }
+}
+
+export interface Usuario { id: string; nome: string; email: string }
+
+export interface ConfigEmail {
+  provider?: string; user: string; pass: string
+  from?: string; remetenteNome?: string
+  imapHost?: string; smtpHost?: string; imapPort?: number; smtpPort?: number
+}
+
+export interface ResultadoTesteEmail {
+  ok: boolean
+  leitura?: { ok: boolean | null; erro: string | null }
+  envio?: { ok: boolean | null; erro: string | null; via?: string }
+  erro?: string
 }
 export interface Integracoes {
   email: boolean; shopify: boolean; ia: boolean
@@ -108,6 +126,7 @@ interface ServerState {
   produtos: Produto[]
   moeda: string
   lojas: Loja[]
+  provedoresEmail?: string[]
   config: Config
   integracoes: Integracoes
 }
@@ -146,6 +165,15 @@ async function api(caminho: string, metodo = 'POST', body?: unknown): Promise<{ 
 interface Store extends ServerState {
   carregado: boolean
   tipsFechados: string[]
+  usuario: Usuario | null
+  autenticando: boolean
+  entrar: (email: string, senha: string) => Promise<string | null>
+  registrar: (nome: string, email: string, senha: string) => Promise<string | null>
+  sair: () => void
+  atualizarConta: (dados: { nome?: string; senhaAtual?: string; novaSenha?: string }) => Promise<string | null>
+  salvarEmailLoja: (lojaId: string, cfg: ConfigEmail) => Promise<string | null>
+  removerEmailLoja: (lojaId: string) => void
+  testarEmailConfig: (cfg: ConfigEmail) => Promise<ResultadoTesteEmail>
   /** 'todas' ou o id da loja selecionada na seta do topo da barra lateral */
   lojaAtiva: string
   setLojaAtiva: (id: string) => void
@@ -195,20 +223,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try { return JSON.parse(localStorage.getItem(TIPS_KEY) ?? '[]') } catch { return [] }
   })
   const [lojaAtiva, setLojaAtivaState] = useState<string>(() => localStorage.getItem('atendo-loja-ativa') ?? 'todas')
+  const [usuario, setUsuario] = useState<Usuario | null>(null)
+  const [autenticando, setAutenticando] = useState(true)
   const debounces = useRef<Record<string, number>>({})
 
   useEffect(() => { localStorage.setItem(TIPS_KEY, JSON.stringify(tipsFechados)) }, [tipsFechados])
 
-  const aplicar = (r: { state?: ServerState }) => { if (r.state) setState(r.state) }
+  const aplicar = (r: { state?: ServerState; usuario?: Usuario }) => {
+    if (r.state) setState(r.state)
+    if (r.usuario) setUsuario(r.usuario)
+  }
 
-  // carga inicial + polling (pega envios automáticos e e-mails novos do servidor)
+  // sessão inicial + polling (pega envios automáticos e e-mails novos do servidor)
   useEffect(() => {
     let ativo = true
-    const buscar = () => api('/state', 'GET').then(r => { if (ativo) { aplicar(r); setCarregado(true) } }).catch(() => {})
+    const buscar = async () => {
+      try {
+        const resp = await fetch('/api/me')
+        if (resp.status === 401) { if (ativo) { setUsuario(null); setAutenticando(false) } return }
+        const r = await resp.json()
+        if (ativo) { aplicar(r); setCarregado(true); setAutenticando(false) }
+      } catch { /* servidor fora do ar — tenta de novo no próximo tique */ }
+    }
     buscar()
     const i = setInterval(buscar, 10_000)
     return () => { ativo = false; clearInterval(i) }
   }, [])
+
+  const autenticar = async (rota: string, corpo: unknown): Promise<string | null> => {
+    try {
+      const resp = await fetch(`/api${rota}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo),
+      })
+      const r = await resp.json()
+      if (!resp.ok) return r.erro ?? 'Não foi possível entrar.'
+      aplicar(r)
+      setCarregado(true)
+      return null
+    } catch {
+      return 'Servidor fora do ar. Tente novamente.'
+    }
+  }
 
   const store = useMemo<Store>(() => {
     const lojasVisiveis = state.lojas.filter(l => l.ativa)
@@ -229,6 +284,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     moeda: lojaSel?.moeda ?? state.moeda,
     carregado,
     tipsFechados,
+    usuario,
+    autenticando,
+    entrar: (email, senha) => autenticar('/login', { email, senha }),
+    registrar: (nome, email, senha) => autenticar('/registrar', { nome, email, senha }),
+    sair: () => {
+      fetch('/api/logout', { method: 'POST' }).finally(() => {
+        setUsuario(null)
+        setState(estadoVazio)
+      })
+    },
+    atualizarConta: async dados => {
+      const resp = await fetch('/api/conta', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+      })
+      const r = await resp.json()
+      if (!resp.ok) return r.erro ?? 'Não foi possível salvar.'
+      aplicar(r)
+      return null
+    },
+    salvarEmailLoja: async (lojaId, cfg) => {
+      const r = await api(`/lojas/${lojaId}/email`, 'POST', cfg)
+      if (r.erro) return r.erro
+      aplicar(r)
+      return null
+    },
+    removerEmailLoja: lojaId => api(`/lojas/${lojaId}/email`, 'DELETE').then(aplicar),
+    testarEmailConfig: async cfg => {
+      const r = (await api('/email/testar-config', 'POST', cfg)) as unknown as { resultado: ResultadoTesteEmail }
+      return r.resultado ?? { ok: false, erro: 'Sem resposta do servidor.' }
+    },
     lojaAtiva,
     lojasVisiveis,
     setLojaAtiva: id => { setLojaAtivaState(id); localStorage.setItem('atendo-loja-ativa', id) },
@@ -336,7 +421,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return true
     },
     }
-  }, [state, carregado, tipsFechados, lojaAtiva])
+  }, [state, carregado, tipsFechados, lojaAtiva, usuario, autenticando])
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>
 }

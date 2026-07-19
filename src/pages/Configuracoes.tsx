@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle, Search, Store } from 'lucide-react'
+import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle, Search, Store, UserRound, LogOut } from 'lucide-react'
 import { useStore } from '../store'
 import type { Diagnostico } from '../store'
 
@@ -17,6 +17,175 @@ function Section({ icon, title, desc, children }: { icon: React.ReactNode; title
         </div>
       </div>
       <div style={{ paddingLeft: 42 }}>{children}</div>
+    </div>
+  )
+}
+
+function FormularioSenha() {
+  const s = useStore()
+  const [atual, setAtual] = useState('')
+  const [nova, setNova] = useState('')
+  const [msg, setMsg] = useState<string | null>(null)
+  const [erroSenha, setErroSenha] = useState<string | null>(null)
+
+  const trocar = async () => {
+    setMsg(null); setErroSenha(null)
+    const falha = await s.atualizarConta({ senhaAtual: atual, novaSenha: nova })
+    if (falha) setErroSenha(falha)
+    else { setMsg('Senha alterada.'); setAtual(''); setNova('') }
+  }
+
+  return (
+    <div>
+      <b style={{ fontSize: 13 }}>Alterar senha</b>
+      <div className="grid-2" style={{ marginTop: 8 }}>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>Senha atual</label>
+          <input type="password" value={atual} onChange={e => setAtual(e.target.value)} autoComplete="current-password" />
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>Nova senha</label>
+          <input type="password" value={nova} onChange={e => setNova(e.target.value)} placeholder="Mínimo de 8 caracteres" autoComplete="new-password" />
+        </div>
+      </div>
+      {erroSenha && <p className="muted-sm" style={{ color: 'var(--red)', marginTop: 8 }}>{erroSenha}</p>}
+      {msg && <p className="muted-sm" style={{ color: 'var(--green)', marginTop: 8 }}>{msg}</p>}
+      <button className="btn btn-sm" style={{ marginTop: 10 }} onClick={trocar}
+        disabled={!atual || nova.length < 8}>
+        Alterar senha
+      </button>
+    </div>
+  )
+}
+
+const nomesProvedores: Record<string, string> = {
+  gmail: 'Gmail', outlook: 'Outlook', yahoo: 'Yahoo', icloud: 'iCloud',
+  hostinger: 'Hostinger', titan: 'Titan', zoho: 'Zoho',
+}
+
+/**
+ * Formulário de conexão de e-mail totalmente pelo site: escolhe o provedor,
+ * digita endereço e senha, testa e salva. A senha vai cifrada para o servidor
+ * e nunca volta para o navegador.
+ */
+function FormularioEmail({ lojaId }: { lojaId: string }) {
+  const s = useStore()
+  const [provider, setProvider] = useState('')
+  const [user, setUser] = useState('')
+  const [pass, setPass] = useState('')
+  const [remetenteNome, setRemetenteNome] = useState('Suporte')
+  const [avancado, setAvancado] = useState(false)
+  const [imapHost, setImapHost] = useState('')
+  const [smtpHost, setSmtpHost] = useState('')
+  const [from, setFrom] = useState('')
+  const [ocupado, setOcupado] = useState<'' | 'testando' | 'salvando'>('')
+  const [resultado, setResultado] = useState<string | null>(null)
+  const [erro, setErro] = useState<string | null>(null)
+
+  const cfg = () => ({ provider, user, pass, remetenteNome, from, imapHost, smtpHost })
+  const pronto = user.includes('@') && pass.length > 0 && (provider || (imapHost && smtpHost))
+
+  const testar = async () => {
+    setOcupado('testando'); setErro(null); setResultado(null)
+    try {
+      const r = await s.testarEmailConfig(cfg())
+      if (r.leitura?.ok) {
+        setResultado(`Leitura OK${r.envio?.ok ? ` · envio OK (${r.envio.via === 'resend' ? 'Resend' : 'SMTP'})` : r.envio?.erro ? ` · envio com problema: ${r.envio.erro}` : ''}`)
+      } else {
+        setErro(r.leitura?.erro ?? r.erro ?? 'Não foi possível conectar.')
+      }
+    } finally { setOcupado('') }
+  }
+
+  const salvar = async () => {
+    setOcupado('salvando'); setErro(null)
+    try {
+      const falha = await s.salvarEmailLoja(lojaId, cfg())
+      if (falha) setErro(falha)
+      else { setPass(''); setResultado(null) }
+    } finally { setOcupado('') }
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="field">
+        <label>Provedor</label>
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+          {(s.provedoresEmail ?? Object.keys(nomesProvedores)).map(p => (
+            <button key={p} type="button" className={'chip' + (provider === p ? ' active-purple' : '')}
+              onClick={() => { setProvider(p); setAvancado(false) }}>
+              {nomesProvedores[p] ?? p}
+            </button>
+          ))}
+          <button type="button" className={'chip' + (!provider && avancado ? ' active-purple' : '')}
+            onClick={() => { setProvider(''); setAvancado(true) }}>
+            Outro
+          </button>
+        </div>
+        <p className="muted-sm" style={{ marginTop: 6 }}>
+          Escolha o provedor e os servidores são preenchidos sozinhos. Use "Outro" para configurar manualmente.
+          {provider === 'gmail' && <b> Gmail exige uma senha de app (myaccount.google.com/apppasswords), não a senha normal.</b>}
+          {provider === 'hostinger' && <b> Use a senha da caixa de e-mail (definida no hPanel), não a do painel da Hostinger.</b>}
+        </p>
+      </div>
+
+      <div className="grid-2">
+        <div className="field">
+          <label>Endereço de e-mail</label>
+          <input value={user} onChange={e => setUser(e.target.value)} placeholder="suporte@sualoja.com" autoComplete="off" />
+        </div>
+        <div className="field">
+          <label>Senha</label>
+          <input type="password" value={pass} onChange={e => setPass(e.target.value)} placeholder="Senha da caixa / senha de app" autoComplete="new-password" />
+        </div>
+      </div>
+      <div className="field">
+        <label>Nome do remetente</label>
+        <input value={remetenteNome} onChange={e => setRemetenteNome(e.target.value)} placeholder="Suporte" />
+      </div>
+
+      {avancado && (
+        <div className="grid-2">
+          <div className="field">
+            <label>Servidor IMAP</label>
+            <input value={imapHost} onChange={e => setImapHost(e.target.value)} placeholder="imap.seudominio.com" />
+          </div>
+          <div className="field">
+            <label>Servidor SMTP</label>
+            <input value={smtpHost} onChange={e => setSmtpHost(e.target.value)} placeholder="smtp.seudominio.com" />
+          </div>
+        </div>
+      )}
+      <div className="field">
+        <label>Remetente na Resend (opcional)</label>
+        <input value={from} onChange={e => setFrom(e.target.value)} placeholder="Só se o envio for pela Resend: endereço do domínio verificado" />
+      </div>
+
+      <p className="muted-sm mb-12" style={{ lineHeight: 1.5 }}>
+        🔒 Sua senha é guardada com criptografia AES-256 no servidor e usada apenas para ler e enviar os e-mails da sua loja. Ela nunca volta para o navegador.
+      </p>
+
+      {erro && (
+        <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: '#fecaca', background: '#fef7f7' }}>
+          <span className="muted-sm" style={{ color: 'var(--red)' }}>{erro}</span>
+        </div>
+      )}
+      {resultado && (
+        <div className="card-soft mb-12" style={{ padding: '10px 12px' }}>
+          <span className="muted-sm" style={{ color: 'var(--green)' }}><Check size={12} style={{ verticalAlign: -2, marginRight: 4 }} />{resultado}</span>
+        </div>
+      )}
+
+      <div className="row gap-8">
+        <button className="btn" onClick={testar} disabled={!pronto || !!ocupado}
+          style={!pronto ? { opacity: 0.5 } : undefined}>
+          {ocupado === 'testando' ? 'Testando…' : 'Testar conexão'}
+        </button>
+        <button className="btn btn-primary" onClick={salvar} disabled={!pronto || !!ocupado}
+          style={!pronto ? { opacity: 0.5 } : undefined}>
+          {ocupado === 'salvando' ? 'Conectando…' : 'Salvar e conectar'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -73,7 +242,6 @@ function EnvVars({ vars }: { vars: [string, string][] }) {
 
 export default function Configuracoes() {
   const s = useStore()
-  const [email, setEmail] = useState(s.config.emailConectado ?? '')
   const [testando, setTestando] = useState(false)
   const [diag, setDiag] = useState<Diagnostico | null>(null)
   const [diagnosticando, setDiagnosticando] = useState(false)
@@ -122,9 +290,7 @@ export default function Configuracoes() {
         <div className="banner card-purple mb-16">
           <Store size={15} color="var(--purple)" />
           <span>
-            Configurando a loja <b>{lojaSel?.nome}</b>
-            {lojaId === 'loja2' && <> — o e-mail dela usa as variáveis <code>EMAIL2_*</code></>}.
-            Para trocar de loja, use a seta no topo da barra lateral.
+            Configurando a loja <b>{lojaSel?.nome}</b>. Para trocar de loja, use a seta no topo da barra lateral.
           </span>
         </div>
       )}
@@ -274,30 +440,17 @@ export default function Configuracoes() {
           </>
         ) : (
           <>
-            <span className="tag tag-amber">Não configurado — e-mails de demonstração</span>
-            <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
-              <b>Hostinger:</b> crie a caixa em hPanel → E-mails → Contas de e-mail. Use a senha da própria caixa (não a do painel da Hostinger) e adicione no Railway:
-            </p>
-            <EnvVars vars={[
-              [`EMAIL${sufixo}_PROVIDER`, 'hostinger'],
-              [`EMAIL${sufixo}_USER`, 'suporte@sualoja.com'],
-              [`EMAIL${sufixo}_PASS`, 'a-senha-da-caixa'],
-            ]} />
-            <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
-              <code>EMAIL_PROVIDER</code> também aceita <b>gmail</b> (exige senha de app), <b>outlook</b>, <b>yahoo</b>, <b>icloud</b>, <b>titan</b> e <b>zoho</b>.
-              Qualquer outro servidor: use <code>EMAIL_IMAP_HOST</code> e <code>EMAIL_SMTP_HOST</code> no lugar de <code>EMAIL_PROVIDER</code>.
-            </p>
-            <div className="row gap-8" style={{ marginTop: 12 }}>
-              <input value={email} onChange={e => setEmail(e.target.value)} placeholder="ou registre um e-mail só para visual (demo)"
-                style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px', outline: 'none', fontSize: 13 }} />
-              {s.config.emailConectado ? (
-                <button className="btn btn-sm" onClick={() => { s.setConfig({ emailConectado: null }); setEmail('') }}><Unplug size={13} /> Remover</button>
-              ) : (
-                <button className="btn btn-sm" disabled={!email.includes('@')} style={!email.includes('@') ? { opacity: 0.5 } : undefined}
-                  onClick={() => s.setConfig({ emailConectado: email.trim() })}>Salvar (demo)</button>
-              )}
-            </div>
+            <span className="tag tag-amber">Não conectado — e-mails de demonstração</span>
+            <FormularioEmail lojaId={lojaId} />
           </>
+        )}
+        {emailOk && lojaSel?.email.origem === 'site' && (
+          <div className="row gap-8" style={{ marginTop: 12 }}>
+            <button className="btn btn-sm" onClick={() => { if (confirm(`Remover a conta de e-mail da loja "${lojaSel?.nome}"?`)) s.removerEmailLoja(lojaId) }}>
+              <Unplug size={13} /> Remover esta conta
+            </button>
+            <span className="muted-sm">Depois de remover, é só preencher o formulário de novo para trocar de caixa.</span>
+          </div>
         )}
       </Section>
 
@@ -455,8 +608,24 @@ export default function Configuracoes() {
         </div>
       </Section>
 
-      <Section icon={<Database size={15} />} title="Dados" desc="Tickets, políticas e FAQs ficam salvos no servidor (arquivo em disco).">
-        <button className="btn btn-danger" onClick={() => { if (confirm('Apagar todos os tickets, políticas, FAQs e conexões de demonstração?')) s.limparTudo() }}>
+      <Section icon={<UserRound size={15} />} title="Conta" desc="Sua conta pessoal do atendo.">
+        <div className="grid-2 mb-12">
+          <CampoTexto label="Nome" valor={s.usuario?.nome ?? ''} aoSalvar={v => { s.atualizarConta({ nome: v }) }} />
+          <div className="field" style={{ marginBottom: 0 }}>
+            <label>E-mail da conta</label>
+            <input value={s.usuario?.email ?? ''} disabled style={{ opacity: 0.7 }} />
+          </div>
+        </div>
+        <FormularioSenha />
+        <div style={{ marginTop: 14 }}>
+          <button className="btn" onClick={() => { if (confirm('Sair da sua conta?')) s.sair() }}>
+            <LogOut size={13} /> Sair da conta
+          </button>
+        </div>
+      </Section>
+
+      <Section icon={<Database size={15} />} title="Dados" desc="Tickets, políticas e FAQs ficam salvos no seu workspace, no banco de dados.">
+        <button className="btn btn-danger" onClick={() => { if (confirm('Apagar todos os tickets, políticas, FAQs e conexões deste workspace?')) s.limparTudo() }}>
           Apagar todos os dados
         </button>
       </Section>

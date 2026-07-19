@@ -22,11 +22,13 @@ const MAX_POR_SYNC = 20
 // Marca as respostas que o próprio atendo envia, para nunca reprocessá-las
 const HEADER_AUTO = 'x-atendo-auto'
 
+export const presetsDisponiveis = Object.keys(presets)
+
 /**
- * Cada loja tem sua conta de e-mail, lida das variáveis de ambiente:
+ * Configuração vinda das variáveis de ambiente (modo antigo, ainda suportado):
  * loja 1 usa EMAIL_USER/EMAIL_PASS/..., loja 2 usa EMAIL2_USER/EMAIL2_PASS/...
  */
-function lerConfig(sufixo) {
+export function lerConfigEnv(sufixo) {
   const env = k => (process.env[`EMAIL${sufixo}_${k}`] || '').trim()
   const provider = env('PROVIDER').toLowerCase()
   return {
@@ -42,8 +44,25 @@ function lerConfig(sufixo) {
   }
 }
 
-function criarConta(id, sufixo) {
-  const cfg = lerConfig(sufixo)
+/**
+ * Normaliza uma configuração vinda do banco (formulário do site).
+ */
+export function montarConfig({ provider = '', user = '', pass = '', imapHost = '', smtpHost = '', imapPort, smtpPort, from = '', remetenteNome = '' }) {
+  const p = String(provider).trim().toLowerCase()
+  return {
+    provider: p,
+    user: String(user).trim(),
+    pass: String(pass).replace(/\s+/g, ''),
+    imapHost: String(imapHost).trim() || presets[p]?.imap || '',
+    smtpHost: String(smtpHost).trim() || presets[p]?.smtp || '',
+    imapPort: Number(imapPort || 993),
+    smtpPort: Number(smtpPort || 465),
+    from: String(from).trim(),
+    remetenteNome: String(remetenteNome).trim(),
+  }
+}
+
+export function criarConta(id, cfg, sufixo = '') {
   const configurado = !!(cfg.user && cfg.pass && cfg.imapHost && cfg.smtpHost)
   const status = { ok: null, erro: null, verificadoEm: null, envio: null }
   const desde = () => new Date(Date.now() - diasJanela * 24 * 3600_000)
@@ -233,8 +252,10 @@ function criarConta(id, sufixo) {
     return novos
   }
 
+  const comNome = endereco => (cfg.remetenteNome ? `${cfg.remetenteNome} <${endereco}>` : endereco)
+
   async function enviarPorApiResend({ para, assunto, corpo }) {
-    const remetente = cfg.from || cfg.user
+    const remetente = comNome(cfg.from || cfg.user)
     const resp = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
@@ -267,7 +288,7 @@ function criarConta(id, sufixo) {
     if (podeApi) return enviarPorApiResend({ para, assunto: titulo, corpo })
     try {
       await getTransporte().sendMail({
-        from: cfg.user,
+        from: comNome(cfg.user),
         to: para,
         subject: titulo,
         text: corpo,
@@ -293,7 +314,15 @@ function criarConta(id, sufixo) {
   }
 }
 
-// loja1 ← EMAIL_*, loja2 ← EMAIL2_*
-export const contas = [criarConta('loja1', ''), criarConta('loja2', '2')]
-export const contaDaLoja = lojaId => contas.find(c => c.id === lojaId) ?? contas[0]
-export const algumEmailConfigurado = contas.some(c => c.configurado)
+/**
+ * Testa uma configuração sem salvar nada — usado pelo botão "Testar conexão"
+ * do formulário antes de o usuário confirmar.
+ */
+export async function testarConfig(cfgBruta) {
+  const cfg = montarConfig(cfgBruta)
+  const conta = criarConta('teste', cfg)
+  if (!conta.configurado) return { ok: false, erro: 'Preencha endereço, senha e provedor (ou os servidores IMAP/SMTP).' }
+  const leitura = await conta.verificarConexao()
+  const envio = await conta.verificarEnvio()
+  return { ok: !!leitura.ok && envio.ok !== false, leitura: { ok: leitura.ok, erro: leitura.erro }, envio }
+}

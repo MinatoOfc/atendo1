@@ -62,7 +62,7 @@ function SeletorLoja() {
 }
 
 export default function Layout() {
-  const { naoLidos, aguardandoAprovacao, casosHumanos, sincronizar } = useStore()
+  const { naoLidos, aguardandoAprovacao, casosHumanos, sincronizar, usuario } = useStore()
   const loc = useLocation()
   const [compor, setCompor] = useState(false)
   const [girando, setGirando] = useState(false)
@@ -148,8 +148,8 @@ export default function Layout() {
             <button className="icon-btn"><Globe /> PT <ChevronDown size={12} /></button>
             <button className="icon-btn"><Bell /></button>
             <div className="row gap-8">
-              <div className="avatar-sm">A</div>
-              <span style={{ fontWeight: 600 }}>allan</span>
+              <div className="avatar-sm">{(usuario?.nome?.[0] ?? 'A').toUpperCase()}</div>
+              <span style={{ fontWeight: 600 }}>{usuario?.nome ?? ''}</span>
               <ChevronDown size={13} color="var(--text-3)" />
             </div>
           </div>

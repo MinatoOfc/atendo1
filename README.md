@@ -6,7 +6,18 @@ Atendimento ao cliente para lojas Shopify que se responde sozinho. Lê cada e-ma
 
 - **Frontend**: React + TypeScript + Vite (pasta `src/`)
 - **Backend**: Node + Express (pasta `server/`) — lê IMAP, envia SMTP, consulta a Shopify Admin API e gera respostas com o Claude
-- **Estado**: arquivo JSON em `data/` (no Railway, use um volume)
+- **Multiusuário**: cada pessoa cria sua conta (login com e-mail e senha) e tem um workspace isolado, com suas lojas, tickets e integrações
+- **Banco**: PostgreSQL via `DATABASE_URL` (Railway); sem ela, arquivos em `data/` para desenvolvimento local
+
+## Contas e login
+
+O app pede login. O **primeiro usuário registrado herda os dados** de uma instalação antiga de usuário único (o `data/atendo.json` vira o workspace dele); os demais começam do zero. Senhas de usuário são guardadas com scrypt; sessões usam cookie httpOnly de 30 dias.
+
+As integrações são configuradas **pelo próprio site**, em Configurações:
+
+- **E-mail**: escolha o provedor (Gmail, Outlook, Yahoo, iCloud, Hostinger, Titan, Zoho ou outro), digite endereço e senha da caixa, teste e salve. A credencial é validada antes de salvar e guardada **cifrada com AES-256-GCM** no banco — nunca volta ao navegador.
+- **Shopify**: botão "Conectar Shopify" (OAuth) — o token fica só no servidor.
+- As variáveis de ambiente `EMAIL_*`/`EMAIL2_*` continuam funcionando como reserva para instalações antigas.
 
 Toda integração é opcional e configurada por variável de ambiente. O que não estiver configurado roda em **modo demonstração** (e-mails de exemplo, pedidos de exemplo, respostas por regras).
 
@@ -97,13 +108,15 @@ No app do Dev Dashboard, cadastre em **Redirect URLs**: `https://<sua-url>/api/s
 
 A Shopify aposenta cada versão da API depois de cerca de 12 meses. Quando a padrão expirar, defina `SHOPIFY_API_VERSION` com uma mais recente — a tela de Configurações avisa quando isso acontece.
 
-### Persistência
+### Banco de dados e segredos
 
 | Variável | Exemplo |
 |---|---|
-| `DATA_DIR` | `/data` |
+| `DATABASE_URL` | referência ao PostgreSQL do Railway (`${{Postgres.DATABASE_URL}}`) |
+| `ATENDO_SECRET` | opcional — chave fixa para cifrar credenciais; sem ela, uma é gerada e guardada no banco |
+| `DATA_DIR` | só para o modo sem Postgres (desenvolvimento local) |
 
-No Railway, crie um **Volume** montado em `/data` e defina `DATA_DIR=/data` — sem isso, tickets e configurações são zerados a cada deploy.
+Com `DATABASE_URL` definida, usuários, sessões e workspaces vivem no PostgreSQL e nada se perde em deploys. Sem ela, o app cai para arquivos em `DATA_DIR` (útil localmente).
 
 ## Como funciona o fluxo
 

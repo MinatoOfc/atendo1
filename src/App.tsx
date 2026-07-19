@@ -1,5 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { useStore } from './store'
 import Layout from './components/Layout'
+import Login from './pages/Login'
 import Inicio from './pages/Inicio'
 import CaixaEntrada from './pages/CaixaEntrada'
 import Enviados from './pages/Enviados'
@@ -15,6 +17,18 @@ import Ganhos from './pages/Ganhos'
 import Configuracoes from './pages/Configuracoes'
 
 export default function App() {
+  const { usuario, autenticando } = useStore()
+
+  if (autenticando) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
+        <div className="topbar-logo" style={{ fontSize: 26, opacity: 0.5 }}>atendo</div>
+      </div>
+    )
+  }
+
+  if (!usuario) return <Login />
+
   return (
     <Routes>
       <Route element={<Layout />}>
