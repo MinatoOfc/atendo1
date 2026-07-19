@@ -16,6 +16,11 @@ export default function AtendimentoHumano() {
             <p className="muted" style={{ marginTop: 4 }}>
               Emails que precisam de uma decisão ou consulta sua — o atendo sinalizou que não deve responder sozinho.
             </p>
+            <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
+              Estes <b>nunca</b> saem no automático, mesmo com o modo automático ligado — é a trava de segurança.
+              Em <b>Configurações → Automação</b> você escolhe o que cai aqui: reembolsos e casos sensíveis, e respostas
+              abaixo da confiança mínima.
+            </p>
           </div>
         }
         empty={
