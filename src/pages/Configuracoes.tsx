@@ -126,7 +126,7 @@ export default function Configuracoes() {
                 <span className="tag tag-outro">Verificando…</span>
               )}
               <span className="muted">{s.config.emailConectado}</span>
-              {status?.ok && <span className="muted-sm">lendo a caixa a cada 60 s</span>}
+              {status?.ok && <span className="muted-sm">lendo a cada 60 s{status.envioPorApi ? ' · enviando pela Resend' : ''}</span>}
               <button className="btn btn-sm" onClick={testar} disabled={testando}>
                 {testando ? 'Testando…' : 'Testar conexão'}
               </button>
@@ -137,9 +137,44 @@ export default function Configuracoes() {
             {status?.ok === false && status.erro && (
               <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: '#fecaca', background: '#fef7f7' }}>
                 <div className="row gap-8 mb-8" style={{ color: 'var(--red)' }}>
-                  <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>O servidor de e-mail recusou a conexão</b>
+                  <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>Leitura dos e-mails (IMAP)</b>
                 </div>
                 <p className="muted-sm" style={{ lineHeight: 1.6 }}>{status.erro}</p>
+              </div>
+            )}
+
+            {status?.envio && status.envio.ok !== null && (
+              <div className="card-soft" style={{
+                marginTop: 12, padding: '12px 14px',
+                borderColor: status.envio.ok ? undefined : '#fecaca',
+                background: status.envio.ok ? undefined : '#fef7f7',
+              }}>
+                <div className="row gap-8" style={{ color: status.envio.ok ? 'var(--green)' : 'var(--red)' }}>
+                  {status.envio.ok ? <Check size={14} /> : <AlertTriangle size={14} />}
+                  <b style={{ fontSize: 13 }}>
+                    Envio das respostas {status.envio.ok ? `funcionando (${status.envio.via === 'resend' ? 'API Resend' : 'SMTP'})` : 'com problema'}
+                  </b>
+                </div>
+                {status.envio.erro && <p className="muted-sm" style={{ lineHeight: 1.6, marginTop: 8 }}>{status.envio.erro}</p>}
+              </div>
+            )}
+
+            {!status?.envioPorApi && (
+              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px' }}>
+                <b style={{ fontSize: 13 }}>A hospedagem bloqueia o envio por SMTP?</b>
+                <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.6 }}>
+                  Railway, Vercel e similares costumam bloquear as portas de saída SMTP (465 e 587) para conter spam —
+                  a leitura continua funcionando, só o envio falha por tempo esgotado. A solução é enviar por API, que usa HTTPS
+                  e nunca é bloqueada. Crie uma conta em <b>resend.com</b>, verifique seu domínio e adicione no Railway:
+                </p>
+                <EnvVars vars={[
+                  ['RESEND_API_KEY', 're_...sua-chave...'],
+                  ['EMAIL_FROM', 'suporte@seudominio.com'],
+                ]} />
+                <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
+                  A leitura dos e-mails continua pelo IMAP normalmente; só o envio passa a usar a Resend.
+                  As respostas dos clientes voltam para a sua caixa, porque o campo de resposta aponta para {status?.remetente ?? 'ela'}.
+                </p>
               </div>
             )}
             {diag && (

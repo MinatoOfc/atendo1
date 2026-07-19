@@ -23,6 +23,9 @@ const imapPort = Number(process.env.EMAIL_IMAP_PORT || 993)
 const smtpPort = Number(process.env.EMAIL_SMTP_PORT || 465)
 // Janela de busca: e-mails mais antigos que isso são ignorados
 const diasJanela = Number(process.env.EMAIL_DIAS || 3)
+// Envio por API HTTP (porta 443), alternativa quando a hospedagem bloqueia SMTP
+const resendKey = (process.env.RESEND_API_KEY || '').trim()
+const remetente = (process.env.EMAIL_FROM || '').trim()
 const MAX_POR_SYNC = 20
 
 // Marca as respostas que o próprio atendo envia, para nunca reprocessá-las
@@ -30,6 +33,8 @@ const HEADER_AUTO = 'x-atendo-auto'
 
 export const emailConfigurado = !!(user && pass && imapHost && smtpHost)
 export const enderecoEmail = emailConfigurado ? user : null
+export const envioPorApi = !!resendKey
+export const enderecoRemetente = remetente || user
 
 // Estado da conexão, exposto na interface para não depender dos logs do servidor
 export const statusEmail = { ok: null, erro: null, verificadoEm: null }
@@ -192,10 +197,24 @@ function getTransporte() {
 
 /** Valida o envio (SMTP) separadamente da leitura (IMAP). */
 export async function verificarEnvio() {
+  if (envioPorApi) {
+    try {
+      const resp = await fetch('https://api.resend.com/domains', {
+        headers: { Authorization: `Bearer ${resendKey}` },
+      })
+      if ([400, 401, 403].includes(resp.status)) {
+        return { ok: false, erro: 'A Resend recusou a chave de API. Confira RESEND_API_KEY — ela começa com "re_" e é gerada em resend.com → API Keys.' }
+      }
+      if (!resp.ok) return { ok: false, erro: `A Resend respondeu ${resp.status} ao validar a chave.` }
+      return { ok: true, erro: null, via: 'resend' }
+    } catch (err) {
+      return { ok: false, erro: `Não foi possível alcançar a Resend: ${err.message}` }
+    }
+  }
   if (!emailConfigurado) return { ok: null, erro: null }
   try {
     await getTransporte().verify()
-    return { ok: true, erro: null }
+    return { ok: true, erro: null, via: 'smtp' }
   } catch (err) {
     return { ok: false, erro: traduzirErroEnvio(err) }
   }
@@ -207,11 +226,11 @@ function traduzirErroEnvio(err) {
   if (/AUTHENTICATION\s*FAILED|Invalid login|535|\bEAUTH\b/i.test(m) || code === 'EAUTH') {
     return `O servidor de envio recusou o login de ${user}. Confirme a senha da caixa de e-mail.`
   }
-  if (code === 'ETIMEDOUT' || code === 'ESOCKET' || /timeout/i.test(m)) {
-    return `Tempo esgotado ao conectar em ${smtpHost}:${smtpPort}. Se o servidor bloqueia a porta ${smtpPort}, tente a alternativa definindo EMAIL_SMTP_PORT=587.`
-  }
-  if (code === 'ECONNREFUSED') {
-    return `Conexão recusada em ${smtpHost}:${smtpPort}. Verifique host e porta (tente EMAIL_SMTP_PORT=587).`
+  if (code === 'ETIMEDOUT' || code === 'ESOCKET' || code === 'ECONNREFUSED' || /timeout/i.test(m)) {
+    const alternativa = smtpPort === 465 ? 587 : 465
+    return `Não foi possível conectar em ${smtpHost}:${smtpPort}. `
+      + `Muitas hospedagens (Railway inclusive) bloqueiam a saída SMTP — se a porta ${alternativa} também falhar, o bloqueio é da hospedagem, não do seu e-mail. `
+      + `Nesse caso, configure o envio por API definindo RESEND_API_KEY (veja as Configurações).`
   }
   if (code === 'EENVELOPE' || /recipient|sender|relay/i.test(m)) {
     return `O servidor recusou o destinatário ou remetente: ${m.slice(0, 160)}`
@@ -219,13 +238,43 @@ function traduzirErroEnvio(err) {
   return m.slice(0, 250)
 }
 
+async function enviarPorApi({ para, assunto, corpo }) {
+  const resp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: enderecoRemetente,
+      to: [para],
+      subject: assunto,
+      text: corpo,
+      reply_to: user,
+      headers: { 'X-Atendo-Auto': '1' },
+    }),
+  })
+  if (!resp.ok) {
+    const corpoErro = await resp.text().catch(() => '')
+    if (resp.status === 401 || resp.status === 403) {
+      throw new Error('A Resend recusou a chave de API. Confira RESEND_API_KEY.')
+    }
+    if (resp.status === 422 || /domain|from/i.test(corpoErro)) {
+      throw new Error(`A Resend recusou o remetente "${enderecoRemetente}". O domínio precisa estar verificado na Resend — ou use EMAIL_FROM com um endereço já verificado. Detalhe: ${corpoErro.slice(0, 160)}`)
+    }
+    throw new Error(`A Resend respondeu ${resp.status}: ${corpoErro.slice(0, 180)}`)
+  }
+  return true
+}
+
 export async function enviarEmailReal({ para, assunto, corpo }) {
-  if (!emailConfigurado) return false
+  if (!emailConfigurado && !envioPorApi) return false
+  const titulo = assunto.startsWith('Re:') ? assunto : `Re: ${assunto}`
+
+  if (envioPorApi) return enviarPorApi({ para, assunto: titulo, corpo })
+
   try {
     await getTransporte().sendMail({
       from: user,
       to: para,
-      subject: assunto.startsWith('Re:') ? assunto : `Re: ${assunto}`,
+      subject: titulo,
       text: corpo,
       headers: { 'X-Atendo-Auto': '1' },
     })

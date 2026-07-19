@@ -57,7 +57,11 @@ export interface Config {
   assinatura: string
 }
 
-export interface StatusEmail { ok: boolean | null; erro: string | null; verificadoEm: string | null }
+export interface StatusEmail {
+  ok: boolean | null; erro: string | null; verificadoEm: string | null
+  envioPorApi?: boolean; remetente?: string | null
+  envio?: { ok: boolean | null; erro: string | null; via?: string }
+}
 
 export interface MensagemCaixa {
   de: string; assunto: string; data: string | null

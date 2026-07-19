@@ -7,7 +7,11 @@ import {
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
 import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
-import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, verificarEnvio, diagnosticar, statusEmail } from './mail.js'
+import {
+  emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal,
+  verificarConexao, verificarEnvio, diagnosticar, statusEmail,
+  envioPorApi, enderecoRemetente,
+} from './mail.js'
 import crypto from 'crypto'
 import {
   buscarPedidosShopify, buscarProdutosShopify, testarShopify, statusShopify,
@@ -30,6 +34,12 @@ const baseUrl = req => (process.env.APP_URL || `${req.protocol}://${req.get('hos
 
 /* ---------------- Visão para o frontend ---------------- */
 
+const statusEmailCompleto = () => ({
+  ...statusEmail,
+  envioPorApi,
+  remetente: enderecoRemetente,
+})
+
 function visao() {
   return {
     tickets: state.tickets,
@@ -48,7 +58,7 @@ function visao() {
       shopify: shopifyPronta(),
       shopifyOauth: oauthDisponivel,
       ia: iaConfigurada,
-      emailStatus: { ...statusEmail },
+      emailStatus: statusEmailCompleto(),
       iaStatus: { ...statusIA },
       shopifyStatus: { ...statusShopify },
     },
@@ -227,13 +237,10 @@ app.post('/api/sync', async (req, res) => {
 })
 
 app.post('/api/email/testar', async (req, res) => {
-  const leitura = await verificarConexao()
-  const envio = await verificarEnvio()
-  // A leitura pode estar OK e o envio não — o usuário precisa ver os dois
-  if (leitura.ok && envio.ok === false) {
-    Object.assign(statusEmail, { ok: false, erro: `Leitura (IMAP) OK, mas o envio falhou. ${envio.erro}` })
-  }
-  res.json({ status: { ...statusEmail }, state: visao() })
+  // Leitura e envio são canais separados: um pode funcionar sem o outro
+  await verificarConexao()
+  statusEmail.envio = await verificarEnvio()
+  res.json({ status: statusEmailCompleto(), state: visao() })
 })
 
 app.post('/api/ia/testar', async (req, res) => {

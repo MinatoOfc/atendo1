@@ -50,6 +50,17 @@ Outro servidor qualquer: em vez de `EMAIL_PROVIDER`, use `EMAIL_IMAP_HOST`, `EMA
 
 Com o e-mail configurado, o servidor lê a caixa a cada 60 segundos, transforma cada e-mail não lido em ticket com resposta pronta, e envia as respostas aprovadas de verdade.
 
+### Quando a hospedagem bloqueia o envio por SMTP
+
+Railway, Vercel e a maioria das PaaS bloqueiam as portas de saída SMTP (25, 465 e 587) para conter spam. O sintoma é inconfundível: a **leitura funciona** (IMAP na porta 993 passa) e o **envio falha por tempo esgotado** em qualquer porta. Nesse caso, envie por API HTTP:
+
+| Variável | Exemplo |
+|---|---|
+| `RESEND_API_KEY` | `re_...` (crie em resend.com → API Keys) |
+| `EMAIL_FROM` | `suporte@seudominio.com` — de um domínio verificado na Resend |
+
+Com `RESEND_API_KEY` definida, o envio usa a API da Resend (HTTPS, nunca bloqueada) e o SMTP é ignorado. A leitura continua pelo IMAP, e o *reply-to* aponta para `EMAIL_USER` — então as respostas dos clientes voltam para a sua caixa normalmente.
+
 ### Shopify — pedidos e rastreio reais
 
 Há dois caminhos, dependendo da sua loja.
