@@ -19,6 +19,50 @@
   --shadow: 0 1px 2px rgba(23, 21, 31, 0.04), 0 4px 16px rgba(23, 21, 31, 0.04);
 }
 
+/* ---------- Modo escuro ---------- */
+[data-theme="dark"] {
+  --bg: #121019;
+  --panel: #1b1926;
+  --panel-soft: #171522;
+  --border: #2b2838;
+  --border-soft: #242130;
+  --text: #edeaf4;
+  --text-2: #a7a3b4;
+  --text-3: #716d80;
+  --purple: #b57cf7;
+  --purple-soft: #2c2142;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+[data-theme="dark"] .sidebar-account .avatar { background: #2b2838; color: var(--text-2); }
+[data-theme="dark"] .nav-item:hover { background: #242130; color: var(--text); }
+[data-theme="dark"] .nav-item.active { background: #2c2142; border-color: #43335f; }
+[data-theme="dark"] .chip { background: var(--panel); border-color: var(--border); }
+[data-theme="dark"] .chip:hover { border-color: #3d3950; }
+[data-theme="dark"] .chip.active { background: #edeaf4; color: #17151f; border-color: #edeaf4; }
+[data-theme="dark"] .chip.active-purple { background: #2c2142; border-color: #43335f; }
+[data-theme="dark"] .btn { background: var(--panel); border-color: var(--border); }
+[data-theme="dark"] .btn:hover { background: #242130; }
+[data-theme="dark"] .card-soft { background: var(--panel-soft); }
+[data-theme="dark"] .card-purple { background: #221b36; border-color: #43335f; }
+[data-theme="dark"] .topbar-right .icon-btn:hover { background: #242130; }
+[data-theme="dark"] .avatar-sm { background: #2c2142; }
+[data-theme="dark"] .empty-icon { background: #242130; }
+[data-theme="dark"] .ticket-row:hover, [data-theme="dark"] .need-row:hover { background: #201d2c; }
+[data-theme="dark"] .kb-item { background: var(--panel); }
+[data-theme="dark"] .tipcard { background: var(--panel); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); }
+[data-theme="dark"] .modal { background: var(--panel); }
+[data-theme="dark"] .draft-box { background: #221b36; border-color: #43335f; }
+[data-theme="dark"] .draft-box textarea,
+[data-theme="dark"] .field input, [data-theme="dark"] .field textarea, [data-theme="dark"] .field select {
+  background: var(--panel-soft); color: var(--text); border-color: var(--border);
+}
+[data-theme="dark"] .switch { background: #3d3950; }
+[data-theme="dark"] .switch.on { background: var(--purple); }
+[data-theme="dark"] .progressbar { background: #2b2838; }
+[data-theme="dark"] .pill-plan { background: #2c2142; }
+[data-theme="dark"] .tag-outro { background: #242130; color: var(--text-2); }
+[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #3d3950; border: 3px solid transparent; background-clip: content-box; }
+
 html, body, #root { height: 100%; }
 
 body {

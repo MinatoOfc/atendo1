@@ -28,6 +28,7 @@ export interface Ticket {
   geradoPorIA?: boolean
   erroEnvio?: string
   tentativasEnvio?: number
+  historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string }[]
 }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
@@ -91,6 +92,7 @@ interface ServerState {
   faqs: Faq[]
   pedidos: Pedido[]
   produtos: Produto[]
+  moeda: string
   config: Config
   integracoes: Integracoes
 }
@@ -103,7 +105,7 @@ const configPadrao: Config = {
 }
 
 const estadoVazio: ServerState = {
-  tickets: [], politicas: [], faqs: [], pedidos: [], produtos: [],
+  tickets: [], politicas: [], faqs: [], pedidos: [], produtos: [], moeda: 'EUR',
   config: configPadrao,
   integracoes: {
     email: false, shopify: false, ia: false, shopifyOauth: false,
@@ -301,6 +303,15 @@ export function tempoRelativo(iso: string): string {
   if (h < 24) return `${h} h`
   const d = Math.floor(h / 24)
   return `${d} d`
+}
+
+export function formatarMoeda(moeda: string): (v: number) => string {
+  try {
+    const f = new Intl.NumberFormat('de-DE', { style: 'currency', currency: moeda || 'EUR' })
+    return v => f.format(v)
+  } catch {
+    return v => `${moeda} ${v.toFixed(2)}`
+  }
 }
 
 export function saudacaoDia(): string {

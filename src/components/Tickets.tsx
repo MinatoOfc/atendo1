@@ -18,6 +18,7 @@ export function TicketRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => voi
         <span className="preview">— {(t.resposta ?? t.corpo).slice(0, 90)}</span>
       </span>
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
+      {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       <span className={`tag tag-${t.categoria}`}>{nomeCategoria[t.categoria]}</span>
       <span className="when">{tempoRelativo(t.data)}</span>
     </button>
@@ -74,10 +75,23 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         </div>
       )}
 
+      {t.historico?.map((m, i) => (
+        <div key={i} className="detail-msg" style={{ opacity: 0.75, ...(m.autor === 'atendo' ? { background: 'var(--panel-soft)' } : {}) }}>
+          <div className="head">
+            <span>
+              {m.autor === 'atendo' ? <Send size={12} style={{ marginRight: 6 }} /> : null}
+              <b style={{ color: 'var(--text)' }}>{m.autor === 'atendo' ? 'Você respondeu' : t.nome}</b>
+            </span>
+            <span>{new Date(m.data).toLocaleString('pt-BR')}</span>
+          </div>
+          <div className="body">{m.corpo}</div>
+        </div>
+      ))}
+
       {t.corpo && (
         <div className="detail-msg">
           <div className="head">
-            <span><b style={{ color: 'var(--text)' }}>{t.nome}</b> &lt;{t.de}&gt;</span>
+            <span><b style={{ color: 'var(--text)' }}>{t.nome}</b> &lt;{t.de}&gt;{t.historico?.length ? <span className="tag tag-purple" style={{ marginLeft: 8 }}>nova resposta</span> : null}</span>
             <span>{new Date(t.data).toLocaleString('pt-BR')}</span>
           </div>
           <div className="body">{t.corpo}</div>

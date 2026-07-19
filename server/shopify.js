@@ -19,7 +19,7 @@ function normalizar(v) {
 const lojaEnv = normalizar(lojaBruta)
 
 export const oauthDisponivel = !!(clientId && clientSecret)
-export const statusShopify = { ok: null, erro: null, verificadoEm: null, loja: lojaEnv || null, pedidos: 0, modo: null }
+export const statusShopify = { ok: null, erro: null, verificadoEm: null, loja: lojaEnv || null, pedidos: 0, modo: null, moeda: null }
 
 // Token obtido via OAuth, injetado pelo index.js a partir do estado persistido
 let sessao = { loja: null, token: null }
@@ -203,7 +203,10 @@ export async function testarShopify() {
     Object.assign(statusShopify, { ok: null, erro: null, verificadoEm: null, modo: null })
     return statusShopify
   }
-  const { erro } = await chamar('shop.json?fields=name,domain')
-  if (!erro) registrar(true, null)
+  const { dados, erro } = await chamar('shop.json?fields=name,domain,currency')
+  if (!erro) {
+    registrar(true, null)
+    statusShopify.moeda = dados?.shop?.currency || statusShopify.moeda || null
+  }
   return statusShopify
 }

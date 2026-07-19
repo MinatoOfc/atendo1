@@ -2,7 +2,13 @@ import Anthropic from '@anthropic-ai/sdk'
 import { gerarRascunhoLocal } from './logic.js'
 
 export const iaConfigurada = !!process.env.ANTHROPIC_API_KEY
-const MODEL = process.env.ATENDO_MODEL || 'claude-opus-4-8'
+// Padrão econômico: Haiku 4.5 custa uma fração do Opus e dá conta de
+// classificar e responder e-mails de atendimento. Suba para claude-sonnet-5
+// ou claude-opus-4-8 via ATENDO_MODEL se quiser respostas mais elaboradas.
+const MODEL = process.env.ATENDO_MODEL || 'claude-haiku-4-5'
+// O parâmetro de raciocínio adaptativo só existe nos modelos maiores;
+// enviá-lo ao Haiku derruba a requisição com erro 400.
+const suportaAdaptive = /opus-4-[678]|sonnet-5|sonnet-4-6|fable/.test(MODEL)
 
 const client = iaConfigurada ? new Anthropic() : null
 
@@ -62,16 +68,19 @@ const SCHEMA = {
   },
 }
 
-function preco(p) {
+const simbolos = { EUR: '€', BRL: 'R$', USD: '$', GBP: '£' }
+
+function preco(p, moeda) {
   if (!p.precoMin) return 'preço sob consulta'
-  return p.precoMin === p.precoMax ? `R$ ${p.precoMin.toFixed(2)}` : `R$ ${p.precoMin.toFixed(2)} a R$ ${p.precoMax.toFixed(2)}`
+  const s = simbolos[moeda] ?? moeda
+  return p.precoMin === p.precoMax ? `${s} ${p.precoMin.toFixed(2)}` : `${s} ${p.precoMin.toFixed(2)} a ${s} ${p.precoMax.toFixed(2)}`
 }
 
-function montarCatalogo(produtos) {
+function montarCatalogo(produtos, moeda) {
   const ativos = produtos.filter(p => p.ativo)
   if (!ativos.length) return '(catálogo não sincronizado — não afirme quais produtos a loja vende; peça ao cliente o que ele procura)'
   const linhas = ativos.slice(0, 120).map(p => {
-    const partes = [`- ${p.titulo} — ${preco(p)}`]
+    const partes = [`- ${p.titulo} — ${preco(p, moeda)}`]
     if (p.tipo) partes.push(`categoria: ${p.tipo}`)
     if (p.variantes.length) partes.push(`opções: ${p.variantes.slice(0, 8).join(', ')}`)
     partes.push(p.estoque > 0 ? `em estoque (${p.estoque})` : 'sem estoque no momento')
@@ -117,16 +126,20 @@ export function montarSystem(state) {
     `FAQs:`,
     faqs.length ? faqs.map(f => `- P: ${f.pergunta}\n  R: ${f.resposta}`).join('\n') : '(nenhuma cadastrada)',
     ``,
-    `Catálogo de produtos da loja:`,
-    montarCatalogo(produtos),
+    `Catálogo de produtos da loja (preços em ${state.moedaLoja || 'EUR'}):`,
+    montarCatalogo(produtos, state.moedaLoja || 'EUR'),
   ].join('\n')
 }
 
 export async function processarEmailIA(state, ticket) {
   if (!client) return null
   const pedido = state.pedidos.find(p => p.email?.toLowerCase() === ticket.de.toLowerCase())
+  const historico = (ticket.historico ?? [])
+    .map(m => `${m.autor === 'atendo' ? 'Loja (você)' : 'Cliente'} em ${m.data?.slice(0, 16)}:\n${m.corpo}`)
+    .join('\n---\n')
   const user = [
-    `E-mail recebido:`,
+    ...(historico ? [`Histórico anterior desta conversa (do mais antigo ao mais recente):`, historico, ``] : []),
+    `E-mail recebido${historico ? ' agora (responda a este)' : ''}:`,
     `De: ${ticket.nome} <${ticket.de}>`,
     `Assunto: ${ticket.assunto}`,
     ``,
@@ -140,8 +153,8 @@ export async function processarEmailIA(state, ticket) {
   try {
     const resp = await client.messages.create({
       model: MODEL,
-      max_tokens: 3000,
-      thinking: { type: 'adaptive' },
+      max_tokens: 1500,
+      ...(suportaAdaptive ? { thinking: { type: 'adaptive' } } : {}),
       system: montarSystem(state),
       messages: [{ role: 'user', content: user }],
       output_config: { format: { type: 'json_schema', schema: SCHEMA } },

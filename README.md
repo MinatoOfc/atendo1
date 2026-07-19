@@ -29,7 +29,7 @@ No Railway: serviço → aba **Variables**. Todas são opcionais.
 | Variável | Exemplo |
 |---|---|
 | `ANTHROPIC_API_KEY` | `sk-ant-...` (crie em console.anthropic.com) |
-| `ATENDO_MODEL` | opcional, padrão `claude-opus-4-8` |
+| `ATENDO_MODEL` | opcional, padrão `claude-haiku-4-5` (o mais barato). Para respostas mais elaboradas: `claude-sonnet-5` ou `claude-opus-4-8` |
 
 Sem a chave, as respostas são geradas por regras simples baseadas nas políticas cadastradas.
 

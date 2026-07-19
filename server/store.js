@@ -26,6 +26,7 @@ export const estadoInicial = {
   produtos: [],
   config: { ...configPadrao },
   emailsProcessados: [], // message-ids já transformados em ticket
+  moedaLoja: 'EUR', // moeda dos preços; atualizada pela Shopify quando conectada
   // Credencial obtida via OAuth da Shopify. NUNCA é enviada ao frontend.
   shopify: { loja: null, token: null, instaladoEm: null },
 }

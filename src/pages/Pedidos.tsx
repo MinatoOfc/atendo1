@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { ShoppingBag } from 'lucide-react'
-import { useStore } from '../store'
+import { useStore, formatarMoeda } from '../store'
 import { EmptyState, TipCard } from '../components/Shared'
 
 const statusPedido: Record<string, { label: string; cls: string }> = {
@@ -11,7 +11,8 @@ const statusPedido: Record<string, { label: string; cls: string }> = {
 }
 
 export default function Pedidos() {
-  const { config, pedidos, conectarShopify } = useStore()
+  const { config, pedidos, conectarShopify, moeda } = useStore()
+  const fmt = formatarMoeda(moeda)
   const nav = useNavigate()
 
   if (!config.shopifyConectada) {
@@ -52,7 +53,7 @@ export default function Pedidos() {
                 <td style={{ fontWeight: 600 }}>{p.numero}</td>
                 <td>{p.cliente}<div className="muted-sm">{p.email}</div></td>
                 <td>{p.pais}</td>
-                <td>US$ {p.valor.toFixed(2)}</td>
+                <td>{fmt(p.valor)}</td>
                 <td><span className={`tag ${statusPedido[p.status].cls}`}>{statusPedido[p.status].label}</span></td>
                 <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{p.rastreio}</td>
                 <td className="muted-sm">{new Date(p.criadoEm + 'T12:00:00').toLocaleDateString('pt-BR')}</td>

@@ -47,6 +47,7 @@ function visao() {
     faqs: state.faqs,
     pedidos: state.pedidos,
     produtos: state.produtos ?? [],
+    moeda: state.moedaLoja || 'EUR',
     config: {
       ...state.config,
       // integrações reais têm precedência sobre as conexões de demonstração
@@ -69,6 +70,29 @@ const ok = res => res.json({ state: visao() })
 
 /* ---------------- Pipeline de um e-mail novo ---------------- */
 
+function aplicarResultado(t, r) {
+  t.categoria = r.categoria
+  t.idioma = r.idioma
+  t.rascunho = r.resposta
+  t.confianca = r.confianca
+  t.geradoPorIA = r.geradoPorIA
+
+  const minima = state.config.confiancaMinima ?? 0.55
+  const sensivel = state.config.escalarSensiveis !== false && r.escalarHumano
+  const incerto = r.confianca < minima
+
+  if (sensivel || incerto) {
+    t.status = 'humano'
+    t.motivoEscalada = r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
+  } else {
+    t.status = 'aprovacao'
+    t.motivoEscalada = undefined
+    if (state.config.automacaoAtiva) {
+      t.enviaEm = Date.now() + Math.max(0, state.config.atrasoMinutos) * 60_000
+    }
+  }
+}
+
 async function criarTicket({ nome, de, assunto, corpo, data, messageId }) {
   const base = {
     id: uid(), nome, de, assunto, corpo,
@@ -90,26 +114,47 @@ async function criarTicket({ nome, de, assunto, corpo, data, messageId }) {
     base.status = 'spam'
     return base
   }
-  base.categoria = r.categoria
-  base.idioma = r.idioma
-  base.rascunho = r.resposta
-  base.confianca = r.confianca
-  base.geradoPorIA = r.geradoPorIA
-
-  const minima = state.config.confiancaMinima ?? 0.55
-  const sensivel = state.config.escalarSensiveis !== false && r.escalarHumano
-  const incerto = r.confianca < minima
-
-  if (sensivel || incerto) {
-    base.status = 'humano'
-    base.motivoEscalada = r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
-  } else {
-    base.status = 'aprovacao'
-    if (state.config.automacaoAtiva) {
-      base.enviaEm = Date.now() + Math.max(0, state.config.atrasoMinutos) * 60_000
-    }
-  }
+  aplicarResultado(base, r)
   return base
+}
+
+/* ---------------- Conversas (threading) ---------------- */
+
+// "Re: Re: Fwd: Pedido" e "Pedido" são a mesma conversa
+const normalizarAssunto = s =>
+  String(s || '').replace(/^\s*((re|fwd?|enc|aw|sv)\s*:\s*)+/i, '').trim().toLowerCase()
+
+function acharConversa(de, assunto) {
+  const alvo = normalizarAssunto(assunto)
+  return state.tickets.find(t =>
+    t.de.toLowerCase() === de.toLowerCase() &&
+    normalizarAssunto(t.assunto) === alvo &&
+    !['spam', 'lixeira'].includes(t.status))
+}
+
+async function anexarNaConversa(t, { corpo, data, messageId }) {
+  if (messageId) state.emailsProcessados.push(messageId)
+
+  // move a troca anterior para o histórico
+  t.historico = t.historico || []
+  if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data })
+  if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data })
+
+  // a mensagem nova vira a atual, e o ticket volta para o fluxo
+  t.corpo = corpo
+  t.data = data || new Date().toISOString()
+  t.lido = false
+  t.resposta = undefined
+  t.respondidoEm = undefined
+  t.enviaEm = undefined
+  t.erroEnvio = undefined
+  t.tentativasEnvio = undefined
+
+  const r = await processarEmail(state, t)
+  aplicarResultado(t, r)
+
+  // conversa atualizada sobe para o topo da lista
+  state.tickets = [t, ...state.tickets.filter(x => x.id !== t.id)]
 }
 
 /* ---------------- Sincronização ---------------- */
@@ -133,7 +178,13 @@ async function sincronizar() {
       // E-mails reais via IMAP
       const emails = await buscarNovosEmails(state.emailsProcessados)
       for (const e of emails) {
-        state.tickets.unshift(await criarTicket(e))
+        // resposta de uma conversa existente entra no mesmo ticket
+        const conversa = acharConversa(e.de, e.assunto)
+        if (conversa) {
+          await anexarNaConversa(conversa, e)
+        } else {
+          state.tickets.unshift(await criarTicket(e))
+        }
         novos++
       }
     } else {
@@ -277,6 +328,8 @@ app.get('/api/shopify/callback', async (req, res) => {
   try {
     const { loja, token } = await trocarCodigoPorToken(shop, code)
     state.shopify = { loja, token, instaladoEm: new Date().toISOString() }
+    const t = await testarShopify()
+    if (t.moeda) state.moedaLoja = t.moeda
     const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
     if (pedidos) state.pedidos = pedidos
     if (produtos) state.produtos = produtos
@@ -299,6 +352,7 @@ app.post('/api/shopify/desconectar', (req, res) => {
 app.post('/api/shopify/testar', async (req, res) => {
   const s = await testarShopify()
   if (s.ok) {
+    if (s.moeda) state.moedaLoja = s.moeda
     const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
     if (pedidos) state.pedidos = pedidos
     if (produtos) state.produtos = produtos
@@ -467,6 +521,7 @@ app.listen(PORT, async () => {
   if (shopifyPronta()) {
     const t = await testarShopify()
     if (t.ok) {
+      if (t.moeda) state.moedaLoja = t.moeda
       const [pedidos, produtos] = await Promise.all([buscarPedidosShopify(), buscarProdutosShopify()])
       if (pedidos) state.pedidos = pedidos
       if (produtos) state.produtos = produtos
