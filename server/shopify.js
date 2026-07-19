@@ -121,7 +121,7 @@ function mapear(o) {
     id: String(o.id),
     numero: o.name,
     cliente: [o.customer?.first_name, o.customer?.last_name].filter(Boolean).join(' ') || o.email || '—',
-    email: (o.email || o.contact_email || '').toLowerCase(),
+    email: (o.email || o.contact_email || '').trim().toLowerCase(),
     pais: o.shipping_address?.country || '—',
     valor: Number(o.total_price || 0),
     status,

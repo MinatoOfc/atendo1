@@ -32,7 +32,7 @@ const saudacoes = {
 
 export function gerarRascunhoLocal(ticket, politicas, faqs, pedidos, assinatura) {
   const s = saudacoes[ticket.idioma] ?? saudacoes.pt
-  const pedido = pedidos.find(p => p.email?.toLowerCase() === ticket.de.toLowerCase())
+  const pedido = pedidos.find(p => p.email?.trim().toLowerCase() === ticket.de.trim().toLowerCase())
   const ativas = politicas.filter(p => p.ativa)
   const linhas = [`${s.oi} ${ticket.nome.split(' ')[0]},`, '', `${s.obrigado}!`]
   let confianca = 0.55

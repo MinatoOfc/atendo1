@@ -28,7 +28,7 @@ export interface Ticket {
   geradoPorIA?: boolean
   erroEnvio?: string
   tentativasEnvio?: number
-  historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string }[]
+  historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string; traducao?: string }[]
   resumoSituacao?: string
   custoIA?: number
   iaPausada?: boolean

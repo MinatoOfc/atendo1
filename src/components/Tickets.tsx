@@ -19,6 +19,7 @@ export function TicketRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => voi
       </span>
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
+      {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}
       <span className={`tag tag-${t.categoria}`}>{nomeCategoria[t.categoria]}</span>
       <span className="when">{tempoRelativo(t.data)}</span>
     </button>
@@ -65,11 +66,15 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   const statusTexto = t.status === 'aprovacao' && t.enviaEm ? 'Envio automático agendado' : (rotuloStatus[t.status] ?? t.status)
 
   const alternarTraducao = async () => {
-    if (!t.traducao) {
+    const faltaTraduzir = (t.corpo && !t.traducao)
+      || t.historico?.some(m => m.autor === 'cliente' && m.corpo && !m.traducao)
+    if (faltaTraduzir) {
       setTraduzindo(true)
       const ok = await traduzirTicket(t.id)
       setTraduzindo(false)
       if (!ok) return
+      setVerTraducao(true)
+      return
     }
     setVerTraducao(v => !v)
   }
@@ -137,37 +142,40 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         </div>
       )}
 
+      {(t.idioma !== 'pt' || t.traducao || t.historico?.some(m => m.traducao)) && (
+        <div className="row mb-12" style={{ justifyContent: 'flex-end' }}>
+          <button className="btn btn-sm" onClick={alternarTraducao} disabled={traduzindo}>
+            <Languages size={13} />
+            {traduzindo ? 'Traduzindo conversa…' : verTraducao ? 'Ver original' : 'Traduzir conversa para português'}
+          </button>
+        </div>
+      )}
+
       {t.historico?.map((m, i) => (
         <div key={i} className="detail-msg" style={{ opacity: 0.75, ...(m.autor === 'atendo' ? { background: 'var(--panel-soft)' } : {}) }}>
           <div className="head">
             <span>
               {m.autor === 'atendo' ? <Send size={12} style={{ marginRight: 6 }} /> : null}
               <b style={{ color: 'var(--text)' }}>{m.autor === 'atendo' ? 'Você respondeu' : t.nome}</b>
+              {verTraducao && m.traducao ? <span className="tag tag-outro" style={{ marginLeft: 8 }}>traduzido</span> : null}
             </span>
             <span>{new Date(m.data).toLocaleString('pt-BR')}</span>
           </div>
-          <div className="body">{m.corpo}</div>
+          <div className="body">{verTraducao && m.traducao ? m.traducao : m.corpo}</div>
         </div>
       ))}
 
       {t.corpo && (
         <div className="detail-msg">
           <div className="head">
-            <span><b style={{ color: 'var(--text)' }}>{t.nome}</b> &lt;{t.de}&gt;{t.historico?.length ? <span className="tag tag-purple" style={{ marginLeft: 8 }}>nova resposta</span> : null}</span>
+            <span>
+              <b style={{ color: 'var(--text)' }}>{t.nome}</b> &lt;{t.de}&gt;
+              {t.historico?.length ? <span className="tag tag-purple" style={{ marginLeft: 8 }}>nova resposta</span> : null}
+              {verTraducao && t.traducao ? <span className="tag tag-outro" style={{ marginLeft: 8 }}>traduzido</span> : null}
+            </span>
             <span>{new Date(t.data).toLocaleString('pt-BR')}</span>
           </div>
           <div className="body">{verTraducao && t.traducao ? t.traducao : t.corpo}</div>
-          <div className="row spread" style={{ marginTop: 10 }}>
-            <span className="muted-sm">
-              {verTraducao && t.traducao ? 'Traduzido para português pela IA' : ''}
-            </span>
-            {t.idioma !== 'pt' && (
-              <button className="btn btn-sm" onClick={alternarTraducao} disabled={traduzindo}>
-                <Languages size={13} />
-                {traduzindo ? 'Traduzindo…' : verTraducao && t.traducao ? 'Ver original' : 'Traduzir'}
-              </button>
-            )}
-          </div>
         </div>
       )}
 

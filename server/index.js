@@ -6,7 +6,7 @@ import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
-import { processarEmail, iaConfigurada, testarIA, statusIA, traduzirTexto } from './ai.js'
+import { processarEmail, iaConfigurada, testarIA, statusIA, traduzirMensagens } from './ai.js'
 import {
   emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal,
   verificarConexao, verificarEnvio, diagnosticar, statusEmail,
@@ -139,7 +139,7 @@ async function anexarNaConversa(t, { corpo, data, messageId }) {
 
   // move a troca anterior para o histórico
   t.historico = t.historico || []
-  if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data })
+  if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao })
   if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data })
 
   // a mensagem nova vira a atual, e o ticket volta para o fluxo
@@ -415,10 +415,18 @@ app.post('/api/tickets/:id/pausar-ia', (req, res) => {
 
 app.post('/api/tickets/:id/traduzir', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
-  if (t.traducao) return ok(res) // já traduzido — não paga de novo
-  const r = await traduzirTexto(t.corpo)
+
+  // traduz TODAS as mensagens do cliente na conversa que ainda não têm tradução
+  const alvos = []
+  for (const m of t.historico ?? []) {
+    if (m.autor === 'cliente' && m.corpo && !m.traducao) alvos.push(m)
+  }
+  if (t.corpo && !t.traducao) alvos.push(t)
+  if (!alvos.length) return ok(res) // tudo já traduzido — não paga de novo
+
+  const r = await traduzirMensagens(alvos.map(a => a.corpo))
   if (r.erro) return res.status(400).json({ erro: r.erro, state: visao() })
-  t.traducao = r.texto
+  r.textos.forEach((texto, i) => { alvos[i].traducao = texto })
   if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
   persistir(); ok(res)
 })

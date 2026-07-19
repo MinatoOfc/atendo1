@@ -154,7 +154,10 @@ export function montarSystem(state) {
 
 export async function processarEmailIA(state, ticket) {
   if (!client) return null
-  const pedido = state.pedidos.find(p => p.email?.toLowerCase() === ticket.de.toLowerCase())
+  const emailCliente = ticket.de.trim().toLowerCase()
+  const pedidosCliente = state.pedidos
+    .filter(p => p.email && p.email.trim().toLowerCase() === emailCliente)
+    .slice(0, 3)
   const historico = (ticket.historico ?? [])
     .map(m => `${m.autor === 'atendo' ? 'Loja (você)' : 'Cliente'} em ${m.data?.slice(0, 16)}:\n${m.corpo}`)
     .join('\n---\n')
@@ -166,9 +169,11 @@ export async function processarEmailIA(state, ticket) {
     ``,
     ticket.corpo,
     ``,
-    pedido
-      ? `Pedido deste cliente na Shopify: número ${pedido.numero}, status: ${pedido.status}, rastreio: ${pedido.rastreio}, país: ${pedido.pais}, valor: ${pedido.valor}, criado em ${pedido.criadoEm}.`
-      : `Nenhum pedido encontrado para este e-mail na Shopify.`,
+    pedidosCliente.length
+      ? `Pedidos deste cliente na Shopify (localizados pelo e-mail ${ticket.de}), do mais recente ao mais antigo:\n`
+        + pedidosCliente.map(p =>
+          `- ${p.numero}: status ${p.status}, rastreio ${p.rastreio}${p.urlRastreio ? ` (${p.urlRastreio})` : ''}${p.transportadora ? `, transportadora ${p.transportadora}` : ''}, país ${p.pais}, valor ${p.valor}, criado em ${p.criadoEm}`).join('\n')
+      : `Nenhum pedido encontrado para o e-mail ${ticket.de} na Shopify. Se o cliente falar de um pedido, peça o número do pedido ou o e-mail usado na compra.`,
   ].join('\n')
 
   try {
@@ -210,21 +215,37 @@ export async function processarEmailIA(state, ticket) {
   }
 }
 
-/** Traduz uma mensagem do cliente para português. Retorna {texto, custo} ou {erro}. */
-export async function traduzirTexto(texto) {
+const SCHEMA_TRADUCAO = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['traducoes'],
+  properties: {
+    traducoes: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'As traduções em português brasileiro, na MESMA ordem e quantidade das mensagens numeradas recebidas',
+    },
+  },
+}
+
+/** Traduz várias mensagens do cliente numa única chamada. Retorna {textos, custo} ou {erro}. */
+export async function traduzirMensagens(mensagens) {
   if (!client) return { erro: 'A tradução usa o Claude — configure a ANTHROPIC_API_KEY primeiro.' }
   try {
+    const conteudo = mensagens.map((m, i) => `[mensagem ${i + 1}]\n${String(m).slice(0, 4000)}`).join('\n\n')
     const resp = await client.messages.create({
       model: MODEL,
-      max_tokens: 1500,
+      max_tokens: 3000,
       ...(suportaAdaptive ? { thinking: { type: 'adaptive' } } : {}),
-      system: 'Traduza a mensagem do cliente para português brasileiro, mantendo o tom e o significado. Responda APENAS com a tradução, sem comentários nem explicações.',
-      messages: [{ role: 'user', content: String(texto).slice(0, 8000) }],
+      system: 'Traduza cada mensagem numerada para português brasileiro, mantendo o tom e o significado. Não comente nem explique — apenas traduza, na mesma ordem.',
+      messages: [{ role: 'user', content: conteudo }],
+      output_config: { format: { type: 'json_schema', schema: SCHEMA_TRADUCAO } },
     })
-    if (resp.stop_reason === 'refusal') return { erro: 'O Claude recusou traduzir esta mensagem.' }
-    const t = resp.content.find(b => b.type === 'text')?.text?.trim()
-    if (!t) return { erro: 'A IA não devolveu a tradução.' }
-    return { texto: t, custo: custoDeUso(resp.usage) }
+    if (resp.stop_reason === 'refusal') return { erro: 'O Claude recusou traduzir estas mensagens.' }
+    const texto = resp.content.find(b => b.type === 'text')?.text
+    const r = texto ? JSON.parse(texto) : null
+    if (!r?.traducoes?.length) return { erro: 'A IA não devolveu as traduções.' }
+    return { textos: r.traducoes.slice(0, mensagens.length), custo: custoDeUso(resp.usage) }
   } catch (err) {
     return { erro: traduzirErro(err) }
   }
