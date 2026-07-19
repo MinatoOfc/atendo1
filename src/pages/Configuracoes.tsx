@@ -265,6 +265,11 @@ export default function Configuracoes() {
                     <ShoppingBag size={13} /> Conectar Shopify
                   </button>
                 </form>
+                <p className="muted-sm" style={{ marginTop: 12, lineHeight: 1.6 }}>
+                  Antes de conectar, esta URL precisa estar cadastrada em <b>Redirect URLs</b>, na página
+                  de configuração do app no Dev Dashboard (logo abaixo dos scopes):
+                </p>
+                <EnvVars vars={[['Redirect URL', `${window.location.origin}/api/shopify/callback`]]} />
               </>
             ) : (
               <>
