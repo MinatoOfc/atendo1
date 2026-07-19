@@ -61,9 +61,13 @@ export interface Diagnostico {
   mensagens?: MensagemCaixa[]
 }
 export interface StatusIA { ok: boolean | null; erro: string | null; verificadoEm: string | null; modelo?: string }
-export interface StatusShopify { ok: boolean | null; erro: string | null; verificadoEm: string | null; loja?: string | null; pedidos?: number }
+export interface StatusShopify {
+  ok: boolean | null; erro: string | null; verificadoEm: string | null
+  loja?: string | null; pedidos?: number; modo?: 'token' | 'oauth' | null
+}
 export interface Integracoes {
   email: boolean; shopify: boolean; ia: boolean
+  shopifyOauth: boolean
   emailStatus: StatusEmail
   iaStatus: StatusIA
   shopifyStatus: StatusShopify
@@ -89,7 +93,7 @@ const estadoVazio: ServerState = {
   tickets: [], politicas: [], faqs: [], pedidos: [],
   config: configPadrao,
   integracoes: {
-    email: false, shopify: false, ia: false,
+    email: false, shopify: false, ia: false, shopifyOauth: false,
     emailStatus: { ok: null, erro: null, verificadoEm: null },
     iaStatus: { ok: null, erro: null, verificadoEm: null },
     shopifyStatus: { ok: null, erro: null, verificadoEm: null },
@@ -139,6 +143,7 @@ interface Store extends ServerState {
   diagnosticarEmail: () => Promise<Diagnostico>
   testarIA: () => Promise<StatusIA>
   testarShopify: () => Promise<StatusShopify>
+  desconectarShopify: () => void
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -256,6 +261,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       aplicar(r)
       return r.status
     },
+
+    desconectarShopify: () => api('/shopify/desconectar').then(aplicar),
   }), [state, carregado, tipsFechados])
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>

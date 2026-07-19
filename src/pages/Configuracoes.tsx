@@ -29,6 +29,7 @@ export default function Configuracoes() {
   const [diagnosticando, setDiagnosticando] = useState(false)
   const [testandoIa, setTestandoIa] = useState(false)
   const [testandoShop, setTestandoShop] = useState(false)
+  const [lojaShop, setLojaShop] = useState('')
   const status = s.integracoes.emailStatus
   const ia = s.integracoes.iaStatus
   const shop = s.integracoes.shopifyStatus
@@ -226,6 +227,11 @@ export default function Configuracoes() {
               <button className="btn btn-sm" onClick={testarShop} disabled={testandoShop}>
                 {testandoShop ? 'Testando…' : 'Testar e sincronizar'}
               </button>
+              {shop?.modo === 'oauth' && (
+                <button className="btn btn-sm" onClick={() => { if (confirm('Desconectar a Shopify?')) s.desconectarShopify() }}>
+                  <Unplug size={13} /> Desconectar
+                </button>
+              )}
             </div>
             {shop?.ok === false && shop.erro && (
               <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: '#fecaca', background: '#fef7f7' }}>
@@ -238,19 +244,45 @@ export default function Configuracoes() {
           </>
         ) : (
           <>
-            <span className="tag tag-amber">Não configurada</span>
-            <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
-              No admin da loja: <b>Configurações → Apps e canais de venda → Desenvolver apps → Criar um app</b>.
-              Em <b>Configuração → Admin API</b>, marque <code>read_orders</code>, <code>read_customers</code> e <code>read_fulfillments</code>.
-              Salve, clique em <b>Instalar app</b> e copie o <b>Admin API access token</b> (aparece uma única vez). Depois adicione no Railway:
-            </p>
-            <EnvVars vars={[
-              ['SHOPIFY_STORE', 'sualoja.myshopify.com'],
-              ['SHOPIFY_ADMIN_TOKEN', 'shpat_...seu-token...'],
-            ]} />
-            <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
-              Para o atendo enxergar pedidos com mais de 60 dias, peça também o escopo <code>read_all_orders</code> na mesma tela.
-            </p>
+            {s.integracoes.shopifyOauth ? (
+              <>
+                <span className="tag tag-amber">Pronta para conectar</span>
+                <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
+                  Digite o endereço da sua loja e clique em conectar. Você será levado à Shopify para autorizar o acesso e volta para cá automaticamente.
+                </p>
+                <form
+                  className="row gap-8"
+                  style={{ marginTop: 12 }}
+                  onSubmit={e => {
+                    e.preventDefault()
+                    if (lojaShop.trim()) window.location.href = `/api/shopify/instalar?loja=${encodeURIComponent(lojaShop.trim())}`
+                  }}
+                >
+                  <input value={lojaShop} onChange={e => setLojaShop(e.target.value)} placeholder="sualoja.myshopify.com"
+                    style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px', outline: 'none', fontSize: 13 }} />
+                  <button className="btn btn-primary btn-sm" type="submit" disabled={!lojaShop.trim()}
+                    style={!lojaShop.trim() ? { opacity: 0.5 } : undefined}>
+                    <ShoppingBag size={13} /> Conectar Shopify
+                  </button>
+                </form>
+              </>
+            ) : (
+              <>
+                <span className="tag tag-amber">Não configurada</span>
+                <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
+                  No <b>Dev Dashboard</b> da Shopify, abra o app → <b>Settings</b> e copie o <b>Client ID</b> e o <b>Client secret</b>.
+                  Em <b>Configuration</b>, cadastre a Redirect URL abaixo. Depois adicione no Railway:
+                </p>
+                <EnvVars vars={[
+                  ['SHOPIFY_CLIENT_ID', 'seu-client-id'],
+                  ['SHOPIFY_CLIENT_SECRET', 'seu-client-secret'],
+                ]} />
+                <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
+                  Redirect URL a cadastrar no app da Shopify:
+                </p>
+                <EnvVars vars={[['Redirect URL', `${window.location.origin}/api/shopify/callback`]]} />
+              </>
+            )}
             <div style={{ marginTop: 12 }}>
               {s.config.shopifyConectada ? (
                 <div className="row gap-10">

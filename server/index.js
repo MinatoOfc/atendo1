@@ -8,14 +8,25 @@ import {
 } from './logic.js'
 import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
 import { emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal, verificarConexao, diagnosticar, statusEmail } from './mail.js'
-import { shopifyConfigurada, buscarPedidosShopify, testarShopify, statusShopify } from './shopify.js'
+import crypto from 'crypto'
+import {
+  buscarPedidosShopify, testarShopify, statusShopify,
+  oauthDisponivel, shopifyPronta, carregarSessao,
+  urlInstalacao, hmacValido, trocarCodigoPorToken,
+} from './shopify.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
+app.set('trust proxy', 1) // Railway fica atrás de proxy; sem isso o redirect_uri sai como http
 app.use(express.json({ limit: '1mb' }))
 
 let state = carregar()
 const persistir = () => salvar(state)
+carregarSessao(state.shopify)
+
+// Nonces de OAuth em memória (curta duração, uso único)
+const noncesOAuth = new Map()
+const baseUrl = req => (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '')
 
 /* ---------------- Visão para o frontend ---------------- */
 
@@ -29,11 +40,12 @@ function visao() {
       ...state.config,
       // integrações reais têm precedência sobre as conexões de demonstração
       emailConectado: enderecoEmail ?? state.config.emailConectado,
-      shopifyConectada: shopifyConfigurada || state.config.shopifyConectada,
+      shopifyConectada: shopifyPronta() || state.config.shopifyConectada,
     },
     integracoes: {
       email: emailConfigurado,
-      shopify: shopifyConfigurada,
+      shopify: shopifyPronta(),
+      shopifyOauth: oauthDisponivel,
       ia: iaConfigurada,
       emailStatus: { ...statusEmail },
       iaStatus: { ...statusIA },
@@ -100,7 +112,7 @@ async function sincronizar() {
     let novos = 0
 
     // Pedidos reais da Shopify
-    if (shopifyConfigurada) {
+    if (shopifyPronta()) {
       const pedidos = await buscarPedidosShopify()
       if (pedidos) state.pedidos = pedidos
     }
@@ -197,6 +209,53 @@ app.post('/api/email/testar', async (req, res) => {
 app.post('/api/ia/testar', async (req, res) => {
   const s = await testarIA()
   res.json({ status: s, state: visao() })
+})
+
+/* ---- OAuth da Shopify ---- */
+
+app.get('/api/shopify/instalar', (req, res) => {
+  try {
+    const nonce = crypto.randomBytes(16).toString('hex')
+    const redirectUri = `${baseUrl(req)}/api/shopify/callback`
+    const { url, loja } = urlInstalacao(req.query.loja, redirectUri, nonce)
+    noncesOAuth.set(nonce, { loja, criadoEm: Date.now() })
+    // limpa nonces com mais de 10 minutos
+    for (const [k, v] of noncesOAuth) if (Date.now() - v.criadoEm > 600_000) noncesOAuth.delete(k)
+    res.redirect(url)
+  } catch (err) {
+    res.status(400).send(`Não foi possível iniciar a instalação: ${err.message}`)
+  }
+})
+
+app.get('/api/shopify/callback', async (req, res) => {
+  const { shop, code, state: nonce } = req.query
+  const pendente = noncesOAuth.get(nonce)
+  const falhar = msg => res.status(400).send(`${msg} <a href="/#/configuracoes">Voltar ao atendo</a>`)
+
+  if (!pendente) return falhar('Pedido de instalação expirado ou desconhecido. Tente conectar novamente.')
+  noncesOAuth.delete(nonce)
+  if (!hmacValido(req.query)) return falhar('Assinatura inválida no retorno da Shopify. A instalação foi cancelada por segurança.')
+  if (!shop || !code) return falhar('A Shopify não devolveu os dados esperados.')
+
+  try {
+    const { loja, token } = await trocarCodigoPorToken(shop, code)
+    state.shopify = { loja, token, instaladoEm: new Date().toISOString() }
+    const pedidos = await buscarPedidosShopify()
+    if (pedidos) state.pedidos = pedidos
+    persistir()
+    console.log(`[shopify] conectada via OAuth: ${loja} (${state.pedidos.length} pedidos)`)
+    res.redirect('/#/configuracoes')
+  } catch (err) {
+    console.error('[shopify] OAuth falhou:', err.message)
+    falhar(err.message)
+  }
+})
+
+app.post('/api/shopify/desconectar', (req, res) => {
+  state.shopify = { loja: null, token: null, instaladoEm: null }
+  carregarSessao(null)
+  state.pedidos = []
+  persistir(); ok(res)
 })
 
 app.post('/api/shopify/testar', async (req, res) => {
@@ -335,7 +394,7 @@ app.post('/api/config', (req, res) => {
 
 app.post('/api/shopify/demo', (req, res) => {
   // conexão de demonstração — só quando a Shopify real não está configurada
-  if (!shopifyConfigurada) {
+  if (!shopifyPronta()) {
     state.config.shopifyConectada = true
     state.pedidos = demoPedidos
   }
@@ -357,7 +416,7 @@ const PORT = Number(process.env.PORT || 8787)
 app.listen(PORT, async () => {
   console.log(`atendo servidor na porta ${PORT}`)
   console.log(`  e-mail:  ${emailConfigurado ? enderecoEmail : 'não configurado (modo demo)'}`)
-  console.log(`  shopify: ${shopifyConfigurada ? process.env.SHOPIFY_STORE : 'não configurada (modo demo)'}`)
+  console.log(`  shopify: ${shopifyPronta() ? `${statusShopify.loja}` : oauthDisponivel ? 'aguardando instalação (OAuth pronto)' : 'não configurada (modo demo)'}`)
   console.log(`  ia:      ${iaConfigurada ? 'Claude conectado' : 'não configurada (respostas por regras)'}`)
 
   if (iaConfigurada) {
@@ -365,7 +424,7 @@ app.listen(PORT, async () => {
     console.log(t.ok ? `  IA OK — usando ${t.modelo}` : `  IA FALHOU: ${t.erro}`)
   }
 
-  if (shopifyConfigurada) {
+  if (shopifyPronta()) {
     const t = await testarShopify()
     if (t.ok) {
       const pedidos = await buscarPedidosShopify()

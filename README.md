@@ -52,13 +52,26 @@ Com o e-mail configurado, o servidor lê a caixa a cada 60 segundos, transforma 
 
 ### Shopify — pedidos e rastreio reais
 
+Há dois caminhos, dependendo da sua loja.
+
+**OAuth (lojas migradas para o Dev Dashboard — o caso da maioria hoje):**
+
+| Variável | Exemplo |
+|---|---|
+| `SHOPIFY_CLIENT_ID` | Client ID do app no Dev Dashboard |
+| `SHOPIFY_CLIENT_SECRET` | Client secret do mesmo app |
+| `APP_URL` | opcional — a URL pública do app, se a detecção automática falhar |
+| `SHOPIFY_SCOPES` | opcional, padrão `read_orders,read_all_orders,read_customers,read_fulfillments` |
+| `SHOPIFY_API_VERSION` | opcional, padrão `2026-07` |
+
+No app do Dev Dashboard, cadastre em **Redirect URLs**: `https://<sua-url>/api/shopify/callback`. Depois, em **Configurações → Shopify** no atendo, digite o endereço da loja e clique em *Conectar Shopify* — a autorização acontece na Shopify e o token volta pronto. Ele é guardado apenas no servidor e nunca é enviado ao navegador.
+
+**Token fixo (apps personalizados antigos, quando a loja ainda oferece):**
+
 | Variável | Exemplo |
 |---|---|
 | `SHOPIFY_STORE` | `sualoja.myshopify.com` (aceita também só `sualoja` ou a URL completa) |
 | `SHOPIFY_ADMIN_TOKEN` | `shpat_...` |
-| `SHOPIFY_API_VERSION` | opcional, padrão `2026-07` |
-
-Para obter o token: admin da loja → **Configurações → Apps e canais de venda → Desenvolver apps → Criar um app**. Em *Configuração → Admin API*, marque `read_orders`, `read_customers` e `read_fulfillments` (e `read_all_orders` para enxergar pedidos com mais de 60 dias). Salve, clique em **Instalar app** e copie o Admin API access token — ele aparece uma única vez.
 
 A Shopify aposenta cada versão da API depois de cerca de 12 meses. Quando a padrão expirar, defina `SHOPIFY_API_VERSION` com uma mais recente — a tela de Configurações avisa quando isso acontece.
 

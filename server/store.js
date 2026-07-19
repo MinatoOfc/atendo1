@@ -25,6 +25,8 @@ export const estadoInicial = {
   pedidos: [],
   config: { ...configPadrao },
   emailsProcessados: [], // message-ids já transformados em ticket
+  // Credencial obtida via OAuth da Shopify. NUNCA é enviada ao frontend.
+  shopify: { loja: null, token: null, instaladoEm: null },
 }
 
 export function carregar() {
