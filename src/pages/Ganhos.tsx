@@ -1,9 +1,9 @@
 import { useNavigate } from 'react-router-dom'
 import { TrendingUp, Check } from 'lucide-react'
-import { useStore, formatarMoeda } from '../store'
+import { useStore } from '../store'
 
 export default function Ganhos() {
-  const { config, pedidos, moeda } = useStore()
+  const { config, pedidos, fmtMoeda } = useStore()
   const nav = useNavigate()
 
   if (!config.shopifyConectada) {
@@ -35,7 +35,7 @@ export default function Ganhos() {
   const custo = receita * 0.38
   const taxas = receita * 0.06
   const lucro = receita - custo - taxas
-  const fmt = formatarMoeda(moeda)
+  const fmt = (v: number) => fmtMoeda(v)
 
   const cards = [
     { label: 'Receita', valor: fmt(receita), delta: '+12% vs período anterior' },

@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy, AlertTriangle, Search, Store, UserRound, LogOut } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import {
+  Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy,
+  AlertTriangle, Search, Store, UserRound, LogOut, LayoutGrid, Users2, Inbox,
+  Plug, Bell, Palette, CreditCard, Sun, Moon, BookOpen, ArrowRight,
+} from 'lucide-react'
 import { useStore } from '../store'
 import type { Diagnostico } from '../store'
 
@@ -17,6 +22,30 @@ function Section({ icon, title, desc, children }: { icon: React.ReactNode; title
         </div>
       </div>
       <div style={{ paddingLeft: 42 }}>{children}</div>
+    </div>
+  )
+}
+
+/** Cabeçalho de seção no estilo da referência: título, descrição e divisor. */
+function Cabecalho({ titulo, desc }: { titulo: string; desc: string }) {
+  return (
+    <div className="mb-20">
+      <h1 className="h1" style={{ fontSize: 21 }}>{titulo}</h1>
+      <p className="muted" style={{ marginTop: 5 }}>{desc}</p>
+      <div style={{ borderBottom: '1px solid var(--border)', marginTop: 16 }} />
+    </div>
+  )
+}
+
+/** Linha de preferência: rótulo e descrição à esquerda, controle à direita. */
+function LinhaPref({ titulo, desc, children }: { titulo: string; desc: string; children: React.ReactNode }) {
+  return (
+    <div className="row spread mb-20" style={{ alignItems: 'flex-start', gap: 20 }}>
+      <div style={{ maxWidth: 420 }}>
+        <b style={{ fontSize: 13.5 }}>{titulo}</b>
+        <div className="muted-sm" style={{ marginTop: 3, lineHeight: 1.5 }}>{desc}</div>
+      </div>
+      <div className="row gap-8" style={{ flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>{children}</div>
     </div>
   )
 }
@@ -240,8 +269,33 @@ function EnvVars({ vars }: { vars: [string, string][] }) {
   )
 }
 
+/* ---------------- Menu lateral das configurações ---------------- */
+
+type Secao = 'visao' | 'loja' | 'equipe' | 'caixa' | 'respostas' | 'integracoes' | 'conta' | 'notificacoes' | 'aparencia' | 'plano'
+
+const MENU: { grupo: string | null; itens: { id: Secao; rotulo: string; Icone: React.ComponentType<{ size?: number }> }[] }[] = [
+  { grupo: null, itens: [{ id: 'visao', rotulo: 'Visão geral', Icone: LayoutGrid }] },
+  { grupo: 'Negócio', itens: [
+    { id: 'loja', rotulo: 'Loja', Icone: Store },
+    { id: 'equipe', rotulo: 'Equipe', Icone: Users2 },
+  ] },
+  { grupo: 'Atendimento', itens: [
+    { id: 'caixa', rotulo: 'Caixa de entrada', Icone: Inbox },
+    { id: 'respostas', rotulo: 'Respostas', Icone: Sparkles },
+    { id: 'integracoes', rotulo: 'Integrações', Icone: Plug },
+  ] },
+  { grupo: 'Pessoal', itens: [
+    { id: 'conta', rotulo: 'Conta', Icone: UserRound },
+    { id: 'notificacoes', rotulo: 'Notificações', Icone: Bell },
+    { id: 'aparencia', rotulo: 'Aparência', Icone: Palette },
+  ] },
+  { grupo: 'Cobrança', itens: [{ id: 'plano', rotulo: 'Plano', Icone: CreditCard }] },
+]
+
 export default function Configuracoes() {
   const s = useStore()
+  const nav = useNavigate()
+  const [secao, setSecao] = useState<Secao>('visao')
   const [testando, setTestando] = useState(false)
   const [diag, setDiag] = useState<Diagnostico | null>(null)
   const [diagnosticando, setDiagnosticando] = useState(false)
@@ -252,7 +306,6 @@ export default function Configuracoes() {
   // Configura a loja escolhida na seta do topo da barra lateral
   const lojaSel = s.lojas.find(l => l.id === s.lojaAtiva) ?? s.lojas.find(l => l.id === 'loja1') ?? null
   const lojaId = lojaSel?.id ?? 'loja1'
-  const sufixo = lojaId === 'loja2' ? '2' : ''
   const emailOk = lojaSel ? lojaSel.email.configurado : s.integracoes.email
   const status = lojaSel?.email.status ?? s.integracoes.emailStatus
   const ia = s.integracoes.iaStatus
@@ -263,37 +316,194 @@ export default function Configuracoes() {
     setTestandoIa(true)
     try { await s.testarIA() } finally { setTestandoIa(false) }
   }
-
   const testarShop = async () => {
     setTestandoShop(true)
     try { await s.testarShopify(lojaId) } finally { setTestandoShop(false) }
   }
-
   const testar = async () => {
     setTestando(true)
     try { await s.testarEmail(lojaId) } finally { setTestando(false) }
   }
-
   const diagnosticar = async () => {
     setDiagnosticando(true)
     try { setDiag(await s.diagnosticarEmail(lojaId)) } finally { setDiagnosticando(false) }
   }
 
-  return (
-    <div className="content-narrow" style={{ maxWidth: 760 }}>
-      <h1 className="h1 mb-8" style={{ fontSize: 22 }}>Configurações</h1>
-      <p className="muted mb-24">
-        As integrações reais são configuradas por <b>variáveis de ambiente</b> — no Railway: seu serviço → aba <b>Variables</b>. Nenhuma senha passa por esta tela. Depois de salvar as variáveis, o Railway reinicia o app e a integração liga sozinha.
-      </p>
+  const bannerLoja = s.lojasVisiveis.length > 1 && (
+    <div className="banner card-purple mb-16">
+      <Store size={15} color="var(--purple)" />
+      <span>Configurando a loja <b>{lojaSel?.nome}</b>. Para trocar de loja, use a seta no topo da barra lateral.</span>
+    </div>
+  )
 
-      {s.lojasVisiveis.length > 1 && (
-        <div className="banner card-purple mb-16">
-          <Store size={15} color="var(--purple)" />
-          <span>
-            Configurando a loja <b>{lojaSel?.nome}</b>. Para trocar de loja, use a seta no topo da barra lateral.
-          </span>
+  /* ---------- Seções ---------- */
+
+  const secVisao = (
+    <>
+      <Cabecalho titulo="Visão geral" desc="O estado de tudo que faz o atendo funcionar, num relance." />
+      <div className="grid-2 mb-16">
+        <div className="card" style={{ padding: 16 }}>
+          <div className="row gap-8 mb-8"><Sparkles size={15} color="var(--purple)" /><b style={{ fontSize: 13.5 }}>Inteligência artificial</b></div>
+          {s.integracoes.ia
+            ? <span className={'tag ' + (ia?.ok === false ? 'tag-reembolso' : 'tag-green')}>{ia?.ok === false ? 'falhando' : 'gerando respostas'}</span>
+            : <span className="tag tag-amber">não configurada</span>}
+          {ia?.modelo && <div className="muted-sm" style={{ marginTop: 8 }}>modelo {ia.modelo}</div>}
         </div>
-      )}
+        <div className="card" style={{ padding: 16 }}>
+          <div className="row gap-8 mb-8"><Zap size={15} color="var(--purple)" /><b style={{ fontSize: 13.5 }}>Automação</b></div>
+          <span className={'tag ' + (s.config.automacaoAtiva ? 'tag-green' : 'tag-outro')}>
+            {s.config.automacaoAtiva ? `respondendo sozinho (${s.config.atrasoMinutos > 0 ? `${s.config.atrasoMinutos} min` : 'na hora'})` : 'aguardando aprovação manual'}
+          </span>
+          <div className="muted-sm" style={{ marginTop: 8 }}>{s.aguardandoAprovacao.length} aguardando aprovação · {s.casosHumanos.length} com você</div>
+        </div>
+      </div>
+      {s.lojasVisiveis.map(l => (
+        <div key={l.id} className="card mb-12" style={{ padding: 16 }}>
+          <div className="row gap-8 mb-10"><Store size={15} color="var(--purple)" /><b style={{ fontSize: 13.5 }}>{l.nome}</b></div>
+          <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+            <span className={'tag ' + (l.email.configurado ? (l.email.status?.ok === false ? 'tag-reembolso' : 'tag-green') : 'tag-outro')}>
+              e-mail: {l.email.configurado ? (l.email.status?.ok === false ? 'com problema' : l.email.endereco) : 'não conectado'}
+            </span>
+            <span className={'tag ' + (l.shopify.conectada ? 'tag-green' : 'tag-outro')}>
+              shopify: {l.shopify.conectada ? l.shopify.dominio : 'não conectada'}
+            </span>
+            <span className="tag tag-outro">moeda {l.moeda}</span>
+          </div>
+        </div>
+      ))}
+      <button className="btn" onClick={() => setSecao('integracoes')}>Ir para Integrações <ArrowRight size={13} /></button>
+    </>
+  )
+
+  const secLoja = (
+    <>
+      <Cabecalho titulo="Loja" desc="A identidade da sua loja — usada na barra lateral e nas respostas geradas pelo atendo." />
+      {bannerLoja}
+      <div className="grid-2 mb-16">
+        <CampoTexto label="Nome da loja" valor={lojaSel?.nome ?? s.config.nomeLoja} aoSalvar={v => s.atualizarLoja(lojaId, { nome: v })} />
+        <CampoTexto label="Assinatura de e-mail" valor={s.config.assinatura} aoSalvar={v => s.setConfig({ assinatura: v })} />
+      </div>
+      <p className="muted-sm" style={{ lineHeight: 1.6 }}>
+        A assinatura fecha todas as respostas geradas. A moeda ({lojaSel?.moeda ?? 'EUR'}) vem da própria Shopify quando conectada.
+      </p>
+    </>
+  )
+
+  const secEquipe = (
+    <>
+      <Cabecalho titulo="Equipe" desc="Quem trabalha com você neste atendimento." />
+      <div className="card" style={{ padding: 16 }}>
+        <div className="row gap-10 mb-8">
+          <div className="avatar-sm">{(s.usuario?.nome?.[0] ?? 'A').toUpperCase()}</div>
+          <div>
+            <b style={{ fontSize: 13.5 }}>{s.usuario?.nome}</b>
+            <div className="muted-sm">{s.usuario?.email} · dono do workspace</div>
+          </div>
+        </div>
+        <p className="muted-sm" style={{ lineHeight: 1.6 }}>
+          Convites para mais pessoas no mesmo workspace chegam em breve. Por enquanto, cada pessoa cria a própria conta e tem um espaço separado.
+        </p>
+      </div>
+    </>
+  )
+
+  const secCaixa = (
+    <>
+      <Cabecalho titulo="Caixa de entrada" desc="Como as conversas são exibidas e organizadas." />
+      <LinhaPref titulo="Densidade de leitura" desc="Confortável mostra o preview da mensagem; compacto cabe mais conversas.">
+        <button className={'chip' + (s.prefs.densidade === 'confortavel' ? ' active-purple' : '')} onClick={() => s.setPref({ densidade: 'confortavel' })}>Confortável</button>
+        <button className={'chip' + (s.prefs.densidade === 'compacto' ? ' active-purple' : '')} onClick={() => s.setPref({ densidade: 'compacto' })}>Compacto</button>
+      </LinhaPref>
+      <LinhaPref titulo="Mostrar preview da mensagem" desc="Exibe um trecho da última mensagem na lista.">
+        <button className={'switch' + (s.prefs.mostrarPreview ? ' on' : '')} onClick={() => s.setPref({ mostrarPreview: !s.prefs.mostrarPreview })} />
+      </LinhaPref>
+      <LinhaPref titulo="Assinatura de e-mail" desc="Configurada na identidade da loja.">
+        <button className="btn btn-sm" onClick={() => setSecao('loja')}>Editar assinatura</button>
+      </LinhaPref>
+    </>
+  )
+
+  const secRespostas = (
+    <>
+      <Cabecalho titulo="Respostas" desc="Como o atendo redige e sugere respostas para o seu time." />
+      <div className="card mb-16" style={{ padding: 16 }}>
+        <div className="row spread">
+          <div className="row gap-10">
+            <BookOpen size={16} color="var(--purple)" />
+            <div>
+              <b style={{ fontSize: 13.5 }}>Base de conhecimento</b>
+              <div className="muted-sm">
+                {s.politicas.length + s.faqs.length > 0
+                  ? `${s.politicas.length} política(s) e ${s.faqs.length} FAQ(s) — a fonte de verdade das respostas`
+                  : 'Nenhum artigo ainda — adicione políticas e FAQs que o atendo pode citar'}
+              </div>
+            </div>
+          </div>
+          <button className="btn btn-sm" onClick={() => nav('/conhecimento')}>Gerenciar <ArrowRight size={13} /></button>
+        </div>
+      </div>
+
+      <Section icon={<Zap size={15} />} title="Automação" desc="Quanto o atendo pode responder sozinho, sem passar por você.">
+        <div className="row spread mb-12">
+          <div style={{ paddingRight: 16 }}>
+            <b style={{ fontSize: 13.5 }}>Responder clientes automaticamente</b>
+            <div className="muted-sm">Com isso ligado, as respostas saem sozinhas — você não precisa aprovar nada.</div>
+          </div>
+          <button className={'switch' + (s.config.automacaoAtiva ? ' on' : '')} onClick={() => s.setConfig({ automacaoAtiva: !s.config.automacaoAtiva })} />
+        </div>
+
+        {s.config.automacaoAtiva && !s.integracoes.ia && (
+          <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: '#fde9c0', background: '#fffbeb' }}>
+            <p className="muted-sm" style={{ lineHeight: 1.6 }}>
+              <AlertTriangle size={12} style={{ verticalAlign: -2, marginRight: 6, color: 'var(--amber)' }} />
+              A IA não está gerando as respostas agora — o que sair será o texto genérico das regras locais. Resolva a IA em Integrações antes de deixar no automático.
+            </p>
+          </div>
+        )}
+
+        <div className="row gap-10 mb-12">
+          <span className="muted" style={{ fontSize: 13 }}>Esperar antes de enviar:</span>
+          <select value={s.config.atrasoMinutos} onChange={e => s.setConfig({ atrasoMinutos: Number(e.target.value) })}
+            className="chip" style={{ cursor: 'pointer' }}>
+            <option value={0}>na hora</option>
+            {[1, 3, 5, 10, 20, 45].map(m => <option key={m} value={m}>{m} min</option>)}
+          </select>
+          <span className="muted-sm">um pequeno atraso faz a resposta parecer escrita por uma pessoa</span>
+        </div>
+
+        <div className="row spread mb-12">
+          <div style={{ paddingRight: 16 }}>
+            <b style={{ fontSize: 13.5 }}>Reembolsos e casos sensíveis esperam você</b>
+            <div className="muted-sm">
+              Reembolsos, disputas e ameaças legais vão para Atendimento humano em vez de serem respondidos sozinhos.
+              {!s.config.escalarSensiveis && <b style={{ color: 'var(--red)' }}> Desligado: a IA vai responder até pedidos de reembolso por conta própria.</b>}
+            </div>
+          </div>
+          <button className={'switch' + (s.config.escalarSensiveis ? ' on' : '')} onClick={() => s.setConfig({ escalarSensiveis: !s.config.escalarSensiveis })} />
+        </div>
+
+        <div className="row gap-10">
+          <span className="muted" style={{ fontSize: 13 }}>Só responder sozinho com confiança acima de:</span>
+          <select value={s.config.confiancaMinima} onChange={e => s.setConfig({ confiancaMinima: Number(e.target.value) })}
+            className="chip" style={{ cursor: 'pointer' }}>
+            <option value={0}>qualquer confiança</option>
+            <option value={0.4}>40%</option>
+            <option value={0.55}>55% (recomendado)</option>
+            <option value={0.7}>70%</option>
+            <option value={0.85}>85% (bem conservador)</option>
+          </select>
+        </div>
+        <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
+          Abaixo desse valor a resposta espera sua aprovação. Quanto mais completa a Base de Conhecimento, mais alta a confiança da IA.
+        </p>
+      </Section>
+    </>
+  )
+
+  const secIntegracoes = (
+    <>
+      <Cabecalho titulo="Integrações" desc="Conecte as ferramentas que o seu atendimento usa. O status é mostrado ao vivo." />
+      {bannerLoja}
 
       <Section icon={<Sparkles size={15} />} title="Inteligência artificial (Claude)" desc="Classifica cada e-mail e escreve a resposta no idioma do cliente, usando suas políticas como fonte de verdade.">
         {s.integracoes.ia ? (
@@ -317,9 +527,6 @@ export default function Configuracoes() {
                   <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>A IA não está respondendo — usando regras locais</b>
                 </div>
                 <p className="muted-sm" style={{ lineHeight: 1.6 }}>{ia.erro}</p>
-                <p className="muted-sm" style={{ lineHeight: 1.6, marginTop: 8 }}>
-                  Para trocar de modelo, defina <code>ATENDO_MODEL</code> no Railway (ex.: <code>claude-sonnet-5</code>, mais barato).
-                </p>
               </div>
             )}
           </>
@@ -327,15 +534,14 @@ export default function Configuracoes() {
           <>
             <span className="tag tag-amber">Não configurada — respostas por regras simples</span>
             <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
-              1. Crie uma conta em <b>console.anthropic.com</b> e gere uma chave de API (custo por uso — centavos por e-mail respondido).<br />
-              2. Adicione no Railway:
+              A chave da IA é configurada pelo administrador do servidor (variável <code>ANTHROPIC_API_KEY</code> no Railway) e vale para todos os usuários.
             </p>
             <EnvVars vars={[['ANTHROPIC_API_KEY', 'sk-ant-...sua-chave...']]} />
           </>
         )}
       </Section>
 
-      <Section icon={<Mail size={15} />} title="E-mail de atendimento" desc="A caixa que o atendo lê (IMAP) e pela qual responde (SMTP).">
+      <Section icon={<Mail size={15} />} title="E-mail" desc="Receba e responda e-mails de qualquer caixa de entrada.">
         {emailOk ? (
           <>
             <div className="row gap-10" style={{ flexWrap: 'wrap' }}>
@@ -380,24 +586,6 @@ export default function Configuracoes() {
               </div>
             )}
 
-            {!status?.envioPorApi && (
-              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px' }}>
-                <b style={{ fontSize: 13 }}>A hospedagem bloqueia o envio por SMTP?</b>
-                <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.6 }}>
-                  Railway, Vercel e similares costumam bloquear as portas de saída SMTP (465 e 587) para conter spam —
-                  a leitura continua funcionando, só o envio falha por tempo esgotado. A solução é enviar por API, que usa HTTPS
-                  e nunca é bloqueada. Crie uma conta em <b>resend.com</b>, verifique seu domínio e adicione no Railway:
-                </p>
-                <EnvVars vars={[
-                  ['RESEND_API_KEY', 're_...sua-chave...'],
-                  ['EMAIL_FROM', 'suporte@seudominio.com'],
-                ]} />
-                <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
-                  A leitura dos e-mails continua pelo IMAP normalmente; só o envio passa a usar a Resend.
-                  As respostas dos clientes voltam para a sua caixa, porque o campo de resposta aponta para {status?.remetente ?? 'ela'}.
-                </p>
-              </div>
-            )}
             {diag && (
               <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px' }}>
                 {!diag.ok ? (
@@ -454,7 +642,7 @@ export default function Configuracoes() {
         )}
       </Section>
 
-      <Section icon={<ShoppingBag size={15} />} title="Shopify" desc="Pedidos, rastreio e clientes entram sozinhos — o atendo usa esses dados nas respostas.">
+      <Section icon={<ShoppingBag size={15} />} title="Shopify" desc="Enriqueça os tickets com dados de pedidos e clientes.">
         {shopConectada ? (
           <>
             <div className="row gap-10" style={{ flexWrap: 'wrap' }}>
@@ -489,9 +677,9 @@ export default function Configuracoes() {
           <>
             {s.integracoes.shopifyOauth ? (
               <>
-                <span className="tag tag-amber">Pronta para conectar</span>
-                <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
-                  Digite o endereço da sua loja e clique em conectar. Você será levado à Shopify para autorizar o acesso e volta para cá automaticamente.
+                <p className="muted-sm" style={{ lineHeight: 1.6 }}>
+                  A conexão acontece na própria Shopify: digite o endereço da loja, clique abaixo, instale o atendo e aprove
+                  as permissões — sua loja conecta sozinha, sem digitar mais nada.
                 </p>
                 <form
                   className="row gap-8"
@@ -505,29 +693,21 @@ export default function Configuracoes() {
                     style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 10, padding: '9px 12px', outline: 'none', fontSize: 13 }} />
                   <button className="btn btn-primary btn-sm" type="submit" disabled={!lojaShop.trim()}
                     style={!lojaShop.trim() ? { opacity: 0.5 } : undefined}>
-                    <ShoppingBag size={13} /> Conectar Shopify
+                    <ShoppingBag size={13} /> Conectar com a Shopify
                   </button>
                 </form>
-                <p className="muted-sm" style={{ marginTop: 12, lineHeight: 1.6 }}>
-                  Antes de conectar, esta URL precisa estar cadastrada em <b>Redirect URLs</b>, na página
-                  de configuração do app no Dev Dashboard (logo abaixo dos scopes):
-                </p>
-                <EnvVars vars={[['Redirect URL', `${window.location.origin}/api/shopify/callback`]]} />
               </>
             ) : (
               <>
                 <span className="tag tag-amber">Não configurada</span>
                 <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
-                  No <b>Dev Dashboard</b> da Shopify, abra o app → <b>Settings</b> e copie o <b>Client ID</b> e o <b>Client secret</b>.
-                  Em <b>Configuration</b>, cadastre a Redirect URL abaixo. Depois adicione no Railway:
+                  O administrador do servidor precisa configurar o app da Shopify (Dev Dashboard → Settings) no Railway:
                 </p>
                 <EnvVars vars={[
                   ['SHOPIFY_CLIENT_ID', 'seu-client-id'],
                   ['SHOPIFY_CLIENT_SECRET', 'seu-client-secret'],
                 ]} />
-                <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
-                  Redirect URL a cadastrar no app da Shopify:
-                </p>
+                <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>Redirect URL a cadastrar no app da Shopify:</p>
                 <EnvVars vars={[['Redirect URL', `${window.location.origin}/api/shopify/callback`]]} />
               </>
             )}
@@ -545,90 +725,113 @@ export default function Configuracoes() {
           </>
         )}
       </Section>
+    </>
+  )
 
-      <Section icon={<Zap size={15} />} title="Automação" desc="Quanto o atendo pode responder sozinho, sem passar por você.">
-        <div className="row spread mb-12">
-          <div style={{ paddingRight: 16 }}>
-            <b style={{ fontSize: 13.5 }}>Responder clientes automaticamente</b>
-            <div className="muted-sm">Com isso ligado, as respostas saem sozinhas — você não precisa aprovar nada.</div>
-          </div>
-          <button className={'switch' + (s.config.automacaoAtiva ? ' on' : '')} onClick={() => s.setConfig({ automacaoAtiva: !s.config.automacaoAtiva })} />
+  const secConta = (
+    <>
+      <Cabecalho titulo="Conta" desc="Sua conta pessoal do atendo." />
+      <div className="grid-2 mb-16">
+        <CampoTexto label="Nome" valor={s.usuario?.nome ?? ''} aoSalvar={v => { s.atualizarConta({ nome: v }) }} />
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label>E-mail da conta</label>
+          <input value={s.usuario?.email ?? ''} disabled style={{ opacity: 0.7 }} />
         </div>
-
-        {s.config.automacaoAtiva && !s.integracoes.ia && (
-          <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: '#fde9c0', background: '#fffbeb' }}>
-            <p className="muted-sm" style={{ lineHeight: 1.6 }}>
-              <AlertTriangle size={12} style={{ verticalAlign: -2, marginRight: 6, color: 'var(--amber)' }} />
-              A IA não está gerando as respostas agora — o que sair será o texto genérico das regras locais. Resolva a IA acima antes de deixar no automático.
-            </p>
-          </div>
-        )}
-
-        <div className="row gap-10 mb-12">
-          <span className="muted" style={{ fontSize: 13 }}>Esperar antes de enviar:</span>
-          <select value={s.config.atrasoMinutos} onChange={e => s.setConfig({ atrasoMinutos: Number(e.target.value) })}
-            className="chip" style={{ cursor: 'pointer' }}>
-            <option value={0}>na hora</option>
-            {[1, 3, 5, 10, 20, 45].map(m => <option key={m} value={m}>{m} min</option>)}
-          </select>
-          <span className="muted-sm">um pequeno atraso faz a resposta parecer escrita por uma pessoa</span>
-        </div>
-
-        <div className="row spread mb-12">
-          <div style={{ paddingRight: 16 }}>
-            <b style={{ fontSize: 13.5 }}>Reembolsos e casos sensíveis esperam você</b>
-            <div className="muted-sm">
-              Reembolsos, disputas e ameaças legais vão para Atendimento humano em vez de serem respondidos sozinhos.
-              {!s.config.escalarSensiveis && <b style={{ color: 'var(--red)' }}> Desligado: a IA vai responder até pedidos de reembolso por conta própria.</b>}
-            </div>
-          </div>
-          <button className={'switch' + (s.config.escalarSensiveis ? ' on' : '')} onClick={() => s.setConfig({ escalarSensiveis: !s.config.escalarSensiveis })} />
-        </div>
-
-        <div className="row gap-10">
-          <span className="muted" style={{ fontSize: 13 }}>Só responder sozinho com confiança acima de:</span>
-          <select value={s.config.confiancaMinima} onChange={e => s.setConfig({ confiancaMinima: Number(e.target.value) })}
-            className="chip" style={{ cursor: 'pointer' }}>
-            <option value={0}>qualquer confiança</option>
-            <option value={0.4}>40%</option>
-            <option value={0.55}>55% (recomendado)</option>
-            <option value={0.7}>70%</option>
-            <option value={0.85}>85% (bem conservador)</option>
-          </select>
-        </div>
-        <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.6 }}>
-          Abaixo desse valor a resposta espera sua aprovação. Quanto mais completa a Base de Conhecimento, mais alta a confiança da IA.
-        </p>
-      </Section>
-
-      <Section icon={<PenLine size={15} />} title="Identidade" desc="Nome da loja e assinatura usada no fim de cada resposta.">
-        <div className="grid-2">
-          <CampoTexto label={`Nome da loja${sufixo ? ' 2' : ''}`} valor={lojaSel?.nome ?? s.config.nomeLoja} aoSalvar={v => s.atualizarLoja(lojaId, { nome: v })} />
-          <CampoTexto label="Assinatura" valor={s.config.assinatura} aoSalvar={v => s.setConfig({ assinatura: v })} />
-        </div>
-      </Section>
-
-      <Section icon={<UserRound size={15} />} title="Conta" desc="Sua conta pessoal do atendo.">
-        <div className="grid-2 mb-12">
-          <CampoTexto label="Nome" valor={s.usuario?.nome ?? ''} aoSalvar={v => { s.atualizarConta({ nome: v }) }} />
-          <div className="field" style={{ marginBottom: 0 }}>
-            <label>E-mail da conta</label>
-            <input value={s.usuario?.email ?? ''} disabled style={{ opacity: 0.7 }} />
-          </div>
-        </div>
+      </div>
+      <div className="card mb-16" style={{ padding: 16 }}>
         <FormularioSenha />
-        <div style={{ marginTop: 14 }}>
-          <button className="btn" onClick={() => { if (confirm('Sair da sua conta?')) s.sair() }}>
-            <LogOut size={13} /> Sair da conta
-          </button>
-        </div>
-      </Section>
-
-      <Section icon={<Database size={15} />} title="Dados" desc="Tickets, políticas e FAQs ficam salvos no seu workspace, no banco de dados.">
+      </div>
+      <div className="card mb-16" style={{ padding: 16 }}>
+        <div className="row gap-8 mb-8"><Database size={14} color="var(--purple)" /><b style={{ fontSize: 13.5 }}>Dados</b></div>
+        <p className="muted-sm mb-12">Tickets, políticas e FAQs ficam salvos no seu workspace, no banco de dados.</p>
         <button className="btn btn-danger" onClick={() => { if (confirm('Apagar todos os tickets, políticas, FAQs e conexões deste workspace?')) s.limparTudo() }}>
           Apagar todos os dados
         </button>
-      </Section>
+      </div>
+      <button className="btn" onClick={() => { if (confirm('Sair da sua conta?')) s.sair() }}>
+        <LogOut size={13} /> Sair da conta
+      </button>
+    </>
+  )
+
+  const secNotificacoes = (
+    <>
+      <Cabecalho titulo="Notificações" desc="Quando e como o atendo deve te avisar." />
+      <div className="card" style={{ padding: 16 }}>
+        <p className="muted-sm" style={{ lineHeight: 1.6 }}>
+          Avisos por e-mail quando um caso cai em Atendimento humano chegam em breve. Por enquanto, os números na barra
+          lateral mostram tudo que precisa de você.
+        </p>
+      </div>
+    </>
+  )
+
+  const secAparencia = (
+    <>
+      <Cabecalho titulo="Aparência" desc="Personalize como o atendo aparece neste dispositivo." />
+      <LinhaPref titulo="Tema" desc="Interface clara ou escura.">
+        <button className={'chip' + (s.prefs.tema === 'claro' ? ' active-purple' : '')} onClick={() => s.setPref({ tema: 'claro' })}>
+          <Sun size={13} /> Claro
+        </button>
+        <button className={'chip' + (s.prefs.tema === 'escuro' ? ' active-purple' : '')} onClick={() => s.setPref({ tema: 'escuro' })}>
+          <Moon size={13} /> Escuro
+        </button>
+      </LinhaPref>
+      <LinhaPref titulo="Moeda de exibição" desc="Como os valores aparecem em Produtos, Pedidos e Ganhos. Conversão pela cotação do dia (BCE) — os dados continuam na moeda da loja.">
+        <button className={'chip' + (s.prefs.moedaExibicao === 'loja' ? ' active-purple' : '')} onClick={() => s.setPref({ moedaExibicao: 'loja' })}>Moeda da loja</button>
+        <button className={'chip' + (s.prefs.moedaExibicao === 'USD' ? ' active-purple' : '')} onClick={() => s.setPref({ moedaExibicao: 'USD' })}>US$</button>
+        <button className={'chip' + (s.prefs.moedaExibicao === 'EUR' ? ' active-purple' : '')} onClick={() => s.setPref({ moedaExibicao: 'EUR' })}>€</button>
+        <button className={'chip' + (s.prefs.moedaExibicao === 'BRL' ? ' active-purple' : '')} onClick={() => s.setPref({ moedaExibicao: 'BRL' })}>R$</button>
+      </LinhaPref>
+      {s.prefs.moedaExibicao !== 'loja' && !s.cotacoes && (
+        <p className="muted-sm mb-16" style={{ color: 'var(--amber)' }}>
+          Cotação do dia indisponível no momento — os valores seguem na moeda da loja até a cotação voltar.
+        </p>
+      )}
+      <LinhaPref titulo="Tamanho da fonte" desc="Ajusta o tamanho do texto da interface.">
+        <button className={'chip' + (s.prefs.tamanhoFonte === 'pequeno' ? ' active-purple' : '')} onClick={() => s.setPref({ tamanhoFonte: 'pequeno' })}>Pequeno</button>
+        <button className={'chip' + (s.prefs.tamanhoFonte === 'padrao' ? ' active-purple' : '')} onClick={() => s.setPref({ tamanhoFonte: 'padrao' })}>Padrão</button>
+        <button className={'chip' + (s.prefs.tamanhoFonte === 'grande' ? ' active-purple' : '')} onClick={() => s.setPref({ tamanhoFonte: 'grande' })}>Grande</button>
+      </LinhaPref>
+    </>
+  )
+
+  const secPlano = (
+    <>
+      <Cabecalho titulo="Plano" desc="Cobrança e limites da sua conta." />
+      <div className="card" style={{ padding: 16 }}>
+        <span className="pill-plan">Uso pessoal</span>
+        <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.6 }}>
+          Este atendo roda sem cobrança por usuário. O único custo é o da IA (pago pelo administrador do servidor,
+          por e-mail respondido) — o custo de cada conversa aparece no próprio ticket.
+        </p>
+      </div>
+    </>
+  )
+
+  const conteudo: Record<Secao, React.ReactNode> = {
+    visao: secVisao, loja: secLoja, equipe: secEquipe, caixa: secCaixa,
+    respostas: secRespostas, integracoes: secIntegracoes, conta: secConta,
+    notificacoes: secNotificacoes, aparencia: secAparencia, plano: secPlano,
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 28, alignItems: 'flex-start', maxWidth: 1060, margin: '0 auto' }}>
+      <nav style={{ width: 200, flexShrink: 0, position: 'sticky', top: 0 }}>
+        {MENU.map((grupo, gi) => (
+          <div key={gi}>
+            {grupo.grupo && <div className="sidebar-label">{grupo.grupo}</div>}
+            {grupo.itens.map(({ id, rotulo, Icone }) => (
+              <button key={id} className={'nav-item' + (secao === id ? ' active' : '')} onClick={() => setSecao(id)}>
+                <Icone size={16} /><span>{rotulo}</span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div style={{ flex: 1, minWidth: 0, maxWidth: 720 }}>
+        {conteudo[secao]}
+      </div>
     </div>
   )
 }

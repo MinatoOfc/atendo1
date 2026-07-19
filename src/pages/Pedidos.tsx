@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { ShoppingBag } from 'lucide-react'
-import { useStore, formatarMoeda } from '../store'
+import { useStore } from '../store'
 import { EmptyState, TipCard } from '../components/Shared'
 
 const statusPedido: Record<string, { label: string; cls: string }> = {
@@ -11,8 +11,8 @@ const statusPedido: Record<string, { label: string; cls: string }> = {
 }
 
 export default function Pedidos() {
-  const { config, pedidos, conectarShopify, moeda } = useStore()
-  const fmt = formatarMoeda(moeda)
+  const { config, pedidos, conectarShopify, fmtMoeda } = useStore()
+  const fmt = (v: number) => fmtMoeda(v)
   const nav = useNavigate()
 
   if (!config.shopifyConectada) {

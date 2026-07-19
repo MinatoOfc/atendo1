@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   Home, Inbox, Send, CheckSquare, Users, BookOpen, Shield, Trash2,
@@ -67,13 +67,8 @@ export default function Layout() {
   const [compor, setCompor] = useState(false)
   const [girando, setGirando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
-  const [tema, setTema] = useState<'claro' | 'escuro'>(() =>
-    (localStorage.getItem('atendo-tema') === 'escuro' ? 'escuro' : 'claro'))
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = tema === 'escuro' ? 'dark' : ''
-    localStorage.setItem('atendo-tema', tema)
-  }, [tema])
+  const { prefs, setPref } = useStore()
+  const tema = prefs.tema
 
   const onSync = async () => {
     setGirando(true)
@@ -142,7 +137,7 @@ export default function Layout() {
               <RefreshCw style={girando ? { animation: 'spin 0.9s linear infinite' } : undefined} />
               <span>Sincronizar</span>
             </button>
-            <button className="icon-btn" onClick={() => setTema(t => (t === 'escuro' ? 'claro' : 'escuro'))} title={tema === 'escuro' ? 'Modo claro' : 'Modo escuro'}>
+            <button className="icon-btn" onClick={() => setPref({ tema: tema === 'escuro' ? 'claro' : 'escuro' })} title={tema === 'escuro' ? 'Modo claro' : 'Modo escuro'}>
               {tema === 'escuro' ? <Sun /> : <Moon />}
             </button>
             <button className="icon-btn"><Globe /> PT <ChevronDown size={12} /></button>

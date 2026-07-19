@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Package, ShoppingBag, RefreshCw, Search, ExternalLink, Sparkles } from 'lucide-react'
-import { useStore, formatarMoeda } from '../store'
+import { useStore } from '../store'
 import { EmptyState } from '../components/Shared'
 
 export default function Produtos() {
   const s = useStore()
-  const moeda = formatarMoeda(s.moeda)
+  const moeda = (v: number) => s.fmtMoeda(v)
   const nav = useNavigate()
   const [busca, setBusca] = useState('')
   const [sincronizando, setSincronizando] = useState(false)

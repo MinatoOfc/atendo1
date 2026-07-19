@@ -6,20 +6,22 @@ import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
 
 export function TicketRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
-  const { lojasVisiveis, lojaAtiva } = useStore()
+  const { lojasVisiveis, lojaAtiva, prefs } = useStore()
   const nomeLojaDona = lojaAtiva === 'todas' && lojasVisiveis.length > 1
     ? lojasVisiveis.find(l => l.id === (t.lojaId ?? 'loja1'))?.nome
     : null
+  const compacto = prefs.densidade === 'compacto'
   return (
-    <button className="ticket-row" onClick={() => onOpen(t)}>
+    <button className="ticket-row" onClick={() => onOpen(t)}
+      style={compacto ? { padding: '7px 16px' } : undefined}>
       <span className={'dot' + (t.lido ? ' read' : '')} />
       <span className="from">
         {t.nome}
-        <div className="email">{t.de}</div>
+        {!compacto && <div className="email">{t.de}</div>}
       </span>
       <span className="subject">
         <b>{t.assunto}</b>{' '}
-        <span className="preview">— {(t.resposta ?? t.corpo).slice(0, 90)}</span>
+        {prefs.mostrarPreview && <span className="preview">— {(t.resposta ?? t.corpo).slice(0, 90)}</span>}
       </span>
       {nomeLojaDona && <span className="tag tag-purple">{nomeLojaDona}</span>}
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}

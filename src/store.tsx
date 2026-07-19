@@ -98,6 +98,20 @@ export interface Loja {
 
 export interface Usuario { id: string; nome: string; email: string }
 
+/** Preferências deste dispositivo (ficam no navegador, não no servidor). */
+export interface Prefs {
+  tema: 'claro' | 'escuro'
+  densidade: 'confortavel' | 'compacto'
+  mostrarPreview: boolean
+  moedaExibicao: 'loja' | 'USD' | 'EUR' | 'BRL'
+  tamanhoFonte: 'pequeno' | 'padrao' | 'grande'
+}
+
+const prefsPadrao: Prefs = {
+  tema: 'claro', densidade: 'confortavel', mostrarPreview: true,
+  moedaExibicao: 'loja', tamanhoFonte: 'padrao',
+}
+
 export interface ConfigEmail {
   provider?: string; user: string; pass: string
   from?: string; remetenteNome?: string
@@ -127,6 +141,7 @@ interface ServerState {
   moeda: string
   lojas: Loja[]
   provedoresEmail?: string[]
+  cotacoes?: Record<string, number> | null
   config: Config
   integracoes: Integracoes
 }
@@ -174,6 +189,10 @@ interface Store extends ServerState {
   salvarEmailLoja: (lojaId: string, cfg: ConfigEmail) => Promise<string | null>
   removerEmailLoja: (lojaId: string) => void
   testarEmailConfig: (cfg: ConfigEmail) => Promise<ResultadoTesteEmail>
+  prefs: Prefs
+  setPref: (patch: Partial<Prefs>) => void
+  /** Formata um valor na moeda de exibição preferida (converte pela cotação do dia). */
+  fmtMoeda: (v: number, moedaOrigem?: string) => string
   /** 'todas' ou o id da loja selecionada na seta do topo da barra lateral */
   lojaAtiva: string
   setLojaAtiva: (id: string) => void
@@ -225,7 +244,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [lojaAtiva, setLojaAtivaState] = useState<string>(() => localStorage.getItem('atendo-loja-ativa') ?? 'todas')
   const [usuario, setUsuario] = useState<Usuario | null>(null)
   const [autenticando, setAutenticando] = useState(true)
+  const [prefs, setPrefs] = useState<Prefs>(() => {
+    try { return { ...prefsPadrao, ...JSON.parse(localStorage.getItem('atendo-prefs') ?? '{}') } } catch { return prefsPadrao }
+  })
   const debounces = useRef<Record<string, number>>({})
+
+  // aplica tema e tamanho da fonte no documento
+  useEffect(() => {
+    localStorage.setItem('atendo-prefs', JSON.stringify(prefs))
+    document.documentElement.dataset.theme = prefs.tema === 'escuro' ? 'dark' : ''
+    const zoom = { pequeno: '0.92', padrao: '1', grande: '1.08' }[prefs.tamanhoFonte]
+    ;(document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = zoom
+  }, [prefs])
 
   useEffect(() => { localStorage.setItem(TIPS_KEY, JSON.stringify(tipsFechados)) }, [tipsFechados])
 
@@ -275,17 +305,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const pedidos = state.pedidos.filter(daLoja)
     const produtos = state.produtos.filter(daLoja)
     const lojaSel = state.lojas.find(l => l.id === lojaAtiva)
+    const moedaLoja = lojaSel?.moeda ?? state.moeda
+
+    // Moeda de exibição: converte pela cotação do dia (BCE); sem cotação
+    // disponível, mostra na moeda da loja mesmo.
+    const fmtMoeda = (v: number, origem: string = moedaLoja) => {
+      const alvo = prefs.moedaExibicao
+      const taxas = state.cotacoes
+      if (alvo === 'loja' || alvo === origem || !taxas || !taxas[alvo] || !taxas[origem]) {
+        return formatarMoeda(origem)(v)
+      }
+      return formatarMoeda(alvo)((v / taxas[origem]) * taxas[alvo])
+    }
 
     return {
     ...state,
     tickets,
     pedidos,
     produtos,
-    moeda: lojaSel?.moeda ?? state.moeda,
+    moeda: moedaLoja,
     carregado,
     tipsFechados,
     usuario,
     autenticando,
+    prefs,
+    setPref: patch => setPrefs(p => ({ ...p, ...patch })),
+    fmtMoeda,
     entrar: (email, senha) => autenticar('/login', { email, senha }),
     registrar: (nome, email, senha) => autenticar('/registrar', { nome, email, senha }),
     sair: () => {
@@ -421,7 +466,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return true
     },
     }
-  }, [state, carregado, tipsFechados, lojaAtiva, usuario, autenticando])
+  }, [state, carregado, tipsFechados, lojaAtiva, usuario, autenticando, prefs])
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>
 }

@@ -110,6 +110,27 @@ const conexaoLoja = (estado, lojaId) => {
 
 const algumaShopify = estado => estado.lojas.some((l, i) => conexaoDaLoja(l, i))
 
+/* ---------------- Cotações (moeda de exibição) ---------------- */
+
+// Taxas do BCE via frankfurter.app, base EUR, renovadas 1x por dia.
+// Servem só para a preferência visual de moeda — os dados ficam na moeda da loja.
+let cotacoes = { em: 0, taxas: null }
+
+async function atualizarCotacoes() {
+  try {
+    const resp = await fetch('https://api.frankfurter.app/latest?from=EUR&to=USD,BRL,GBP')
+    if (resp.ok) {
+      const d = await resp.json()
+      cotacoes = { em: Date.now(), taxas: { EUR: 1, ...d.rates } }
+    }
+  } catch { /* sem internet ou API fora — a preferência fica desativada */ }
+}
+
+function taxasAtuais() {
+  if (Date.now() - cotacoes.em > 24 * 3600_000) atualizarCotacoes()
+  return cotacoes.taxas
+}
+
 /* ---------------- Visão para o frontend ---------------- */
 
 function visaoLojas(wsId, estado) {
@@ -154,6 +175,7 @@ function visao(wsId) {
     moeda: loja1?.moeda || 'EUR',
     lojas: visaoLojas(wsId, estado),
     provedoresEmail: presetsDisponiveis,
+    cotacoes: taxasAtuais(),
     config: {
       ...estado.config,
       nomeLoja: loja1?.nome ?? estado.config.nomeLoja,
