@@ -6,7 +6,7 @@ import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
-import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
+import { processarEmail, iaConfigurada, testarIA, statusIA, traduzirTexto } from './ai.js'
 import {
   emailConfigurado, enderecoEmail, buscarNovosEmails, enviarEmailReal,
   verificarConexao, verificarEnvio, diagnosticar, statusEmail,
@@ -76,6 +76,8 @@ function aplicarResultado(t, r) {
   t.rascunho = r.resposta
   t.confianca = r.confianca
   t.geradoPorIA = r.geradoPorIA
+  if (r.situacao) t.resumoSituacao = r.situacao
+  if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
 
   const minima = state.config.confiancaMinima ?? 0.55
   const sensivel = state.config.escalarSensiveis !== false && r.escalarHumano
@@ -149,9 +151,16 @@ async function anexarNaConversa(t, { corpo, data, messageId }) {
   t.enviaEm = undefined
   t.erroEnvio = undefined
   t.tentativasEnvio = undefined
+  t.traducao = undefined // a tradução era da mensagem anterior
 
-  const r = await processarEmail(state, t)
-  aplicarResultado(t, r)
+  if (t.iaPausada) {
+    // IA pausada nesta conversa: nada de rascunho nem envio automático
+    t.status = 'humano'
+    t.motivoEscalada = 'IA pausada nesta conversa — responda manualmente ou retome a IA'
+  } else {
+    const r = await processarEmail(state, t)
+    aplicarResultado(t, r)
+  }
 
   // conversa atualizada sobe para o topo da lista
   state.tickets = [t, ...state.tickets.filter(x => x.id !== t.id)]
@@ -239,7 +248,7 @@ const MAX_TENTATIVAS = 3
 setInterval(async () => {
   const agora = Date.now()
   const vencidos = state.tickets.filter(t =>
-    t.status === 'aprovacao' && t.enviaEm && t.enviaEm <= agora && !enviando.has(t.id))
+    t.status === 'aprovacao' && t.enviaEm && t.enviaEm <= agora && !t.iaPausada && !enviando.has(t.id))
   if (!vencidos.length) return
 
   for (const t of vencidos) {
@@ -395,6 +404,23 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     console.error('[enviar]', err)
     res.status(500).json({ erro: 'Falha ao enviar: ' + err.message, state: visao() })
   }
+})
+
+app.post('/api/tickets/:id/pausar-ia', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  t.iaPausada = !!req.body.pausar
+  if (t.iaPausada) t.enviaEm = undefined // cancela envio automático pendente
+  persistir(); ok(res)
+})
+
+app.post('/api/tickets/:id/traduzir', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  if (t.traducao) return ok(res) // já traduzido — não paga de novo
+  const r = await traduzirTexto(t.corpo)
+  if (r.erro) return res.status(400).json({ erro: r.erro, state: visao() })
+  t.traducao = r.texto
+  if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
+  persistir(); ok(res)
 })
 
 app.post('/api/tickets/:id/mover', (req, res) => {

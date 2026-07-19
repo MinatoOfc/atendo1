@@ -53,11 +53,32 @@ export async function testarIA() {
   return statusIA
 }
 
+// Preço por milhão de tokens (entrada, saída) — para estimar o custo por conversa
+const PRECOS = {
+  'claude-haiku-4-5': [1, 5],
+  'claude-sonnet-5': [3, 15],
+  'claude-sonnet-4-6': [3, 15],
+  'claude-opus-4-8': [5, 25],
+  'claude-opus-4-7': [5, 25],
+  'claude-opus-4-6': [5, 25],
+  'claude-fable-5': [10, 50],
+}
+
+function custoDeUso(u) {
+  if (!u) return 0
+  const [entrada, saida] = PRECOS[MODEL] ?? [3, 15]
+  const tokensEntrada = (u.input_tokens || 0)
+    + (u.cache_creation_input_tokens || 0) * 1.25
+    + (u.cache_read_input_tokens || 0) * 0.1
+  return (tokensEntrada * entrada + (u.output_tokens || 0) * saida) / 1e6
+}
+
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'motivo', 'spam'],
+  required: ['categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'motivo', 'spam', 'situacao'],
   properties: {
+    situacao: { type: 'string', description: 'Resumo de UMA frase, em português, do que o cliente quer nesta conversa — para o atendente entender o caso de relance. Ex.: "Cliente solicita reembolso de 3 polos por reação alérgica ao material".' },
     categoria: { type: 'string', enum: ['rastreio', 'reembolso', 'troca', 'produto', 'entrega', 'outro'] },
     idioma: { type: 'string', description: 'Código ISO 639-1 do idioma do cliente, ex.: pt, en, it, de, fr, es' },
     resposta: { type: 'string', description: 'Resposta completa ao cliente, no idioma dele, pronta para envio' },
@@ -178,12 +199,34 @@ export async function processarEmailIA(state, ticket) {
       escalarHumano: r.escalar_humano,
       motivo: r.motivo || null,
       spam: r.spam,
+      situacao: r.situacao || null,
+      custo: custoDeUso(resp.usage),
       geradoPorIA: true,
     }
   } catch (err) {
     registrarErro(traduzirErro(err))
     console.error('[ai] falha, usando regras locais:', statusIA.erro)
     return null
+  }
+}
+
+/** Traduz uma mensagem do cliente para português. Retorna {texto, custo} ou {erro}. */
+export async function traduzirTexto(texto) {
+  if (!client) return { erro: 'A tradução usa o Claude — configure a ANTHROPIC_API_KEY primeiro.' }
+  try {
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 1500,
+      ...(suportaAdaptive ? { thinking: { type: 'adaptive' } } : {}),
+      system: 'Traduza a mensagem do cliente para português brasileiro, mantendo o tom e o significado. Responda APENAS com a tradução, sem comentários nem explicações.',
+      messages: [{ role: 'user', content: String(texto).slice(0, 8000) }],
+    })
+    if (resp.stop_reason === 'refusal') return { erro: 'O Claude recusou traduzir esta mensagem.' }
+    const t = resp.content.find(b => b.type === 'text')?.text?.trim()
+    if (!t) return { erro: 'A IA não devolveu a tradução.' }
+    return { texto: t, custo: custoDeUso(resp.usage) }
+  } catch (err) {
+    return { erro: traduzirErro(err) }
   }
 }
 

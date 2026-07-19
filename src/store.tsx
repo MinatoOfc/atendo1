@@ -29,6 +29,10 @@ export interface Ticket {
   erroEnvio?: string
   tentativasEnvio?: number
   historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string }[]
+  resumoSituacao?: string
+  custoIA?: number
+  iaPausada?: boolean
+  traducao?: string
 }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
@@ -159,6 +163,8 @@ interface Store extends ServerState {
   testarIA: () => Promise<StatusIA>
   testarShopify: () => Promise<StatusShopify>
   desconectarShopify: () => void
+  pausarIA: (id: string, pausar: boolean) => void
+  traduzirTicket: (id: string) => Promise<boolean>
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -278,6 +284,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
 
     desconectarShopify: () => api('/shopify/desconectar').then(aplicar),
+
+    pausarIA: (id, pausar) => {
+      setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, iaPausada: pausar, enviaEm: pausar ? undefined : t.enviaEm } : t)) }))
+      api(`/tickets/${id}/pausar-ia`, 'POST', { pausar }).then(aplicar)
+    },
+
+    traduzirTicket: async id => {
+      const r = await api(`/tickets/${id}/traduzir`)
+      if (r.erro) { alert(r.erro); return false }
+      aplicar(r)
+      return true
+    },
   }), [state, carregado, tipsFechados])
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>
