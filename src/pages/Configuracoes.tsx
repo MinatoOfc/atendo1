@@ -676,7 +676,12 @@ export default function Configuracoes() {
                 <span className="tag tag-outro">Verificando…</span>
               )}
               <span className="muted">{lojaSel?.email.endereco ?? s.config.emailConectado}</span>
-              {status?.ok && <span className="muted-sm">lendo a cada 60 s{status.envioPorApi ? ' · enviando pela Resend' : ''}</span>}
+              {status?.ok && (
+                <span className="muted-sm">
+                  lendo a cada 60 s
+                  {status.envio?.via === 'smtp' ? ` · enviando por SMTP${status.envio.porta ? ` (porta ${status.envio.porta})` : ''}` : status.envio?.via === 'resend' ? ' · enviando pela Resend' : ''}
+                </span>
+              )}
               <button className="btn btn-sm" onClick={testar} disabled={testando}>
                 {testando ? 'Testando…' : 'Testar conexão'}
               </button>
@@ -706,6 +711,7 @@ export default function Configuracoes() {
                   </b>
                 </div>
                 {status.envio.erro && <p className="muted-sm" style={{ lineHeight: 1.6, marginTop: 8 }}>{status.envio.erro}</p>}
+                {status.envio.aviso && <p className="muted-sm" style={{ lineHeight: 1.6, marginTop: 8 }}>{status.envio.aviso}</p>}
               </div>
             )}
 

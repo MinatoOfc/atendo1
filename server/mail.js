@@ -90,11 +90,12 @@ export function criarConta(id, cfg, sufixo = '') {
     if (/AUTHENTICATION\s*FAILED|Invalid login|535|\bEAUTH\b/i.test(m) || code === 'EAUTH') {
       return `O servidor de envio recusou o login de ${cfg.user}. Confirme a senha da caixa de e-mail.`
     }
-    if (code === 'ETIMEDOUT' || code === 'ESOCKET' || code === 'ECONNREFUSED' || /timeout/i.test(m)) {
-      const alternativa = cfg.smtpPort === 465 ? 587 : 465
-      return `Não foi possível conectar em ${cfg.smtpHost}:${cfg.smtpPort}. `
-        + `Muitas hospedagens (Railway inclusive) bloqueiam a saída SMTP — se a porta ${alternativa} também falhar, o bloqueio é da hospedagem. `
-        + `Nesse caso, configure o envio por API definindo RESEND_API_KEY.`
+    if (code === 'ENOTFOUND' || code === 'EDNS') {
+      return `Servidor de envio ${cfg.smtpHost} não encontrado. Confira o endereço do servidor SMTP.`
+    }
+    if (code === 'ETIMEDOUT' || code === 'ESOCKET' || code === 'ECONNREFUSED' || code === 'ECONNRESET' || /timeout/i.test(m)) {
+      return `Não foi possível conectar em ${cfg.smtpHost} (portas 465 e 587 testadas). `
+        + `Se as duas portas falham, a hospedagem está bloqueando a saída SMTP — nos planos pagos do Railway a saída SMTP é liberada.`
     }
     if (code === 'EENVELOPE' || /recipient|sender|relay/i.test(m)) {
       return `O servidor recusou o destinatário ou remetente: ${m.slice(0, 160)}`
@@ -107,19 +108,44 @@ export function criarConta(id, cfg, sufixo = '') {
     auth: { user: cfg.user, pass: cfg.pass }, logger: false,
   })
 
-  let transporte = null
-  function getTransporte() {
-    if (!transporte) {
-      transporte = nodemailer.createTransport({
-        host: cfg.smtpHost, port: cfg.smtpPort, secure: cfg.smtpPort === 465,
+  // O envio principal é SMTP direto, como qualquer cliente de e-mail.
+  // Se a porta configurada não responder, a alternativa (465 ↔ 587) é testada
+  // sozinha, e a que funcionar fica memorizada para os próximos envios.
+  const transportes = new Map() // porta → transporter
+  let portaAtiva = cfg.smtpPort
+
+  function getTransporte(porta = portaAtiva) {
+    if (!transportes.has(porta)) {
+      transportes.set(porta, nodemailer.createTransport({
+        host: cfg.smtpHost, port: porta,
+        secure: porta === 465, // 465 = TLS implícito; 587 = STARTTLS
         auth: { user: cfg.user, pass: cfg.pass },
         // Sem estes limites, uma porta bloqueada deixa o envio pendurado para sempre
         connectionTimeout: 20_000,
         greetingTimeout: 15_000,
         socketTimeout: 30_000,
-      })
+      }))
     }
-    return transporte
+    return transportes.get(porta)
+  }
+
+  const portasParaTentar = () => [portaAtiva, ...[465, 587].filter(p => p !== portaAtiva)]
+  const erroDeConexao = err => ['ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED', 'ECONNRESET'].includes(err?.code)
+
+  async function comFallbackDePorta(operacao) {
+    let ultimoErro
+    for (const porta of portasParaTentar()) {
+      try {
+        const resultado = await operacao(getTransporte(porta), porta)
+        portaAtiva = porta
+        return resultado
+      } catch (err) {
+        ultimoErro = err
+        // porta bloqueada → tenta a outra; erro de senha não muda com a porta
+        if (!erroDeConexao(err)) break
+      }
+    }
+    throw ultimoErro
   }
 
   async function verificarConexao() {
@@ -138,28 +164,39 @@ export function criarConta(id, cfg, sufixo = '') {
     return status
   }
 
+  async function verificarResend() {
+    try {
+      const resp = await fetch('https://api.resend.com/domains', {
+        headers: { Authorization: `Bearer ${resendKey}` },
+      })
+      if ([400, 401, 403].includes(resp.status)) {
+        return { ok: false, erro: 'A Resend recusou a chave de API. Confira RESEND_API_KEY.' }
+      }
+      if (!resp.ok) return { ok: false, erro: `A Resend respondeu ${resp.status} ao validar a chave.` }
+      return { ok: true, erro: null, via: 'resend' }
+    } catch (err) {
+      return { ok: false, erro: `Não foi possível alcançar a Resend: ${err.message}` }
+    }
+  }
+
   async function verificarEnvio() {
-    if (envioPorApi) {
+    // SMTP direto é o canal principal — como qualquer cliente de e-mail.
+    if (configurado) {
       try {
-        const resp = await fetch('https://api.resend.com/domains', {
-          headers: { Authorization: `Bearer ${resendKey}` },
-        })
-        if ([400, 401, 403].includes(resp.status)) {
-          return { ok: false, erro: 'A Resend recusou a chave de API. Confira RESEND_API_KEY.' }
-        }
-        if (!resp.ok) return { ok: false, erro: `A Resend respondeu ${resp.status} ao validar a chave.` }
-        return { ok: true, erro: null, via: 'resend' }
+        const porta = await comFallbackDePorta(async (tr, p) => { await tr.verify(); return p })
+        return { ok: true, erro: null, via: 'smtp', porta }
       } catch (err) {
-        return { ok: false, erro: `Não foi possível alcançar a Resend: ${err.message}` }
+        // SMTP não deu: se houver Resend configurada, ela cobre como reserva
+        if (envioPorApi && (cfg.from || cfg.user)) {
+          const r = await verificarResend()
+          if (r.ok) return { ok: true, erro: null, via: 'resend', aviso: `SMTP indisponível (${traduzirErroEnvio(err)}) — enviando pela Resend.` }
+          return { ok: false, erro: `SMTP: ${traduzirErroEnvio(err)} · Resend: ${r.erro}` }
+        }
+        return { ok: false, erro: traduzirErroEnvio(err) }
       }
     }
-    if (!configurado) return { ok: null, erro: null }
-    try {
-      await getTransporte().verify()
-      return { ok: true, erro: null, via: 'smtp' }
-    } catch (err) {
-      return { ok: false, erro: traduzirErroEnvio(err) }
-    }
+    if (envioPorApi && cfg.from) return verificarResend()
+    return { ok: null, erro: null }
   }
 
   async function diagnosticar(jaProcessados = []) {
@@ -285,19 +322,31 @@ export function criarConta(id, cfg, sufixo = '') {
     const podeApi = envioPorApi && (cfg.from || cfg.user)
     if (!configurado && !podeApi) return false
     const titulo = assunto.startsWith('Re:') ? assunto : `Re: ${assunto}`
-    if (podeApi) return enviarPorApiResend({ para, assunto: titulo, corpo })
-    try {
-      await getTransporte().sendMail({
-        from: comNome(cfg.user),
-        to: para,
-        subject: titulo,
-        text: corpo,
-        headers: { 'X-Atendo-Auto': '1' },
-      })
-      return true
-    } catch (err) {
-      throw new Error(traduzirErroEnvio(err))
+    const mensagem = {
+      from: comNome(cfg.user),
+      to: para,
+      subject: titulo,
+      text: corpo,
+      headers: { 'X-Atendo-Auto': '1' },
     }
+
+    // 1º SMTP direto (testando 465/587 sozinho); Resend só como reserva
+    if (configurado) {
+      try {
+        await comFallbackDePorta(tr => tr.sendMail(mensagem))
+        return true
+      } catch (err) {
+        if (podeApi) {
+          try {
+            return await enviarPorApiResend({ para, assunto: titulo, corpo })
+          } catch (err2) {
+            throw new Error(`SMTP: ${traduzirErroEnvio(err)} · Resend: ${err2.message}`)
+          }
+        }
+        throw new Error(traduzirErroEnvio(err))
+      }
+    }
+    return enviarPorApiResend({ para, assunto: titulo, corpo })
   }
 
   return {

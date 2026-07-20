@@ -67,7 +67,7 @@ export interface Config {
 export interface StatusEmail {
   ok: boolean | null; erro: string | null; verificadoEm: string | null
   envioPorApi?: boolean; remetente?: string | null
-  envio?: { ok: boolean | null; erro: string | null; via?: string }
+  envio?: { ok: boolean | null; erro: string | null; via?: string; porta?: number; aviso?: string }
 }
 
 export interface MensagemCaixa {
