@@ -832,15 +832,17 @@ app.post('/api/tickets/:id/pausar-ia', (req, res) => {
 
 app.post('/api/tickets/:id/traduzir', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  // conversa inteira: mensagens do cliente E as respostas da loja
   const alvos = []
   for (const m of t.historico ?? []) {
-    if (m.autor === 'cliente' && m.corpo && !m.traducao) alvos.push(m)
+    if (m.corpo && !m.traducao) alvos.push({ corpo: m.corpo, aplicar: tx => { m.traducao = tx } })
   }
-  if (t.corpo && !t.traducao) alvos.push(t)
+  if (t.corpo && !t.traducao) alvos.push({ corpo: t.corpo, aplicar: tx => { t.traducao = tx } })
+  if (t.resposta && !t.respostaTraducao) alvos.push({ corpo: t.resposta, aplicar: tx => { t.respostaTraducao = tx } })
   if (!alvos.length) return ok(req, res)
   const r = await traduzirMensagens(alvos.map(a => a.corpo))
   if (r.erro) return res.status(400).json({ erro: r.erro, state: visao(req.wsId) })
-  r.textos.forEach((texto, i) => { alvos[i].traducao = texto })
+  r.textos.forEach((texto, i) => alvos[i].aplicar(texto))
   if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
   salvar(req.wsId); ok(req, res)
 })

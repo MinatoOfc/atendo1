@@ -141,7 +141,8 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
 
   const alternarTraducao = async () => {
     const faltaTraduzir = (t.corpo && !t.traducao)
-      || t.historico?.some(m => m.autor === 'cliente' && m.corpo && !m.traducao)
+      || (t.resposta && !t.respostaTraducao)
+      || t.historico?.some(m => m.corpo && !m.traducao)
     if (faltaTraduzir) {
       setTraduzindo(true)
       const ok = await traduzirTicket(t.id)
@@ -217,7 +218,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         </div>
       )}
 
-      {(t.idioma !== 'pt' || t.traducao || t.historico?.some(m => m.traducao)) && (
+      {(t.idioma !== 'pt' || t.traducao || t.respostaTraducao || t.historico?.some(m => m.traducao)) && (
         <div className="row mb-12" style={{ justifyContent: 'flex-end' }}>
           <button className="btn btn-sm" onClick={alternarTraducao} disabled={traduzindo}>
             <Languages size={13} />
@@ -257,10 +258,13 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
       {t.status === 'enviado' && t.resposta && (
         <div className="detail-msg" style={{ background: '#fbf9f5' }}>
           <div className="head">
-            <span><Send size={12} style={{ marginRight: 6 }} /><b style={{ color: 'var(--text)' }}>Você respondeu</b></span>
+            <span>
+              <Send size={12} style={{ marginRight: 6 }} /><b style={{ color: 'var(--text)' }}>Você respondeu</b>
+              {verTraducao && t.respostaTraducao ? <span className="tag tag-outro" style={{ marginLeft: 8 }}>traduzido</span> : null}
+            </span>
             <span>{t.respondidoEm && new Date(t.respondidoEm).toLocaleString('pt-BR')}</span>
           </div>
-          <div className="body">{t.resposta}</div>
+          <div className="body">{verTraducao && t.respostaTraducao ? t.respostaTraducao : t.resposta}</div>
         </div>
       )}
 

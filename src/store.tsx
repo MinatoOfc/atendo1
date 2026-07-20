@@ -34,6 +34,7 @@ export interface Ticket {
   custoIA?: number
   iaPausada?: boolean
   traducao?: string
+  respostaTraducao?: string
 }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
