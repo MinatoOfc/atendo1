@@ -85,7 +85,7 @@ const SCHEMA = {
     confianca: { type: 'number', description: 'De 0 a 1: qualidade da resposta escrita. Pedir ao cliente um dado que falta (número do pedido, foto) é resposta boa e vale confiança alta — não abaixe a nota por não ter os dados.' },
     escalar_humano: { type: 'boolean', description: 'true apenas quando a LOJA precisa decidir algo (reembolso, exceção, caso jurídico). Não use quando basta pedir informação ao cliente.' },
     motivo: { type: 'string', description: 'Por que foi escalado ou por que a confiança é baixa; string vazia se nada a sinalizar' },
-    spam: { type: 'boolean', description: 'true se não é um cliente: oferta comercial, cold outreach, consultoria, SEO' },
+    spam: { type: 'boolean', description: 'true quando o e-mail NÃO é um cliente tratando do próprio pedido, de uma compra ou de um produto da loja: marketing, ofertas comerciais, parcerias, SEO, newsletters, notificações automáticas e e-mails genéricos sem relação com pedidos' },
   },
 }
 
@@ -149,6 +149,11 @@ export function montarSystem(state, ticket) {
     `Sempre escale para humano (escalar_humano=true), mesmo com rascunho pronto:`,
     `- Reembolsos, disputas, chargebacks, ameaças legais, ameaças de exposição pública.`,
     `- Cliente muito irritado ou pedindo indenização.`,
+    ``,
+    `Filtro de spam — na caixa de entrada só ficam clientes falando de pedidos ou produtos:`,
+    `- Mantenha (spam=false): qualquer assunto de um cliente sobre a própria compra — status do pedido, entrega, rastreio, troca, devolução, reembolso, pagamento, defeito — e dúvidas sobre produtos da loja, antes ou depois de comprar.`,
+    `- Marque spam=true em todo o resto: marketing, ofertas comerciais, parcerias, influenciadores, agências, consultoria, SEO, newsletters, notificações automáticas de plataformas e e-mails genéricos sem relação com pedidos ou produtos da loja.`,
+    `- Exceção: se houver qualquer indício de que é um cliente real falando da própria compra, NÃO marque spam — perder um cliente é pior do que ver um e-mail a mais.`,
     ``,
     `O campo "confianca" mede a qualidade da SUA RESPOSTA, não se você tinha todos os dados.`,
     `- 0.9 ou mais: a resposta resolve o caso ou pede corretamente o que falta.`,
