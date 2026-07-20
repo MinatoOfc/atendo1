@@ -3,7 +3,7 @@ import path from 'path'
 import crypto from 'crypto'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
-import { carregar, uid, estadoInicial } from './store.js'
+import { carregar, uid, estadoInicial, lojaPadrao, MAX_LOJAS } from './store.js'
 import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam,
@@ -777,6 +777,21 @@ app.post('/api/lojas', (req, res) => {
   if (typeof nome === 'string' && nome.trim()) loja.nome = nome.trim()
   if (typeof ativa === 'boolean' && loja.id !== 'loja1') loja.ativa = ativa
   salvar(req.wsId); ok(req, res)
+})
+
+app.post('/api/lojas/nova', (req, res) => {
+  const lojas = req.estado.lojas
+  if (lojas.length >= MAX_LOJAS) {
+    return res.status(400).json({ erro: `Limite de ${MAX_LOJAS} lojas por conta.`, state: visao(req.wsId) })
+  }
+  // primeiro id livre no padrão lojaN, para os sufixos de env continuarem alinhados
+  let n = 1
+  while (lojas.some(l => l.id === `loja${n}`)) n++
+  const nome = String(req.body?.nome || '').trim() || `loja ${lojas.length + 1}`
+  const loja = { ...lojaPadrao(`loja${n}`, nome), ativa: true }
+  lojas.push(loja)
+  salvar(req.wsId)
+  res.json({ lojaId: loja.id, state: visao(req.wsId) })
 })
 
 /* ---- Tickets ---- */

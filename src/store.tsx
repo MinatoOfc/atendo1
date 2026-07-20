@@ -208,6 +208,7 @@ interface Store extends ServerState {
   setLojaAtiva: (id: string) => void
   lojasVisiveis: Loja[]
   atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean }) => void
+  criarLoja: (nome?: string) => Promise<string | null>
   naoLidos: number
   aguardandoAprovacao: Ticket[]
   casosHumanos: Ticket[]
@@ -391,6 +392,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     atualizarLoja: (id, patch) => {
       setState(s => ({ ...s, lojas: s.lojas.map(l => (l.id === id ? { ...l, ...patch } : l)) }))
       api('/lojas', 'POST', { id, ...patch }).then(aplicar)
+    },
+    criarLoja: async nome => {
+      const r = (await api('/lojas/nova', 'POST', { nome })) as unknown as { lojaId?: string; erro?: string; state?: ServerState }
+      if (r.erro) return r.erro
+      aplicar(r as { state?: ServerState })
+      if (r.lojaId) { setLojaAtivaState(r.lojaId); localStorage.setItem('atendo-loja-ativa', r.lojaId) }
+      return null
     },
     naoLidos: tickets.filter(t => ['inbox', 'aprovacao', 'humano'].includes(t.status) && !t.lido).length,
     aguardandoAprovacao: tickets.filter(t => t.status === 'aprovacao'),
