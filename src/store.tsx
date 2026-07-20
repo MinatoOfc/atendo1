@@ -43,7 +43,7 @@ export interface Faq { id: string; pergunta: string; resposta: string; ativa: bo
 
 export interface Produto {
   id: string; titulo: string; tipo: string; marca: string; tags: string[]
-  precoMin: number; precoMax: number; estoque: number; ativo: boolean
+  precoMin: number; precoMax: number; estoque: number | null; ativo: boolean
   variantes: string[]; url: string; descricao: string; lojaId?: string
 }
 

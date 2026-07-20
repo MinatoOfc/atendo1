@@ -104,7 +104,8 @@ function montarCatalogo(produtos, moeda) {
     const partes = [`- ${p.titulo} — ${preco(p, moeda)}`]
     if (p.tipo) partes.push(`categoria: ${p.tipo}`)
     if (p.variantes.length) partes.push(`opções: ${p.variantes.slice(0, 8).join(', ')}`)
-    partes.push(p.estoque > 0 ? `em estoque (${p.estoque})` : 'sem estoque no momento')
+    // estoque null = desconhecido (app sem read_inventory): não afirmar nada sobre disponibilidade
+    if (p.estoque != null) partes.push(p.estoque > 0 ? `em estoque (${p.estoque})` : 'sem estoque no momento')
     if (p.descricao) partes.push(p.descricao.slice(0, 140))
     return partes.join(' | ') + `\n  link: ${p.url}`
   })

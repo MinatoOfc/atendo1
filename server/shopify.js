@@ -3,7 +3,8 @@ import crypto from 'crypto'
 const envClientId = (process.env.SHOPIFY_CLIENT_ID || '').trim()
 const envClientSecret = (process.env.SHOPIFY_CLIENT_SECRET || '').trim()
 const versao = (process.env.SHOPIFY_API_VERSION || '2026-07').trim()
-const escopos = (process.env.SHOPIFY_SCOPES || 'read_orders,read_all_orders,read_customers,read_fulfillments,read_products').trim()
+// read_inventory: sem ele a API nova omite inventory_quantity e todo produto pareceria esgotado
+const escopos = (process.env.SHOPIFY_SCOPES || 'read_orders,read_all_orders,read_customers,read_fulfillments,read_products,read_inventory').trim()
 
 // Aceita "loja", "loja.myshopify.com" ou a URL completa colada do navegador
 function normalizar(v) {
@@ -136,7 +137,10 @@ function mapearPedido(o) {
 function mapearProduto(p, dominio) {
   const variantes = p.variants || []
   const precos = variantes.map(v => Number(v.price || 0)).filter(n => n > 0)
-  const estoque = variantes.reduce((soma, v) => soma + (Number(v.inventory_quantity) || 0), 0)
+  // Sem o escopo read_inventory a API omite inventory_quantity — aí o estoque é
+  // DESCONHECIDO (null), não zero: ninguém deve dizer ao cliente que esgotou.
+  const quantidades = variantes.map(v => v.inventory_quantity).filter(q => q !== undefined && q !== null)
+  const estoque = quantidades.length ? quantidades.reduce((soma, q) => soma + (Number(q) || 0), 0) : null
   return {
     id: String(p.id),
     titulo: p.title,

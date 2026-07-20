@@ -25,7 +25,7 @@ export default function Inicio() {
     { icon: <CheckSquare size={15} />, label: 'Respostas aguardando aprovação', n: s.aguardandoAprovacao.length, to: '/aprovacoes' },
     { icon: <Users size={15} />, label: 'Casos que pedem você', n: s.casosHumanos.length, to: '/humano' },
     { icon: <Package size={15} />, label: 'Pedidos aguardando envio', n: aguardandoEnvio, to: '/pedidos' },
-    { icon: <Tag size={15} />, label: 'Produtos esgotados no catálogo', n: s.produtos.filter(p => p.ativo && p.estoque <= 0).length, to: '/produtos' },
+    { icon: <Tag size={15} />, label: 'Produtos esgotados no catálogo', n: s.produtos.filter(p => p.ativo && p.estoque != null && p.estoque <= 0).length, to: '/produtos' },
   ]
   const total = precisam.reduce((a, p) => a + p.n, 0)
 

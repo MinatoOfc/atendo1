@@ -36,7 +36,7 @@ export default function Produtos() {
   })
 
   const ativos = s.produtos.filter(p => p.ativo).length
-  const semEstoque = s.produtos.filter(p => p.ativo && p.estoque <= 0).length
+  const semEstoque = s.produtos.filter(p => p.ativo && p.estoque != null && p.estoque <= 0).length
 
   return (
     <div className="content-narrow">
@@ -105,9 +105,13 @@ export default function Produtos() {
                     {p.precoMin === p.precoMax ? moeda(p.precoMin) : `${moeda(p.precoMin)} – ${moeda(p.precoMax)}`}
                   </td>
                   <td>
-                    <span className={'tag ' + (p.estoque > 0 ? 'tag-green' : 'tag-amber')}>
-                      {p.estoque > 0 ? p.estoque : 'esgotado'}
-                    </span>
+                    {p.estoque == null ? (
+                      <span className="tag tag-outro" title="A Shopify não informou o estoque — reconecte a loja com o escopo read_inventory">—</span>
+                    ) : (
+                      <span className={'tag ' + (p.estoque > 0 ? 'tag-green' : 'tag-amber')}>
+                        {p.estoque > 0 ? p.estoque : 'esgotado'}
+                      </span>
+                    )}
                   </td>
                   <td>
                     <span className={'tag ' + (p.ativo ? 'tag-purple' : 'tag-outro')}>{p.ativo ? 'ativo' : 'rascunho'}</span>
