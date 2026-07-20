@@ -8,7 +8,8 @@ import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
-import { processarEmail, iaConfigurada, testarIA, statusIA, traduzirMensagens } from './ai.js'
+import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
+import { traduzirGratis } from './traducao.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
   buscarPedidosShopify, buscarProdutosShopify, testarShopify,
@@ -840,10 +841,10 @@ app.post('/api/tickets/:id/traduzir', async (req, res) => {
   if (t.corpo && !t.traducao) alvos.push({ corpo: t.corpo, aplicar: tx => { t.traducao = tx } })
   if (t.resposta && !t.respostaTraducao) alvos.push({ corpo: t.resposta, aplicar: tx => { t.respostaTraducao = tx } })
   if (!alvos.length) return ok(req, res)
-  const r = await traduzirMensagens(alvos.map(a => a.corpo))
+  // tradução pelo Google (gratuita) — não gasta créditos da Claude
+  const r = await traduzirGratis(alvos.map(a => a.corpo))
   if (r.erro) return res.status(400).json({ erro: r.erro, state: visao(req.wsId) })
   r.textos.forEach((texto, i) => alvos[i].aplicar(texto))
-  if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
   salvar(req.wsId); ok(req, res)
 })
 
