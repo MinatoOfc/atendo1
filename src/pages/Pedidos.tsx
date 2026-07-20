@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ShoppingBag } from 'lucide-react'
+import { ShoppingBag, Search } from 'lucide-react'
 import { useStore } from '../store'
 import { EmptyState, TipCard } from '../components/Shared'
 
@@ -10,10 +11,19 @@ const statusPedido: Record<string, { label: string; cls: string }> = {
   problema: { label: 'Com problema', cls: 'tag-reembolso' },
 }
 
+// busca sem diferenciar maiúsculas nem acentos (van dijk acha Van Dijk)
+const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
 export default function Pedidos() {
   const { config, pedidos, conectarShopify, fmtMoeda } = useStore()
   const fmt = (v: number) => fmtMoeda(v)
   const nav = useNavigate()
+  const [busca, setBusca] = useState('')
+
+  const q = normalizar(busca.trim())
+  const filtrados = q
+    ? pedidos.filter(p => [p.numero, p.cliente, p.email].some(v => v && normalizar(v).includes(q)))
+    : pedidos
 
   if (!config.shopifyConectada) {
     return (
@@ -36,10 +46,17 @@ export default function Pedidos() {
 
   return (
     <div className="content-narrow">
-      <div className="row spread mb-16">
+      <div className="row spread mb-16" style={{ flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h1 className="h2">Pedidos</h1>
-          <p className="muted" style={{ marginTop: 4 }}>{pedidos.length} pedidos sincronizados da Shopify.</p>
+          <p className="muted" style={{ marginTop: 4 }}>
+            {q ? `${filtrados.length} de ${pedidos.length} pedidos` : `${pedidos.length} pedidos sincronizados da Shopify.`}
+          </p>
+        </div>
+        <div className="search-box">
+          <Search size={15} />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por nome, e-mail ou nº do pedido" />
         </div>
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -48,7 +65,12 @@ export default function Pedidos() {
             <tr><th>Pedido</th><th>Cliente</th><th>País</th><th>Valor</th><th>Status</th><th>Rastreio</th><th>Data</th></tr>
           </thead>
           <tbody>
-            {pedidos.map(p => (
+            {q !== '' && filtrados.length === 0 && (
+              <tr><td colSpan={7} className="muted-sm" style={{ textAlign: 'center', padding: '26px 0' }}>
+                Nenhum pedido encontrado para “{busca.trim()}”.
+              </td></tr>
+            )}
+            {filtrados.map(p => (
               <tr key={p.id}>
                 <td style={{ fontWeight: 600 }}>{p.numero}</td>
                 <td>{p.cliente}<div className="muted-sm">{p.email}</div></td>
