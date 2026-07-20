@@ -189,6 +189,7 @@ function visao(wsId) {
     tickets: estado.tickets,
     politicas: estado.politicas,
     faqs: estado.faqs,
+    comportamentos: estado.comportamentos ?? [],
     pedidos: estado.pedidos,
     produtos: estado.produtos ?? [],
     moeda: loja1?.moeda || 'EUR',
@@ -890,6 +891,23 @@ app.post('/api/politicas/sugeridas', (req, res) => {
   for (const p of politicasSugeridas) {
     if (!req.estado.politicas.some(x => x.titulo === p.titulo)) req.estado.politicas.push({ ...p, id: uid(), ativa: true })
   }
+  salvar(req.wsId); ok(req, res)
+})
+
+app.post('/api/comportamentos', (req, res) => {
+  const situacao = String(req.body.situacao || '').trim()
+  const instrucao = String(req.body.instrucao || '').trim()
+  if (!situacao || !instrucao) return res.status(400).json({ erro: 'Descreva a situação e como a IA deve agir.', state: visao(req.wsId) })
+  req.estado.comportamentos ??= []
+  req.estado.comportamentos.push({ id: uid(), situacao, instrucao, ativa: true })
+  salvar(req.wsId); ok(req, res)
+})
+app.post('/api/comportamentos/:id/toggle', (req, res) => {
+  req.estado.comportamentos = (req.estado.comportamentos ?? []).map(c => (c.id === req.params.id ? { ...c, ativa: !c.ativa } : c))
+  salvar(req.wsId); ok(req, res)
+})
+app.delete('/api/comportamentos/:id', (req, res) => {
+  req.estado.comportamentos = (req.estado.comportamentos ?? []).filter(c => c.id !== req.params.id)
   salvar(req.wsId); ok(req, res)
 })
 

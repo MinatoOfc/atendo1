@@ -37,6 +37,7 @@ export interface Ticket {
 }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
+export interface Comportamento { id: string; situacao: string; instrucao: string; ativa: boolean }
 export interface Faq { id: string; pergunta: string; resposta: string; ativa: boolean }
 
 export interface Produto {
@@ -139,6 +140,7 @@ export interface Integracoes {
 interface ServerState {
   tickets: Ticket[]
   politicas: Politica[]
+  comportamentos?: Comportamento[]
   faqs: Faq[]
   pedidos: Pedido[]
   produtos: Produto[]
@@ -222,6 +224,9 @@ interface Store extends ServerState {
   addPolitica: (titulo: string, conteudo: string) => void
   togglePolitica: (id: string) => void
   removerPolitica: (id: string) => void
+  addComportamento: (situacao: string, instrucao: string) => void
+  toggleComportamento: (id: string) => void
+  removerComportamento: (id: string) => void
   addFaq: (pergunta: string, resposta: string) => void
   toggleFaq: (id: string) => void
   removerFaq: (id: string) => void
@@ -440,6 +445,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     addPolitica: (titulo, conteudo) => api('/politicas', 'POST', { titulo, conteudo }).then(aplicar),
     togglePolitica: id => api(`/politicas/${id}/toggle`).then(aplicar),
     removerPolitica: id => api(`/politicas/${id}`, 'DELETE').then(aplicar),
+    addComportamento: (situacao, instrucao) => api('/comportamentos', 'POST', { situacao, instrucao }).then(aplicar),
+    toggleComportamento: id => api(`/comportamentos/${id}/toggle`).then(aplicar),
+    removerComportamento: id => api(`/comportamentos/${id}`, 'DELETE').then(aplicar),
     addFaq: (pergunta, resposta) => api('/faqs', 'POST', { pergunta, resposta }).then(aplicar),
     toggleFaq: id => api(`/faqs/${id}/toggle`).then(aplicar),
     removerFaq: id => api(`/faqs/${id}`, 'DELETE').then(aplicar),

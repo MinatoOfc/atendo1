@@ -31,6 +31,8 @@ export const estadoInicial = {
   tickets: [],
   politicas: [],
   faqs: [],
+  // Regras de comportamento definidas pelo lojista: "nesta situação, aja assim"
+  comportamentos: [],
   pedidos: [],
   produtos: [],
   config: { ...configPadrao },

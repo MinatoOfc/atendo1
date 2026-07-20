@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   ShieldCheck, BookOpen, Inbox as InboxIcon, Sparkles, Plus, Lightbulb, X,
-  Library, Search, Trash2, Download,
+  Library, Search, Trash2, Download, Wand2,
 } from 'lucide-react'
 import { useStore } from '../store'
 import { Modal, TipCard } from '../components/Shared'
@@ -10,8 +10,11 @@ export default function Conhecimento() {
   const s = useStore()
   const [modalPolitica, setModalPolitica] = useState(false)
   const [modalFaq, setModalFaq] = useState(false)
+  const [modalComp, setModalComp] = useState(false)
   const [pt, setPt] = useState(''); const [pc, setPc] = useState('')
   const [fq, setFq] = useState(''); const [fr, setFr] = useState('')
+  const [cs, setCs] = useState(''); const [ci, setCi] = useState('')
+  const comportamentos = s.comportamentos ?? []
   const guiaFechado = s.tipsFechados.includes('guia-conhecimento')
   const ativos = s.politicas.filter(p => p.ativa).length + s.faqs.filter(f => f.ativa).length
 
@@ -90,6 +93,40 @@ export default function Conhecimento() {
         </div>
       )}
 
+      {/* Comportamentos da IA */}
+      <div className="row spread mb-8">
+        <div className="row gap-8">
+          <Wand2 size={16} color="var(--purple)" />
+          <b style={{ fontSize: 15 }}>Comportamentos da IA</b>
+          <span className="muted-sm">{comportamentos.length}</span>
+        </div>
+        <button className="btn" onClick={() => setModalComp(true)}><Plus size={14} /> Adicionar comportamento</button>
+      </div>
+      <p className="muted-sm mb-12">
+        Ensine a IA a agir do seu jeito em situações específicas: descreva o contexto de uma conversa e diga como ela deve se comportar quando isso acontecer.
+      </p>
+      {comportamentos.length === 0 ? (
+        <div className="mb-24" style={{ border: '1.5px dashed var(--border)', borderRadius: 14, padding: '30px 20px', textAlign: 'center' }}>
+          <p className="muted-sm mb-12">
+            Nenhum comportamento ainda. Ex.: situação "cliente diz que o produto chegou danificado" → como agir "peça uma foto e ofereça reenvio grátis antes de falar em reembolso".
+          </p>
+          <button className="btn btn-sm" onClick={() => setModalComp(true)}><Plus size={13} /> Criar o primeiro</button>
+        </div>
+      ) : (
+        <div className="mb-24">
+          {comportamentos.map(c => (
+            <div key={c.id} className="kb-item">
+              <button className={'switch' + (c.ativa ? ' on' : '')} onClick={() => s.toggleComportamento(c.id)} title={c.ativa ? 'Ativo' : 'Inativo'} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="title">{c.situacao}</div>
+                <div className="sub">{c.instrucao}</div>
+              </div>
+              <button onClick={() => s.removerComportamento(c.id)} style={{ color: 'var(--text-3)' }} title="Remover"><Trash2 size={15} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* FAQs */}
       <div className="row spread mb-8" style={{ flexWrap: 'wrap', gap: 10 }}>
         <div className="row gap-8">
@@ -130,6 +167,30 @@ export default function Conhecimento() {
             <button className="btn btn-primary" disabled={!pt.trim() || !pc.trim()} style={!pt.trim() || !pc.trim() ? { opacity: 0.5 } : undefined}
               onClick={() => { s.addPolitica(pt.trim(), pc.trim()); setPt(''); setPc(''); setModalPolitica(false) }}>
               Salvar política
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {modalComp && (
+        <Modal title="Adicionar comportamento da IA" onClose={() => setModalComp(false)}>
+          <div className="field">
+            <label>Situação</label>
+            <textarea value={cs} onChange={e => setCs(e.target.value)} autoFocus rows={3}
+              placeholder="Descreva o contexto da conversa. Ex.: cliente diz que o produto chegou danificado ou com defeito" />
+          </div>
+          <div className="field">
+            <label>Como a IA deve agir</label>
+            <textarea value={ci} onChange={e => setCi(e.target.value)} rows={4}
+              placeholder="Ex.: peça uma foto do produto, peça desculpas uma única vez e ofereça o reenvio grátis antes de falar em reembolso" />
+          </div>
+          <p className="muted-sm mb-12" style={{ lineHeight: 1.5 }}>
+            A IA recebe estas instruções em toda resposta e as aplica quando a conversa se encaixar na situação descrita.
+          </p>
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" disabled={!cs.trim() || !ci.trim()} style={!cs.trim() || !ci.trim() ? { opacity: 0.5 } : undefined}
+              onClick={() => { s.addComportamento(cs.trim(), ci.trim()); setCs(''); setCi(''); setModalComp(false) }}>
+              Salvar comportamento
             </button>
           </div>
         </Modal>

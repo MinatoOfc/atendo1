@@ -122,6 +122,7 @@ export function montarSystem(state, ticket) {
   const moeda = loja?.moeda ?? 'EUR'
   const politicas = state.politicas.filter(p => p.ativa)
   const faqs = state.faqs.filter(f => f.ativa)
+  const comportamentos = (state.comportamentos ?? []).filter(c => c.ativa)
   // cada loja só enxerga o próprio catálogo
   const produtos = (state.produtos ?? []).filter(p => !p.lojaId || !loja || p.lojaId === loja.id)
   return [
@@ -136,6 +137,11 @@ export function montarSystem(state, ticket) {
     `- Responda no idioma em que o cliente escreveu.`,
     `- Tom: cordial, direto, humano. Sem parecer robô. Termine com a assinatura: "${state.config.assinatura}".`,
     ``,
+    ...(comportamentos.length ? [
+      `Comportamentos definidos pelo lojista — quando a conversa se encaixar em uma destas situações, siga a instrução correspondente à risca. Elas têm prioridade sobre o tom e o fluxo padrão (mas nunca sobre as regras invioláveis acima):`,
+      comportamentos.map(c => `- Situação: ${c.situacao}\n  Como agir: ${c.instrucao}`).join('\n'),
+      ``,
+    ] : []),
     `Quando faltar informação, separe os dois casos:`,
     `- Falta um dado que o PRÓPRIO CLIENTE pode fornecer (número do pedido, e-mail usado na compra, foto do produto): pedir esse dado de forma clara e cordial É a resposta correta e completa. Trate como resposta normal, com confiança ALTA, sem escalar. É o que um atendente humano faria.`,
     `- Falta algo que só a LOJA pode decidir ou que não está nas políticas (aprovar exceção, autorizar desconto, definir uma regra inexistente): aí sim escale para humano.`,
