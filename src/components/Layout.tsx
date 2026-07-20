@@ -165,7 +165,7 @@ export default function Layout() {
       {aviso && (
         <div style={{
           position: 'fixed', top: 18, left: '50%', transform: 'translateX(-50%)', zIndex: 60,
-          background: '#17151f', color: '#fff', padding: '9px 18px', borderRadius: 99,
+          background: 'var(--text)', color: 'var(--panel)', padding: '9px 18px', borderRadius: 99,
           fontSize: 13, fontWeight: 600, boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
         }}>{aviso}</div>
       )}

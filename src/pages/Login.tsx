@@ -56,7 +56,7 @@ export default function Login() {
           </div>
 
           {erro && (
-            <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: '#fecaca', background: '#fef7f7' }}>
+            <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}>
               <span className="muted-sm" style={{ color: 'var(--red)' }}>{erro}</span>
             </div>
           )}

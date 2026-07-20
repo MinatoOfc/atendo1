@@ -9,7 +9,7 @@ export default function Ganhos() {
   if (!config.shopifyConectada) {
     return (
       <div className="empty" style={{ paddingTop: 60 }}>
-        <div className="empty-icon" style={{ background: '#f0fdf4', color: '#16a34a' }}><TrendingUp /></div>
+        <div className="empty-icon" style={{ background: 'var(--ok-bg)', color: 'var(--green)' }}><TrendingUp /></div>
         <h1 className="h1" style={{ fontSize: 24, marginBottom: 12 }}>Painel de Ganhos</h1>
         <p className="muted" style={{ maxWidth: 460, lineHeight: 1.6, marginBottom: 22 }}>
           Veja os ganhos reais da sua loja cruzando Shopify, custo do produto e anúncios — em tempo real, dentro do atendo.

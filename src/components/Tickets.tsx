@@ -210,7 +210,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
       )}
 
       {t.erroEnvio && (
-        <div className="banner mb-12" style={{ borderColor: '#fecaca', background: '#fef7f7', alignItems: 'flex-start' }}>
+        <div className="banner mb-12" style={{ borderColor: 'var(--danger-border)', background: 'var(--danger-bg)', alignItems: 'flex-start' }}>
           <AlertTriangle size={15} color="var(--red)" style={{ marginTop: 2 }} />
           <span>
             <b>O envio falhou{t.tentativasEnvio ? ` (tentativa ${t.tentativasEnvio})` : ''}:</b> {t.erroEnvio}
@@ -256,7 +256,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
       )}
 
       {t.status === 'enviado' && t.resposta && (
-        <div className="detail-msg" style={{ background: '#fbf9f5' }}>
+        <div className="detail-msg" style={{ background: 'var(--panel-soft)' }}>
           <div className="head">
             <span>
               <Send size={12} style={{ marginRight: 6 }} /><b style={{ color: 'var(--text)' }}>Você respondeu</b>

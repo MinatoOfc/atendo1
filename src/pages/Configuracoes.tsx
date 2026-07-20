@@ -195,7 +195,7 @@ function FormularioEmail({ lojaId }: { lojaId: string }) {
       </p>
 
       {erro && (
-        <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: '#fecaca', background: '#fef7f7' }}>
+        <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}>
           <span className="muted-sm" style={{ color: 'var(--red)' }}>{erro}</span>
         </div>
       )}
@@ -380,12 +380,12 @@ function EnvVars({ vars }: { vars: [string, string][] }) {
   return (
     <div style={{ position: 'relative', marginTop: 10 }}>
       <pre style={{
-        background: '#17151f', color: '#e8e6f0', borderRadius: 10, padding: '12px 14px',
+        background: 'var(--code-bg)', color: 'var(--code-text)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px',
         fontSize: 12, lineHeight: 1.7, overflowX: 'auto',
-      }}>{vars.map(([k, v]) => <div key={k}><span style={{ color: '#c084fc' }}>{k}</span>=<span style={{ color: '#86efac' }}>{v}</span></div>)}</pre>
+      }}>{vars.map(([k, v]) => <div key={k}><span style={{ color: 'var(--purple)' }}>{k}</span>=<span style={{ color: 'var(--green)' }}>{v}</span></div>)}</pre>
       <button
         onClick={() => { navigator.clipboard.writeText(texto); setCopiado(true); setTimeout(() => setCopiado(false), 2000) }}
-        style={{ position: 'absolute', top: 8, right: 8, color: '#a09da8', padding: 4 }}
+        style={{ position: 'absolute', top: 8, right: 8, color: 'var(--text-3)', padding: 4 }}
         title="Copiar"
       >{copiado ? <Check size={14} color="#86efac" /> : <Copy size={14} />}</button>
     </div>
@@ -576,7 +576,7 @@ export default function Configuracoes() {
         </div>
 
         {s.config.automacaoAtiva && !s.integracoes.ia && (
-          <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: '#fde9c0', background: '#fffbeb' }}>
+          <div className="card-soft mb-12" style={{ padding: '10px 12px', borderColor: 'var(--warn-border)', background: 'var(--warn-bg)' }}>
             <p className="muted-sm" style={{ lineHeight: 1.6 }}>
               <AlertTriangle size={12} style={{ verticalAlign: -2, marginRight: 6, color: 'var(--amber)' }} />
               A IA não está gerando as respostas agora — o que sair será o texto genérico das regras locais. Resolva a IA em Integrações antes de deixar no automático.
@@ -645,7 +645,7 @@ export default function Configuracoes() {
               </button>
             </div>
             {ia?.ok === false && ia.erro && (
-              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: '#fecaca', background: '#fef7f7' }}>
+              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}>
                 <div className="row gap-8 mb-8" style={{ color: 'var(--red)' }}>
                   <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>A IA não está respondendo — usando regras locais</b>
                 </div>
@@ -690,7 +690,7 @@ export default function Configuracoes() {
               </button>
             </div>
             {status?.ok === false && status.erro && (
-              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: '#fecaca', background: '#fef7f7' }}>
+              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}>
                 <div className="row gap-8 mb-8" style={{ color: 'var(--red)' }}>
                   <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>Leitura dos e-mails (IMAP)</b>
                 </div>
@@ -701,8 +701,8 @@ export default function Configuracoes() {
             {status?.envio && status.envio.ok !== null && (
               <div className="card-soft" style={{
                 marginTop: 12, padding: '12px 14px',
-                borderColor: status.envio.ok ? undefined : '#fecaca',
-                background: status.envio.ok ? undefined : '#fef7f7',
+                borderColor: status.envio.ok ? undefined : 'var(--danger-border)',
+                background: status.envio.ok ? undefined : 'var(--danger-bg)',
               }}>
                 <div className="row gap-8" style={{ color: status.envio.ok ? 'var(--green)' : 'var(--red)' }}>
                   {status.envio.ok ? <Check size={14} /> : <AlertTriangle size={14} />}
@@ -794,7 +794,7 @@ export default function Configuracoes() {
               )}
             </div>
             {shop?.ok === false && shop.erro && (
-              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: '#fecaca', background: '#fef7f7' }}>
+              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}>
                 <div className="row gap-8 mb-8" style={{ color: 'var(--red)' }}>
                   <AlertTriangle size={14} /><b style={{ fontSize: 13 }}>A Shopify recusou a conexão</b>
                 </div>
