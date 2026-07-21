@@ -2,6 +2,22 @@ import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { useStore } from '../store'
 
+/** Miniatura de produto: foto quando existe, inicial do nome quando não. */
+export function MiniFoto({ src, alt, tamanho = 26 }: { src?: string | null; alt: string; tamanho?: number }) {
+  if (src) {
+    return <img src={src} alt={alt} loading="lazy" style={{ width: tamanho, height: tamanho, borderRadius: 6, objectFit: 'cover', flexShrink: 0, border: '1px solid var(--border)' }} />
+  }
+  return (
+    <span style={{
+      width: tamanho, height: tamanho, borderRadius: 6, background: 'var(--hover)', flexShrink: 0,
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      color: 'var(--text-3)', fontSize: Math.round(tamanho * 0.42), fontWeight: 700,
+    }}>
+      {(alt[0] ?? '?').toUpperCase()}
+    </span>
+  )
+}
+
 export function EmptyState({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
   return (
     <div className="empty">

@@ -136,6 +136,8 @@ function mapearPedido(o) {
       variante: li.variant_title || null, // ex.: "Zwart / L" — cor e tamanho
       quantidade: Number(li.quantity) || 1,
       preco: Number(li.price || 0),
+      // liga o item ao produto sincronizado — é de lá que vem a foto
+      produtoId: li.product_id ? String(li.product_id) : null,
     })),
   }
 }
@@ -156,6 +158,7 @@ function mapearProduto(p, dominio) {
     precoMin: precos.length ? Math.min(...precos) : 0,
     precoMax: precos.length ? Math.max(...precos) : 0,
     estoque,
+    imagem: p.image?.src || null,
     ativo: p.status === 'active',
     variantes: variantes.map(v => v.title).filter(t => t && t !== 'Default Title'),
     url: `https://${dominio}/products/${p.handle}`,
@@ -171,7 +174,7 @@ export async function buscarPedidosShopify(cx) {
 }
 
 export async function buscarProdutosShopify(cx) {
-  const campos = 'id,title,body_html,vendor,product_type,handle,status,tags,variants'
+  const campos = 'id,title,body_html,vendor,product_type,handle,status,tags,variants,image'
   const { dados, erro } = await chamar(cx, `products.json?limit=250&fields=${campos}`)
   if (erro) {
     if (/403|recusou o acesso/i.test(erro)) {

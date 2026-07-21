@@ -45,6 +45,7 @@ export interface Produto {
   id: string; titulo: string; tipo: string; marca: string; tags: string[]
   precoMin: number; precoMax: number; estoque: number | null; ativo: boolean
   variantes: string[]; url: string; descricao: string; lojaId?: string
+  imagem?: string | null
 }
 
 export interface Pedido {
@@ -52,7 +53,7 @@ export interface Pedido {
   valor: number; status: 'aguardando' | 'transito' | 'entregue' | 'problema'
   rastreio: string; criadoEm: string; lojaId?: string
   urlRastreio?: string | null; transportadora?: string | null
-  itens?: { titulo: string; variante: string | null; quantidade: number; preco?: number }[]
+  itens?: { titulo: string; variante: string | null; quantidade: number; preco?: number; produtoId?: string | null }[]
 }
 
 export interface Config {

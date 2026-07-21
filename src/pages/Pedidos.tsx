@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ShoppingBag, Search, ChevronRight } from 'lucide-react'
 import { useStore } from '../store'
-import { EmptyState, TipCard } from '../components/Shared'
+import { EmptyState, TipCard, MiniFoto } from '../components/Shared'
 
 const statusPedido: Record<string, { label: string; cls: string }> = {
   aguardando: { label: 'Aguardando envio', cls: 'tag-amber' },
@@ -15,7 +15,8 @@ const statusPedido: Record<string, { label: string; cls: string }> = {
 const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
 export default function Pedidos() {
-  const { config, pedidos, conectarShopify, fmtMoeda } = useStore()
+  const { config, pedidos, conectarShopify, fmtMoeda, produtos } = useStore()
+  const fotoDe = (produtoId?: string | null) => (produtoId ? produtos.find(pr => pr.id === produtoId)?.imagem : null)
   const fmt = (v: number) => fmtMoeda(v)
   const nav = useNavigate()
   const [busca, setBusca] = useState('')
@@ -95,6 +96,7 @@ export default function Pedidos() {
                         {p.itens?.length ? (
                           p.itens.map((i, idx) => (
                             <div key={idx} className="row gap-8" style={{ padding: '4px 0', fontSize: 13 }}>
+                              <MiniFoto src={fotoDe(i.produtoId)} alt={i.titulo} tamanho={32} />
                               <span className="tag tag-outro">{i.quantidade}×</span>
                               <b>{i.titulo}</b>
                               {i.variante && <span className="muted-sm">{i.variante}</span>}

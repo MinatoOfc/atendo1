@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
+import { MiniFoto } from './Shared'
 
 export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Ticket) => void; tagStatus?: boolean }) {
   const { lojasVisiveis, lojaAtiva, prefs } = useStore()
@@ -61,7 +62,8 @@ const statusPedido: Record<string, { rotulo: string; cls: string }> = {
  * para a equipe responder sem sair da conversa.
  */
 function PainelPedidos({ t }: { t: Ticket }) {
-  const { pedidos, fmtMoeda } = useStore()
+  const { pedidos, fmtMoeda, produtos } = useStore()
+  const fotoDe = (produtoId?: string | null) => (produtoId ? produtos.find(pr => pr.id === produtoId)?.imagem : null)
   const emailCliente = t.de.trim().toLowerCase()
   const doCliente = pedidos
     .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
@@ -92,11 +94,14 @@ function PainelPedidos({ t }: { t: Ticket }) {
                 </span>
               </div>
               {(p.itens?.length ?? 0) > 0 && (
-                <div style={{ display: 'grid', gap: 2, marginBottom: 8 }}>
+                <div style={{ display: 'grid', gap: 4, marginBottom: 8 }}>
                   {p.itens!.map((i, idx) => (
-                    <span key={idx} style={{ fontSize: 12.5, lineHeight: 1.45 }}>
-                      <b>{i.quantidade}×</b> {i.titulo}
-                      {i.variante && <span className="muted-sm"> · {i.variante}</span>}
+                    <span key={idx} className="row gap-8" style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+                      <MiniFoto src={fotoDe(i.produtoId)} alt={i.titulo} tamanho={26} />
+                      <span>
+                        <b>{i.quantidade}×</b> {i.titulo}
+                        {i.variante && <span className="muted-sm"> · {i.variante}</span>}
+                      </span>
                     </span>
                   ))}
                 </div>

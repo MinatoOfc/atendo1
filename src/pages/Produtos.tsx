@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Package, ShoppingBag, RefreshCw, Search, ExternalLink, Sparkles } from 'lucide-react'
 import { useStore } from '../store'
-import { EmptyState } from '../components/Shared'
+import { EmptyState, MiniFoto } from '../components/Shared'
 
 export default function Produtos() {
   const s = useStore()
@@ -95,10 +95,15 @@ export default function Produtos() {
               {lista.map(p => (
                 <tr key={p.id}>
                   <td>
-                    <div style={{ fontWeight: 600 }}>{p.titulo}</div>
-                    {p.variantes.length > 0 && (
-                      <div className="muted-sm">{p.variantes.slice(0, 5).join(' · ')}{p.variantes.length > 5 && ` +${p.variantes.length - 5}`}</div>
-                    )}
+                    <div className="row gap-10">
+                      <MiniFoto src={p.imagem} alt={p.titulo} tamanho={34} />
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{p.titulo}</div>
+                        {p.variantes.length > 0 && (
+                          <div className="muted-sm">{p.variantes.slice(0, 5).join(' · ')}{p.variantes.length > 5 && ` +${p.variantes.length - 5}`}</div>
+                        )}
+                      </div>
+                    </div>
                   </td>
                   <td className="muted">{p.tipo || '—'}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
