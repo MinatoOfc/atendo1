@@ -500,6 +500,18 @@ async function enviarResposta(wsId, ticket, texto) {
   if (canal) {
     await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto })
   }
+  // Nova resposta numa conversa já respondida: arquiva a troca anterior no
+  // histórico antes de sobrescrever, para nada se perder na tela.
+  if (ticket.status === 'enviado' && ticket.resposta) {
+    ticket.historico = ticket.historico || []
+    if (ticket.corpo) {
+      ticket.historico.push({ autor: 'cliente', corpo: ticket.corpo, data: ticket.data, traducao: ticket.traducao })
+      ticket.corpo = ''
+      ticket.traducao = undefined
+    }
+    ticket.historico.push({ autor: 'atendo', corpo: ticket.resposta, data: ticket.respondidoEm || ticket.data })
+    ticket.respostaTraducao = undefined
+  }
   ticket.status = 'enviado'
   ticket.resposta = texto
   ticket.rascunho = texto

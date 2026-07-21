@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   ArrowLeft, Check, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
-  Package, ExternalLink,
+  Package, ExternalLink, PenSquare,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
@@ -140,6 +140,8 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
   const [texto, setTexto] = useState(t.rascunho ?? '')
+  const [manual, setManual] = useState('')
+  const [novaResposta, setNovaResposta] = useState(false)
   const [resumoAberto, setResumoAberto] = useState(true)
   const [verTraducao, setVerTraducao] = useState(false)
   const [traduzindo, setTraduzindo] = useState(false)
@@ -215,7 +217,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             </button>
           </div>
           <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
-            Quando pausada, a IA não responde esta conversa automaticamente. Ela fica assim até você clicar em "Retomar IA".
+            Quando pausada, a IA nem lê as novas mensagens desta conversa — zero gasto de tokens. Elas caem direto para você responder manualmente, até clicar em "Retomar IA".
           </p>
         </div>
       )}
@@ -306,6 +308,48 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             <button className="btn btn-danger" onClick={() => { moverPara(t.id, 'lixeira'); onBack() }}><Trash2 size={14} /> Excluir</button>
           </div>
         </div>
+      )}
+
+      {/* Resposta manual: sem rascunho da IA (ex.: IA pausada), você escreve do zero */}
+      {emFluxo && t.rascunho === undefined && (
+        <div className="draft-box">
+          <div className="row gap-8 mb-12">
+            <PenSquare size={15} color="var(--purple)" />
+            <span className="h3" style={{ color: 'var(--purple)' }}>Responder manualmente</span>
+            <span className="muted-sm">escreva a resposta do seu jeito — a IA não interfere nem gasta tokens</span>
+          </div>
+          <textarea value={manual} onChange={e => setManual(e.target.value)} placeholder="Escreva sua resposta ao cliente…" />
+          <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
+              onClick={() => { aprovarEnviar(t.id, manual.trim()); onBack() }}>
+              <Send size={14} /> Enviar resposta
+            </button>
+            <button className="btn" onClick={() => { moverPara(t.id, 'spam'); onBack() }}><Shield size={14} /> Spam</button>
+            <button className="btn btn-danger" onClick={() => { moverPara(t.id, 'lixeira'); onBack() }}><Trash2 size={14} /> Excluir</button>
+          </div>
+        </div>
+      )}
+
+      {/* Conversa já respondida: dá para mandar uma nova mensagem quando quiser */}
+      {t.status === 'enviado' && (
+        !novaResposta ? (
+          <button className="btn" onClick={() => setNovaResposta(true)}><PenSquare size={14} /> Responder novamente</button>
+        ) : (
+          <div className="draft-box">
+            <div className="row gap-8 mb-12">
+              <PenSquare size={15} color="var(--purple)" />
+              <span className="h3" style={{ color: 'var(--purple)' }}>Nova mensagem ao cliente</span>
+            </div>
+            <textarea value={manual} onChange={e => setManual(e.target.value)} placeholder="Escreva a mensagem…" autoFocus />
+            <div className="row gap-8" style={{ marginTop: 12 }}>
+              <button className="btn btn-primary" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
+                onClick={() => { aprovarEnviar(t.id, manual.trim()); setManual(''); setNovaResposta(false) }}>
+                <Send size={14} /> Enviar
+              </button>
+              <button className="btn" onClick={() => setNovaResposta(false)}>Cancelar</button>
+            </div>
+          </div>
+        )
       )}
 
       {(t.status === 'spam' || t.status === 'lixeira') && (
