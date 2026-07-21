@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Inicio from './pages/Inicio'
 import CaixaEntrada from './pages/CaixaEntrada'
 import Enviados from './pages/Enviados'
+import Clientes from './pages/Clientes'
 import Aprovacoes from './pages/Aprovacoes'
 import AtendimentoHumano from './pages/AtendimentoHumano'
 import Conhecimento from './pages/Conhecimento'
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/" element={<Inicio />} />
         <Route path="/caixa" element={<CaixaEntrada />} />
         <Route path="/enviados" element={<Enviados />} />
+        <Route path="/clientes" element={<Clientes />} />
         <Route path="/aprovacoes" element={<Aprovacoes />} />
         <Route path="/humano" element={<AtendimentoHumano />} />
         <Route path="/conhecimento" element={<Conhecimento />} />

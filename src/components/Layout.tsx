@@ -3,13 +3,13 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   Home, Inbox, Send, CheckSquare, Users, BookOpen, Shield, Trash2,
   Package, Truck, Tag, TrendingUp, HelpCircle, MessageSquare, Settings,
-  PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone, Moon, Sun, Store, Plus,
+  PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone, Moon, Sun, Store, Plus, Contact,
 } from 'lucide-react'
 import { useStore } from '../store'
 import ComposeModal from './ComposeModal'
 
 const titulos: Record<string, string> = {
-  '/': 'Início', '/caixa': 'Caixa de Entrada', '/enviados': 'Enviados',
+  '/': 'Início', '/caixa': 'Caixa de Entrada', '/enviados': 'Enviados', '/clientes': 'Clientes',
   '/aprovacoes': 'Aprovações', '/humano': 'Atendimento humano', '/conhecimento': 'Conhecimento',
   '/spam': 'Spam', '/lixeira': 'Lixeira', '/pedidos': 'Pedidos', '/prazos': 'Prazos de entrega',
   '/produtos': 'Produtos', '/ganhos': 'Ganhos', '/configuracoes': 'Configurações',
@@ -109,6 +109,7 @@ export default function Layout() {
         </button>
         {item('/caixa', <Inbox />, 'Caixa de Entrada', naoLidos > 0 && <span className="badge-count">{naoLidos}</span>)}
         {item('/enviados', <Send />, 'Enviados')}
+        {item('/clientes', <Contact />, 'Clientes')}
         {item('/aprovacoes', <CheckSquare />, 'Aprovações', aguardandoAprovacao.length > 0 && <span className="badge-count">{aguardandoAprovacao.length}</span>)}
         {item('/humano', <Users />, 'Atendimento humano', casosHumanos.length > 0 && <span className="badge-count">{casosHumanos.length}</span>)}
         {item('/conhecimento', <BookOpen />, 'Conhecimento')}
