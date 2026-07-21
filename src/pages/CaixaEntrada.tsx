@@ -1,16 +1,29 @@
 import { useState } from 'react'
-import { Inbox, ChevronDown } from 'lucide-react'
+import { Inbox, ChevronDown, Search } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
 import type { Categoria } from '../store'
 import { TicketListPage } from '../components/Tickets'
 import { EmptyState } from '../components/Shared'
 
+// busca sem diferenciar maiúsculas nem acentos
+const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
 export default function CaixaEntrada() {
-  const { tickets } = useStore()
+  const { tickets, pedidos } = useStore()
   const [origem, setOrigem] = useState<'clientes' | 'shopify' | 'todos'>('clientes')
   const [leitura, setLeitura] = useState<'todos' | 'nao' | 'lidos'>('todos')
   const [categoria, setCategoria] = useState<Categoria | 'todas'>('todas')
+  const [busca, setBusca] = useState('')
 
+  // números de pedido por e-mail do cliente: buscar "1042" acha a conversa do dono do pedido #1042
+  const pedidosPorEmail = new Map<string, string[]>()
+  for (const p of pedidos) {
+    if (!p.email) continue
+    const k = p.email.trim().toLowerCase()
+    pedidosPorEmail.set(k, [...(pedidosPorEmail.get(k) ?? []), p.numero])
+  }
+
+  const q = normalizar(busca.trim())
   const lista = tickets.filter(t => {
     // todos os e-mails recebidos, respondidos ou não — fora só spam e lixeira
     if (t.status === 'spam' || t.status === 'lixeira') return false
@@ -21,12 +34,25 @@ export default function CaixaEntrada() {
     if (leitura === 'nao' && t.lido) return false
     if (leitura === 'lidos' && !t.lido) return false
     if (categoria !== 'todas' && t.categoria !== categoria) return false
+    if (q) {
+      const numeros = pedidosPorEmail.get(t.de.trim().toLowerCase()) ?? []
+      const bate = normalizar(t.nome).includes(q)
+        || normalizar(t.de).includes(q)
+        || normalizar(t.assunto).includes(q)
+        || numeros.some(n => normalizar(n).includes(q))
+      if (!bate) return false
+    }
     return true
   })
 
   const header = (
     <div className="row spread mb-16" style={{ flexWrap: 'wrap', gap: 10 }}>
-      <div className="row gap-8">
+      <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+        <div className="search-box">
+          <Search size={15} />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Nome, e-mail ou nº do pedido" />
+        </div>
         <button className={'chip' + (origem === 'clientes' ? ' active-purple' : '')} onClick={() => setOrigem('clientes')}>Clientes</button>
         <button className={'chip' + (origem === 'shopify' ? ' active-purple' : '')} onClick={() => setOrigem('shopify')}>Shopify</button>
         <button className={'chip' + (origem === 'todos' ? ' active-purple' : '')} onClick={() => setOrigem('todos')}>Todos</button>

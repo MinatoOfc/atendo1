@@ -37,9 +37,20 @@ export default function Clientes() {
     porEmail.set(email, c)
   }
 
+  // números de pedido por e-mail: buscar "1042" acha o cliente dono do pedido #1042
+  const pedidosPorEmail = new Map<string, string[]>()
+  for (const p of pedidos) {
+    if (!p.email) continue
+    const k = p.email.trim().toLowerCase()
+    pedidosPorEmail.set(k, [...(pedidosPorEmail.get(k) ?? []), p.numero])
+  }
+
   const q = normalizar(busca.trim())
   const clientes = [...porEmail.values()]
-    .filter(c => !q || normalizar(c.nome).includes(q) || normalizar(c.email).includes(q))
+    .filter(c => !q
+      || normalizar(c.nome).includes(q)
+      || normalizar(c.email).includes(q)
+      || (pedidosPorEmail.get(c.email) ?? []).some(n => normalizar(n).includes(q)))
     .sort((a, b) => b.ultima.localeCompare(a.ultima))
 
   /* ---- detalhe de um ticket dentro do cliente ---- */
@@ -116,7 +127,7 @@ export default function Clientes() {
         </div>
         <div className="search-box">
           <Search size={15} />
-          <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar por nome ou e-mail" />
+          <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Nome, e-mail ou nº do pedido" />
         </div>
       </div>
       {clientes.length === 0 ? (
