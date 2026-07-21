@@ -6,7 +6,7 @@ import {
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
 
-export function TicketRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
+export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Ticket) => void; tagStatus?: boolean }) {
   const { lojasVisiveis, lojaAtiva, prefs } = useStore()
   const nomeLojaDona = lojaAtiva === 'todas' && lojasVisiveis.length > 1
     ? lojasVisiveis.find(l => l.id === (t.lojaId ?? 'loja1'))?.nome
@@ -25,6 +25,8 @@ export function TicketRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => voi
         {prefs.mostrarPreview && <span className="preview">— {(t.resposta ?? t.corpo).slice(0, 90)}</span>}
       </span>
       {nomeLojaDona && <span className="tag tag-purple">{nomeLojaDona}</span>}
+      {tagStatus && t.status === 'enviado' && <span className="tag tag-green">respondido</span>}
+      {tagStatus && t.status === 'humano' && <span className="tag tag-amber">para você</span>}
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}
@@ -314,10 +316,11 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   )
 }
 
-export function TicketListPage({ tickets, empty, header }: {
+export function TicketListPage({ tickets, empty, header, tagStatus }: {
   tickets: Ticket[]
   empty: React.ReactNode
   header?: React.ReactNode
+  tagStatus?: boolean
 }) {
   const [aberto, setAberto] = useState<string | null>(null)
   const atual = tickets.find(t => t.id === aberto)
@@ -329,7 +332,7 @@ export function TicketListPage({ tickets, empty, header }: {
       {header}
       {tickets.length === 0 ? empty : (
         <div className="card" style={{ overflow: 'hidden' }}>
-          {tickets.map(t => <TicketRow key={t.id} t={t} onOpen={x => setAberto(x.id)} />)}
+          {tickets.map(t => <TicketRow key={t.id} t={t} onOpen={x => setAberto(x.id)} tagStatus={tagStatus} />)}
         </div>
       )}
     </div>

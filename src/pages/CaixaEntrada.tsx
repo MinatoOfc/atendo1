@@ -12,7 +12,10 @@ export default function CaixaEntrada() {
   const [categoria, setCategoria] = useState<Categoria | 'todas'>('todas')
 
   const lista = tickets.filter(t => {
-    if (t.status !== 'inbox' && t.status !== 'aprovacao' && t.status !== 'humano') return false
+    // todos os e-mails recebidos, respondidos ou não — fora só spam e lixeira
+    if (t.status === 'spam' || t.status === 'lixeira') return false
+    // e-mails compostos do zero (nunca recebidos) ficam só em Enviados
+    if (t.status === 'enviado' && !t.corpo && !t.historico?.length) return false
     if (origem === 'clientes' && t.origem !== 'cliente') return false
     if (origem === 'shopify' && t.origem !== 'shopify') return false
     if (leitura === 'nao' && t.lido) return false
@@ -52,9 +55,10 @@ export default function CaixaEntrada() {
     <TicketListPage
       tickets={lista}
       header={header}
+      tagStatus
       empty={
         <EmptyState icon={<Inbox />} title="Nenhum ticket nestes filtros.">
-          Tudo respondido por aqui. Novos e-mails de clientes aparecem nesta lista — use o botão Sincronizar acima para buscar.
+          Todos os e-mails recebidos aparecem nesta lista, respondidos ou não — use o botão Sincronizar acima para buscar novos.
         </EmptyState>
       }
     />
