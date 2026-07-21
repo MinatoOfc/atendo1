@@ -52,6 +52,7 @@ export interface Pedido {
   valor: number; status: 'aguardando' | 'transito' | 'entregue' | 'problema'
   rastreio: string; criadoEm: string; lojaId?: string
   urlRastreio?: string | null; transportadora?: string | null
+  itens?: { titulo: string; variante: string | null; quantidade: number; preco?: number }[]
 }
 
 export interface Config {

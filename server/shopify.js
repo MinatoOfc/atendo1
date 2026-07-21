@@ -131,6 +131,12 @@ function mapearPedido(o) {
     urlRastreio: f?.tracking_url || null,
     transportadora: f?.tracking_company || null,
     criadoEm: (o.created_at || '').slice(0, 10),
+    itens: (o.line_items || []).map(li => ({
+      titulo: li.title,
+      variante: li.variant_title || null, // ex.: "Zwart / L" — cor e tamanho
+      quantidade: Number(li.quantity) || 1,
+      preco: Number(li.price || 0),
+    })),
   }
 }
 
@@ -158,7 +164,7 @@ function mapearProduto(p, dominio) {
 }
 
 export async function buscarPedidosShopify(cx) {
-  const campos = 'id,name,email,contact_email,total_price,created_at,cancelled_at,fulfillment_status,fulfillments,customer,shipping_address'
+  const campos = 'id,name,email,contact_email,total_price,created_at,cancelled_at,fulfillment_status,fulfillments,customer,shipping_address,line_items'
   const { dados, erro } = await chamar(cx, `orders.json?status=any&limit=250&fields=${campos}`)
   if (erro) return { erro }
   return { pedidos: (dados.orders || []).map(mapearPedido) }

@@ -90,11 +90,16 @@ export function pareceSpam(assunto, corpo, de) {
 /* ---------------- Dados de demonstração ---------------- */
 
 export const demoPedidos = [
-  { id: 'p1', numero: '#1042', cliente: 'Marina Rossi', email: 'marina.rossi@gmail.com', pais: 'Itália', valor: 89.9, status: 'transito', rastreio: 'RR284650121IT', criadoEm: '2026-07-14' },
-  { id: 'p2', numero: '#1041', cliente: 'Lukas Weber', email: 'lukas.weber@web.de', pais: 'Alemanha', valor: 129.0, status: 'aguardando', rastreio: '—', criadoEm: '2026-07-16' },
-  { id: 'p3', numero: '#1039', cliente: 'Ana Souza', email: 'ana.souza@hotmail.com', pais: 'Brasil', valor: 59.5, status: 'entregue', rastreio: 'BR776120345BR', criadoEm: '2026-07-08' },
-  { id: 'p4', numero: '#1038', cliente: 'Claire Dubois', email: 'claire.dubois@orange.fr', pais: 'França', valor: 74.0, status: 'problema', rastreio: 'LP004512278FR', criadoEm: '2026-07-05' },
-  { id: 'p5', numero: '#1036', cliente: 'John Miller', email: 'john.miller@yahoo.com', pais: 'Estados Unidos', valor: 210.0, status: 'transito', rastreio: 'US51290871US', criadoEm: '2026-07-11' },
+  { id: 'p1', numero: '#1042', cliente: 'Marina Rossi', email: 'marina.rossi@gmail.com', pais: 'Itália', valor: 89.9, status: 'transito', rastreio: 'RR284650121IT', criadoEm: '2026-07-14',
+    itens: [{ titulo: 'Vestido Midi Floral', variante: 'Azul / M', quantidade: 1, preco: 59.9 }, { titulo: 'Cinto Fino Couro', variante: 'Caramelo / Único', quantidade: 2, preco: 15.0 }] },
+  { id: 'p2', numero: '#1041', cliente: 'Lukas Weber', email: 'lukas.weber@web.de', pais: 'Alemanha', valor: 129.0, status: 'aguardando', rastreio: '—', criadoEm: '2026-07-16',
+    itens: [{ titulo: 'Tênis Urbano', variante: 'Branco / 43', quantidade: 1, preco: 129.0 }] },
+  { id: 'p3', numero: '#1039', cliente: 'Ana Souza', email: 'ana.souza@hotmail.com', pais: 'Brasil', valor: 59.5, status: 'entregue', rastreio: 'BR776120345BR', criadoEm: '2026-07-08',
+    itens: [{ titulo: 'Camiseta Básica', variante: 'Preta / P', quantidade: 2, preco: 24.75 }, { titulo: 'Meia Cano Alto', variante: null, quantidade: 1, preco: 10.0 }] },
+  { id: 'p4', numero: '#1038', cliente: 'Claire Dubois', email: 'claire.dubois@orange.fr', pais: 'França', valor: 74.0, status: 'problema', rastreio: 'LP004512278FR', criadoEm: '2026-07-05',
+    itens: [{ titulo: 'Bolsa Tote Lona', variante: 'Bege', quantidade: 1, preco: 74.0 }] },
+  { id: 'p5', numero: '#1036', cliente: 'John Miller', email: 'john.miller@yahoo.com', pais: 'Estados Unidos', valor: 210.0, status: 'transito', rastreio: 'US51290871US', criadoEm: '2026-07-11',
+    itens: [{ titulo: 'Jaqueta Corta-Vento', variante: 'Verde / G', quantidade: 1, preco: 150.0 }, { titulo: 'Boné Logo', variante: 'Único', quantidade: 2, preco: 30.0 }] },
 ]
 
 export const demoEmails = [

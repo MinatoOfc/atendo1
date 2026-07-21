@@ -91,6 +91,16 @@ function PainelPedidos({ t }: { t: Ticket }) {
                   {statusPedido[p.status]?.rotulo ?? p.status}
                 </span>
               </div>
+              {(p.itens?.length ?? 0) > 0 && (
+                <div style={{ display: 'grid', gap: 2, marginBottom: 8 }}>
+                  {p.itens!.map((i, idx) => (
+                    <span key={idx} style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+                      <b>{i.quantidade}×</b> {i.titulo}
+                      {i.variante && <span className="muted-sm"> · {i.variante}</span>}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="muted-sm" style={{ display: 'grid', gap: 3 }}>
                 <span>{fmtMoeda(p.valor)} · {p.pais}</span>
                 <span>{p.criadoEm && new Date(p.criadoEm + 'T12:00:00').toLocaleDateString('pt-BR')}</span>

@@ -200,7 +200,8 @@ export async function processarEmailIA(state, ticket) {
     pedidosCliente.length
       ? `Pedidos deste cliente na Shopify (localizados pelo e-mail ${ticket.de}), do mais recente ao mais antigo:\n`
         + pedidosCliente.map(p =>
-          `- ${p.numero}: status ${p.status}, rastreio ${p.rastreio}${p.urlRastreio ? ` (${p.urlRastreio})` : ''}${p.transportadora ? `, transportadora ${p.transportadora}` : ''}, país ${p.pais}, valor ${p.valor}, criado em ${p.criadoEm}`).join('\n')
+          `- ${p.numero}: status ${p.status}, rastreio ${p.rastreio}${p.urlRastreio ? ` (${p.urlRastreio})` : ''}${p.transportadora ? `, transportadora ${p.transportadora}` : ''}, país ${p.pais}, valor ${p.valor}, criado em ${p.criadoEm}`
+          + (p.itens?.length ? `\n  itens: ${p.itens.map(i => `${i.quantidade}x ${i.titulo}${i.variante ? ` (${i.variante})` : ''}`).join('; ')}` : '')).join('\n')
       : `Nenhum pedido encontrado para o e-mail ${ticket.de} na Shopify. Se o cliente falar de um pedido, peça o número do pedido ou o e-mail usado na compra.`,
   ].join('\n')
 
