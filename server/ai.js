@@ -81,7 +81,7 @@ const SCHEMA = {
     situacao: { type: 'string', description: 'Resumo de UMA frase, em português, do que o cliente quer nesta conversa — para o atendente entender o caso de relance. Ex.: "Cliente solicita reembolso de 3 polos por reação alérgica ao material".' },
     categoria: { type: 'string', enum: ['rastreio', 'reembolso', 'troca', 'produto', 'entrega', 'outro'] },
     idioma: { type: 'string', description: 'Código ISO 639-1 do idioma do cliente, ex.: pt, en, it, de, fr, es' },
-    resposta: { type: 'string', description: 'Resposta completa ao cliente, no idioma dele, pronta para envio' },
+    resposta: { type: 'string', description: 'Resposta completa ao cliente, no idioma definido pelas instruções, pronta para envio' },
     confianca: { type: 'number', description: 'De 0 a 1: qualidade da resposta escrita. Pedir ao cliente um dado que falta (número do pedido, foto) é resposta boa e vale confiança alta — não abaixe a nota por não ter os dados.' },
     escalar_humano: { type: 'boolean', description: 'true apenas quando a LOJA precisa decidir algo (reembolso, exceção, caso jurídico). Não use quando basta pedir informação ao cliente.' },
     motivo: { type: 'string', description: 'Por que foi escalado ou por que a confiança é baixa; string vazia se nada a sinalizar' },
@@ -117,10 +117,14 @@ function lojaDoTicket(state, ticket) {
   return (state.lojas ?? []).find(l => l.id === ticket?.lojaId) ?? state.lojas?.[0] ?? null
 }
 
+const nomesIdioma = { pt: 'português', en: 'inglês', es: 'espanhol', fr: 'francês', de: 'alemão', it: 'italiano', nl: 'holandês' }
+
 export function montarSystem(state, ticket) {
   const loja = lojaDoTicket(state, ticket)
   const nomeLoja = loja?.nome ?? state.config.nomeLoja
   const moeda = loja?.moeda ?? 'EUR'
+  // idioma fixo escolhido pelo lojista; 'auto' (padrão) responde no idioma do cliente
+  const idiomaFixo = loja?.idioma && loja.idioma !== 'auto' ? (nomesIdioma[loja.idioma] ?? loja.idioma) : null
   const politicas = state.politicas.filter(p => p.ativa)
   const faqs = state.faqs.filter(f => f.ativa)
   const comportamentos = (state.comportamentos ?? []).filter(c => c.ativa)
@@ -128,14 +132,16 @@ export function montarSystem(state, ticket) {
   const produtos = (state.produtos ?? []).filter(p => !p.lojaId || !loja || p.lojaId === loja.id)
   return [
     `Você é o atendimento ao cliente da loja "${nomeLoja}", um e-commerce.`,
-    `Sua tarefa: ler o e-mail do cliente, classificá-lo e escrever a resposta no idioma do cliente.`,
+    `Sua tarefa: ler o e-mail do cliente, classificá-lo e escrever a resposta${idiomaFixo ? ` em ${idiomaFixo}` : ' no idioma do cliente'}.`,
     ``,
     `Regras invioláveis:`,
     `- As políticas, FAQs e o catálogo abaixo são a ÚNICA fonte de verdade. NUNCA invente prazos, valores, regras, produtos ou promessas que não estejam neles.`,
     `- Ao falar de produtos, use apenas os do catálogo, com o nome e o preço exatos. Nunca invente um produto, preço ou disponibilidade.`,
     `- Se o cliente perguntar o que a loja vende, responda citando os produtos reais do catálogo (os mais relevantes para a pergunta), com preço e link.`,
     `- Se o cliente procurar algo que não existe no catálogo, diga com clareza que não trabalhamos com aquilo e sugira o que temos de mais próximo.`,
-    `- Responda no idioma em que o cliente escreveu.`,
+    idiomaFixo
+      ? `- Escreva TODA resposta em ${idiomaFixo}, SEMPRE — mesmo que o cliente escreva em outro idioma (escolha do lojista). O campo "idioma" do JSON continua sendo o idioma em que o CLIENTE escreveu.`
+      : `- Responda no idioma em que o cliente escreveu.`,
     `- Tom: cordial, direto, humano. Sem parecer robô. Termine com a assinatura: "${state.config.assinatura}".`,
     ``,
     ...(comportamentos.length ? [
@@ -277,6 +283,8 @@ export async function traduzirMensagens(mensagens) {
 export async function processarEmail(state, ticket) {
   const ia = await processarEmailIA(state, ticket)
   if (ia) return ia
-  const local = gerarRascunhoLocal(ticket, state.politicas, state.faqs, state.pedidos, state.config.assinatura)
+  const loja = lojaDoTicket(state, ticket)
+  const idiomaFixo = loja?.idioma && loja.idioma !== 'auto' ? loja.idioma : null
+  const local = gerarRascunhoLocal(ticket, state.politicas, state.faqs, state.pedidos, state.config.assinatura, idiomaFixo)
   return { ...local, spam: false, geradoPorIA: false }
 }

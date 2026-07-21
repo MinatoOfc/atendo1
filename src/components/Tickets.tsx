@@ -123,7 +123,10 @@ const rotuloStatus: Record<string, string> = {
 }
 
 export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, pausarIA, traduzirTicket, config } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, pausarIA, traduzirTicket, config, lojas } = useStore()
+  // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
+  const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
+  const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
   const [texto, setTexto] = useState(t.rascunho ?? '')
   const [resumoAberto, setResumoAberto] = useState(true)
   const [verTraducao, setVerTraducao] = useState(false)
@@ -218,7 +221,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         </div>
       )}
 
-      {(t.idioma !== 'pt' || t.traducao || t.respostaTraducao || t.historico?.some(m => m.traducao)) && (
+      {(t.idioma !== 'pt' || respostaEmOutroIdioma || t.traducao || t.respostaTraducao || t.historico?.some(m => m.traducao)) && (
         <div className="row mb-12" style={{ justifyContent: 'flex-end' }}>
           <button className="btn btn-sm" onClick={alternarTraducao} disabled={traduzindo}>
             <Languages size={13} />

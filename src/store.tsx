@@ -92,6 +92,7 @@ export interface Loja {
   nome: string
   ativa: boolean
   moeda: string
+  idioma?: string
   email: {
     configurado: boolean; endereco: string | null; status: StatusEmail | null
     provider?: string | null; remetenteNome?: string | null; origem?: 'site' | 'env' | null
@@ -208,7 +209,7 @@ interface Store extends ServerState {
   lojaAtiva: string
   setLojaAtiva: (id: string) => void
   lojasVisiveis: Loja[]
-  atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean }) => void
+  atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean; idioma?: string }) => void
   criarLoja: (nome?: string) => Promise<string | null>
   naoLidos: number
   aguardandoAprovacao: Ticket[]
@@ -517,7 +518,7 @@ export const nomeCategoria: Record<Categoria, string> = {
 }
 
 export const nomeIdioma: Record<string, string> = {
-  pt: 'Português', en: 'Inglês', es: 'Espanhol', it: 'Italiano', de: 'Alemão', fr: 'Francês',
+  pt: 'Português', en: 'Inglês', es: 'Espanhol', it: 'Italiano', de: 'Alemão', fr: 'Francês', nl: 'Holandês',
 }
 
 export function tempoRelativo(iso: string): string {

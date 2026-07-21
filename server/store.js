@@ -26,6 +26,8 @@ export const lojaPadrao = (id, nome) => ({
   nome,
   ativa: id === 'loja1',
   moeda: 'EUR',
+  // 'auto' = responder no idioma do cliente; ou um código fixo (pt, en, nl…)
+  idioma: 'auto',
   // Credencial obtida via OAuth da Shopify. NUNCA é enviada ao frontend.
   shopify: { loja: null, token: null, instaladoEm: null },
 })

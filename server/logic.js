@@ -28,10 +28,13 @@ const saudacoes = {
   it: { oi: 'Ciao', obrigado: 'Grazie per averci contattato', abraco: 'Per qualsiasi cosa, rispondi a questa email' },
   de: { oi: 'Hallo', obrigado: 'Danke für deine Nachricht', abraco: 'Bei Fragen antworte einfach auf diese E-Mail' },
   fr: { oi: 'Bonjour', obrigado: 'Merci de nous avoir contactés', abraco: "Pour toute question, répondez simplement à cet e-mail" },
+  nl: { oi: 'Hallo', obrigado: 'Bedankt voor je bericht', abraco: 'Als je nog vragen hebt, beantwoord dan gewoon deze e-mail' },
 }
 
-export function gerarRascunhoLocal(ticket, politicas, faqs, pedidos, assinatura) {
-  const s = saudacoes[ticket.idioma] ?? saudacoes.pt
+/** idiomaFixo: idioma escolhido pelo lojista para a loja (null = automático). */
+export function gerarRascunhoLocal(ticket, politicas, faqs, pedidos, assinatura, idiomaFixo = null) {
+  const idiomaAlvo = idiomaFixo || ticket.idioma
+  const s = saudacoes[idiomaAlvo] ?? saudacoes.pt
   const pedido = pedidos.find(p => p.email?.trim().toLowerCase() === ticket.de.trim().toLowerCase())
   const ativas = politicas.filter(p => p.ativa)
   const linhas = [`${s.oi} ${ticket.nome.split(' ')[0]},`, '', `${s.obrigado}!`]
@@ -68,6 +71,13 @@ export function gerarRascunhoLocal(ticket, politicas, faqs, pedidos, assinatura)
   }
 
   linhas.push('', `${s.abraco}.`, '', assinatura)
+  // O corpo destas regras é em português: se o lojista fixou outro idioma, o
+  // rascunho não cumpre a promessa — baixa a confiança para exigir aprovação
+  // humana em vez de enviar sozinho no idioma errado.
+  if (idiomaFixo && idiomaFixo !== 'pt') {
+    confianca = Math.min(confianca, 0.5)
+    motivo = motivo ?? `Rascunho de regras locais não sai em ${idiomaFixo} como configurado — revise antes de enviar`
+  }
   return { resposta: linhas.join('\n'), confianca, motivo: motivo ?? null, categoria: ticket.categoria, idioma: ticket.idioma, escalarHumano: ticket.categoria === 'reembolso' || confianca < 0.55 }
 }
 

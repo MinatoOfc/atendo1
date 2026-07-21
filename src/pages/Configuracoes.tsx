@@ -506,6 +506,23 @@ export default function Configuracoes() {
         <CampoTexto label="Nome da loja" valor={lojaSel?.nome ?? s.config.nomeLoja} aoSalvar={v => s.atualizarLoja(lojaId, { nome: v })} />
         <CampoTexto label="Assinatura de e-mail" valor={s.config.assinatura} aoSalvar={v => s.setConfig({ assinatura: v })} />
       </div>
+      <div className="field mb-16" style={{ maxWidth: 340 }}>
+        <label>Idioma das respostas da IA</label>
+        <select value={lojaSel?.idioma ?? 'auto'} onChange={e => s.atualizarLoja(lojaId, { idioma: e.target.value })}>
+          <option value="auto">Automático — no idioma do cliente</option>
+          <option value="pt">Sempre em Português</option>
+          <option value="en">Sempre em Inglês</option>
+          <option value="nl">Sempre em Holandês</option>
+          <option value="de">Sempre em Alemão</option>
+          <option value="fr">Sempre em Francês</option>
+          <option value="es">Sempre em Espanhol</option>
+          <option value="it">Sempre em Italiano</option>
+        </select>
+        <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+          No automático a IA detecta o idioma de cada cliente. Com um idioma fixo, toda resposta desta loja sai nele — útil quando a detecção confunde.
+          A mudança vale para os próximos e-mails; rascunhos que já estão na fila de aprovação não são refeitos.
+        </p>
+      </div>
       <p className="muted-sm" style={{ lineHeight: 1.6 }}>
         A assinatura fecha todas as respostas geradas. A moeda ({lojaSel?.moeda ?? 'EUR'}) vem da própria Shopify quando conectada.
       </p>
@@ -628,7 +645,7 @@ export default function Configuracoes() {
       <Cabecalho titulo="Integrações" desc="Conecte as ferramentas que o seu atendimento usa. O status é mostrado ao vivo." />
       {bannerLoja}
 
-      <Section icon={<Sparkles size={15} />} title="Inteligência artificial (Claude)" desc="Classifica cada e-mail e escreve a resposta no idioma do cliente, usando suas políticas como fonte de verdade.">
+      <Section icon={<Sparkles size={15} />} title="Inteligência artificial (Claude)" desc="Classifica cada e-mail e escreve a resposta no idioma do cliente (ou no idioma fixo escolhido na seção Loja), usando suas políticas como fonte de verdade.">
         {s.integracoes.ia ? (
           <>
             <div className="row gap-10" style={{ flexWrap: 'wrap' }}>

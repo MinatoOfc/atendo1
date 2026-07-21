@@ -1,6 +1,6 @@
 # atendo.
 
-Atendimento ao cliente para lojas Shopify que se responde sozinho. Lê cada e-mail da caixa de atendimento, classifica por tipo de solicitação, puxa o pedido real da Shopify e escreve a resposta com IA no idioma do cliente — você só entra quando um humano precisa decidir.
+Atendimento ao cliente para lojas Shopify que se responde sozinho. Lê cada e-mail da caixa de atendimento, classifica por tipo de solicitação, puxa o pedido real da Shopify e escreve a resposta com IA no idioma do cliente — ou num idioma fixo escolhido por loja — e você só entra quando um humano precisa decidir.
 
 ## Arquitetura
 
@@ -121,7 +121,7 @@ Com `DATABASE_URL` definida, usuários, sessões e workspaces vivem no PostgreSQ
 ## Como funciona o fluxo
 
 1. E-mail novo chega (IMAP real ou demonstração) → classificado como spam ou solicitação de cliente
-2. O Claude lê o e-mail + o pedido do cliente na Shopify + suas políticas/FAQs e escreve a resposta no idioma do cliente
+2. O Claude lê o e-mail + o pedido do cliente na Shopify + suas políticas/FAQs e escreve a resposta no idioma do cliente (ou no idioma fixo configurado para a loja em Configurações → Loja)
 3. Reembolsos, casos sensíveis e baixa confiança vão para **Atendimento humano**; o resto vai para **Aprovações**
 4. Com a automação ligada, respostas confiáveis são enviadas sozinhas após o atraso configurado (contador ao vivo)
 5. A **Base de Conhecimento** é a fonte de verdade: o que não está lá nunca é prometido ao cliente
