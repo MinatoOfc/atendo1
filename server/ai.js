@@ -161,6 +161,8 @@ export function montarSystem(state, ticket) {
     `- Mantenha (spam=false): qualquer assunto de um cliente sobre a própria compra — status do pedido, entrega, rastreio, troca, devolução, reembolso, pagamento, defeito — e dúvidas sobre produtos da loja, antes ou depois de comprar.`,
     `- Marque spam=true em TODO o resto: marketing, ofertas comerciais, parcerias, influenciadores, agências, consultoria, SEO, newsletters, notificações automáticas de plataformas (Shopify, Meta, bancos, transportadoras avisando a loja), fornecedores, convites e e-mails genéricos sem relação com pedidos ou produtos da loja — mesmo quando educados ou com cara de mensagem pessoal.`,
     `- Regra de decisão: se NÃO estiver claro que é um cliente tratando de uma compra ou de um produto, marque spam. A única exceção é haver indício concreto de cliente real falando da própria compra — aí nunca marque spam.`,
+    `- Mensagem genérica perguntando apenas se a loja está ativa/aberta/recebendo pedidos, sem citar nenhum produto nem pedido, é abertura clássica de golpe ou prospecção comercial: marque spam.`,
+    `- O filtro vale também NO MEIO de uma conversa: se as mensagens seguintes revelarem oferta comercial, consultoria, otimização de site ou golpe, marque spam=true — mesmo que a conversa tenha começado parecendo um cliente.`,
     `- Spam NÃO recebe resposta: ao marcar spam=true, devolva resposta VAZIA (""), confianca 0 e escalar_humano=false. Não gaste uma palavra escrevendo resposta para spam.`,
     ``,
     `O campo "confianca" mede a qualidade da SUA RESPOSTA, não se você tinha todos os dados.`,

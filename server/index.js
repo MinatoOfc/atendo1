@@ -420,12 +420,23 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId }) {
   t.tentativasEnvio = undefined
   t.traducao = undefined
 
-  if (t.iaPausada) {
+  if (pareceSpam(t.assunto, corpo, t.de)) {
+    // a conversa se revelou spam (ex.: abriu como cliente e virou oferta comercial)
+    t.status = 'spam'
+    t.enviaEm = undefined
+  } else if (t.iaPausada) {
     t.status = 'humano'
     t.motivoEscalada = 'IA pausada nesta conversa — responda manualmente ou retome a IA'
   } else {
     const r = await processarEmail(estado, t)
-    aplicarResultado(estado, t, r)
+    if (r.spam) {
+      t.status = 'spam'
+      t.rascunho = undefined
+      t.enviaEm = undefined
+      if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
+    } else {
+      aplicarResultado(estado, t, r)
+    }
   }
 
   estado.tickets = [t, ...estado.tickets.filter(x => x.id !== t.id)]

@@ -94,8 +94,10 @@ export function pareceSpam(assunto, corpo, de) {
   if (/@(.*\.)?(facebookmail|instagram|tiktok|linkedin|pinterest|klaviyo|mailchimp|sendgrid|hubspot|constantcontact|braze)\./.test(remetente)) return true
   // rodapé de newsletter/disparo em massa
   if (/unsubscribe|cancelar (a )?inscri[çc][ãa]o|descadastr|se d[ée]sinscrire|abmelden|afmelden|uitschrijven|darse de baja/.test(t)) return true
+  // abertura clássica de golpe/prospecção: "sua loja ainda está ativa?" sem citar produto nenhum
+  if (/is your (store|shop|website|site) (still )?(active|open|available|working|up and running)|are you (still )?(in business|accepting orders|taking orders)|sua loja (ainda )?(esta|está) (ativa|aberta|funcionando)|a loja (ainda )?(esta|está) (ativa|aberta|funcionando)/.test(t)) return true
   // ofertas comerciais, agências e parcerias
-  return /escale sua loja|seo|backlink|agency|agência de marketing|cold outreach|aumentar suas vendas|guest post|link building|grow your (store|business)|book a call|agende uma call|influencer|parceria paga|collab(oration)? (offer|proposal)|sponsored post|media kit/.test(t)
+  return /escale sua loja|seo|backlink|agency|agência de marketing|cold outreach|aumentar suas vendas|guest post|link building|grow your (store|business)|book a call|agende uma call|influencer|parceria paga|collab(oration)? (offer|proposal)|sponsored post|media kit|otimiza[çc][ãa]o de site|website (audit|review|optimization)|web design service/.test(t)
     || /@(.*\.)?(agency|marketing|seo)\./.test(remetente)
 }
 
