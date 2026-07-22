@@ -8,11 +8,16 @@ import type { Ticket } from '../store'
 import { MiniFoto } from './Shared'
 
 export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Ticket) => void; tagStatus?: boolean }) {
-  const { lojasVisiveis, lojaAtiva, prefs } = useStore()
+  const { lojasVisiveis, lojaAtiva, prefs, pedidos } = useStore()
   const nomeLojaDona = lojaAtiva === 'todas' && lojasVisiveis.length > 1
     ? lojasVisiveis.find(l => l.id === (t.lojaId ?? 'loja1'))?.nome
     : null
   const compacto = prefs.densidade === 'compacto'
+  // pedidos do cliente na mesma loja, para mostrar o número sem abrir o ticket
+  const emailCliente = t.de.trim().toLowerCase()
+  const pedidosDele = pedidos
+    .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1') && p.email && p.email.trim().toLowerCase() === emailCliente)
+    .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''))
   return (
     <button className="ticket-row" onClick={() => onOpen(t)}
       style={compacto ? { padding: '7px 16px' } : undefined}>
@@ -31,6 +36,11 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}
+      {pedidosDele.length > 0 && (
+        <span className="tag tag-rastreio" title={pedidosDele.map(p => `${p.numero} · ${p.criadoEm}`).join('\n')}>
+          {pedidosDele[0].numero}{pedidosDele.length > 1 ? ` +${pedidosDele.length - 1}` : ''}
+        </span>
+      )}
       <span className={`tag tag-${t.categoria}`}>{nomeCategoria[t.categoria]}</span>
       <span className="when">{tempoRelativo(t.data)}</span>
     </button>
