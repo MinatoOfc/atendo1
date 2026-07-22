@@ -191,6 +191,9 @@ export async function processarEmailIA(state, ticket) {
     .map(m => `${m.autor === 'atendo' ? 'Loja (você)' : 'Cliente'} em ${m.data?.slice(0, 16)}:\n${m.corpo}`)
     .join('\n---\n')
   const user = [
+    // sem a data de hoje o modelo não consegue calcular prazos de entrega
+    `Hoje é ${new Date().toISOString().slice(0, 10)}.`,
+    ``,
     ...(historico ? [`Histórico anterior desta conversa (do mais antigo ao mais recente):`, historico, ``] : []),
     `E-mail recebido${historico ? ' agora (responda a este)' : ''}:`,
     `De: ${ticket.nome} <${ticket.de}>`,
