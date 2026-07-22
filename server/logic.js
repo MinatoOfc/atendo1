@@ -81,10 +81,22 @@ export function gerarRascunhoLocal(ticket, politicas, faqs, pedidos, assinatura,
   return { resposta: linhas.join('\n'), confianca, motivo: motivo ?? null, categoria: ticket.categoria, idioma: ticket.idioma, escalarHumano: ticket.categoria === 'reembolso' || confianca < 0.55 }
 }
 
+/**
+ * Filtro local que roda ANTES da IA: o que ele pega vai direto para o spam
+ * sem gastar nenhum token. Regras só para casos inequívocos — cliente real
+ * nunca escreve de um remetente no-reply nem manda link de descadastro.
+ */
 export function pareceSpam(assunto, corpo, de) {
   const t = (assunto + ' ' + corpo).toLowerCase()
-  return /escale sua loja|seo|backlink|agency|agência de marketing|cold outreach|aumentar suas vendas|guest post|link building|grow your (store|business)|book a call|agende uma call/.test(t)
-    || /@(.*\.)?(agency|marketing|seo)\./.test(de)
+  const remetente = String(de || '').toLowerCase()
+  // remetentes automáticos e de plataformas: nunca são clientes
+  if (/^(no-?reply|noreply|nao-?responda|newsletter|news|mailer-daemon|notifications?|notificac|updates?|marketing|promo)@/.test(remetente)) return true
+  if (/@(.*\.)?(facebookmail|instagram|tiktok|linkedin|pinterest|klaviyo|mailchimp|sendgrid|hubspot|constantcontact|braze)\./.test(remetente)) return true
+  // rodapé de newsletter/disparo em massa
+  if (/unsubscribe|cancelar (a )?inscri[çc][ãa]o|descadastr|se d[ée]sinscrire|abmelden|afmelden|uitschrijven|darse de baja/.test(t)) return true
+  // ofertas comerciais, agências e parcerias
+  return /escale sua loja|seo|backlink|agency|agência de marketing|cold outreach|aumentar suas vendas|guest post|link building|grow your (store|business)|book a call|agende uma call|influencer|parceria paga|collab(oration)? (offer|proposal)|sponsored post|media kit/.test(t)
+    || /@(.*\.)?(agency|marketing|seo)\./.test(remetente)
 }
 
 /* ---------------- Dados de demonstração ---------------- */
