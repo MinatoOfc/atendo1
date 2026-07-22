@@ -346,10 +346,15 @@ function aplicarResultado(estado, t, r) {
   const minima = estado.config.confiancaMinima ?? 0.55
   const sensivel = estado.config.escalarSensiveis !== false && r.escalarHumano
   const incerto = r.confianca < minima
+  // Regra fixa do código, não da IA: reembolso SEMPRE espera decisão humana,
+  // mesmo que o modelo devolva escalar_humano=false ou confiança alta.
+  const reembolso = r.categoria === 'reembolso'
 
-  if (sensivel || incerto) {
+  if (sensivel || incerto || reembolso) {
     t.status = 'humano'
-    t.motivoEscalada = r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
+    t.motivoEscalada = reembolso
+      ? (r.motivo || 'Reembolso — sempre passa pela sua aprovação')
+      : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
   } else {
     t.status = 'aprovacao'
     t.motivoEscalada = undefined
