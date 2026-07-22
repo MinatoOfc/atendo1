@@ -16,7 +16,11 @@ const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-
 
 export default function Pedidos() {
   const { config, pedidos, conectarShopify, fmtMoeda, produtos } = useStore()
-  const fotoDe = (produtoId?: string | null) => (produtoId ? produtos.find(pr => pr.id === produtoId)?.imagem : null)
+  // foto da variante escolhida (a cor comprada); sem ela, a foto principal do produto
+  const fotoDe = (i: { produtoId?: string | null; varianteId?: string | null }) => {
+    const pr = i.produtoId ? produtos.find(x => x.id === i.produtoId) : null
+    return (i.varianteId && pr?.imagemPorVariante?.[i.varianteId]) || pr?.imagem || null
+  }
   const fmt = (v: number) => fmtMoeda(v)
   const nav = useNavigate()
   const [busca, setBusca] = useState('')
@@ -96,7 +100,7 @@ export default function Pedidos() {
                         {p.itens?.length ? (
                           p.itens.map((i, idx) => (
                             <div key={idx} className="row gap-8" style={{ padding: '4px 0', fontSize: 13 }}>
-                              <MiniFoto src={fotoDe(i.produtoId)} alt={i.titulo} tamanho={32} />
+                              <MiniFoto src={fotoDe(i)} alt={i.titulo} tamanho={32} />
                               <span className="tag tag-outro">{i.quantidade}×</span>
                               <b>{i.titulo}</b>
                               {i.variante && <span className="muted-sm">{i.variante}</span>}

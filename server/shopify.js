@@ -111,7 +111,7 @@ async function chamar(cx, caminho) {
   }
 }
 
-function mapearPedido(o) {
+export function mapearPedido(o) {
   const f = o.fulfillments?.find(x => x.tracking_number) ?? o.fulfillments?.[0]
   let status
   if (o.cancelled_at) status = 'problema'
@@ -136,13 +136,14 @@ function mapearPedido(o) {
       variante: li.variant_title || null, // ex.: "Zwart / L" — cor e tamanho
       quantidade: Number(li.quantity) || 1,
       preco: Number(li.price || 0),
-      // liga o item ao produto sincronizado — é de lá que vem a foto
+      // ligam o item ao produto sincronizado — é de lá que vem a foto
       produtoId: li.product_id ? String(li.product_id) : null,
+      varianteId: li.variant_id ? String(li.variant_id) : null,
     })),
   }
 }
 
-function mapearProduto(p, dominio) {
+export function mapearProduto(p, dominio) {
   const variantes = p.variants || []
   const precos = variantes.map(v => Number(v.price || 0)).filter(n => n > 0)
   // Sem o escopo read_inventory a API omite inventory_quantity — aí o estoque é
@@ -158,7 +159,12 @@ function mapearProduto(p, dominio) {
     precoMin: precos.length ? Math.min(...precos) : 0,
     precoMax: precos.length ? Math.max(...precos) : 0,
     estoque,
-    imagem: p.image?.src || null,
+    imagem: p.image?.src || p.images?.[0]?.src || null,
+    // foto específica de cada variante (ex.: a cor escolhida), via image_id
+    imagemPorVariante: Object.fromEntries(variantes
+      .filter(v => v.image_id)
+      .map(v => [String(v.id), (p.images || []).find(img => img.id === v.image_id)?.src])
+      .filter(([, src]) => src)),
     ativo: p.status === 'active',
     variantes: variantes.map(v => v.title).filter(t => t && t !== 'Default Title'),
     url: `https://${dominio}/products/${p.handle}`,
@@ -174,7 +180,7 @@ export async function buscarPedidosShopify(cx) {
 }
 
 export async function buscarProdutosShopify(cx) {
-  const campos = 'id,title,body_html,vendor,product_type,handle,status,tags,variants,image'
+  const campos = 'id,title,body_html,vendor,product_type,handle,status,tags,variants,image,images'
   const { dados, erro } = await chamar(cx, `products.json?limit=250&fields=${campos}`)
   if (erro) {
     if (/403|recusou o acesso/i.test(erro)) {

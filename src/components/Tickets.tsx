@@ -63,7 +63,11 @@ const statusPedido: Record<string, { rotulo: string; cls: string }> = {
  */
 function PainelPedidos({ t }: { t: Ticket }) {
   const { pedidos, fmtMoeda, produtos } = useStore()
-  const fotoDe = (produtoId?: string | null) => (produtoId ? produtos.find(pr => pr.id === produtoId)?.imagem : null)
+  // foto da variante escolhida (a cor comprada); sem ela, a foto principal do produto
+  const fotoDe = (i: { produtoId?: string | null; varianteId?: string | null }) => {
+    const pr = i.produtoId ? produtos.find(x => x.id === i.produtoId) : null
+    return (i.varianteId && pr?.imagemPorVariante?.[i.varianteId]) || pr?.imagem || null
+  }
   const emailCliente = t.de.trim().toLowerCase()
   const doCliente = pedidos
     .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
@@ -97,7 +101,7 @@ function PainelPedidos({ t }: { t: Ticket }) {
                 <div style={{ display: 'grid', gap: 4, marginBottom: 8 }}>
                   {p.itens!.map((i, idx) => (
                     <span key={idx} className="row gap-8" style={{ fontSize: 12.5, lineHeight: 1.45 }}>
-                      <MiniFoto src={fotoDe(i.produtoId)} alt={i.titulo} tamanho={26} />
+                      <MiniFoto src={fotoDe(i)} alt={i.titulo} tamanho={26} />
                       <span>
                         <b>{i.quantidade}×</b> {i.titulo}
                         {i.variante && <span className="muted-sm"> · {i.variante}</span>}
