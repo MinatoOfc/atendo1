@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft, Check, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
   Package, ExternalLink, PenSquare,
@@ -154,14 +154,29 @@ const rotuloStatus: Record<string, string> = {
 }
 
 export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, pausarIA, traduzirTicket, config, lojas } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, config, lojas } = useStore()
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
   const [texto, setTexto] = useState(t.rascunho ?? '')
   const [manual, setManual] = useState('')
   const [novaResposta, setNovaResposta] = useState(false)
+  const [instrucao, setInstrucao] = useState('')
+  const [gerando, setGerando] = useState(false)
+  const [erroGerar, setErroGerar] = useState<string | null>(null)
+  const [verTradRascunho, setVerTradRascunho] = useState(false)
+  const [traduzindoRasc, setTraduzindoRasc] = useState(false)
   const [resumoAberto, setResumoAberto] = useState(true)
+
+  // Regeneração e troca de ticket atualizam o texto na tela — mas o eco do
+  // salvamento automático (debounce) nunca pode reverter o que você digita.
+  const ultimoEditado = useRef(t.rascunho ?? '')
+  useEffect(() => {
+    if ((t.rascunho ?? '') !== ultimoEditado.current) {
+      setTexto(t.rascunho ?? '')
+      ultimoEditado.current = t.rascunho ?? ''
+    }
+  }, [t.rascunho])
   const [verTraducao, setVerTraducao] = useState(false)
   const [traduzindo, setTraduzindo] = useState(false)
 
@@ -313,7 +328,49 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
               {t.geradoPorIA ? 'gerada pelo Claude a partir das suas políticas e do pedido' : 'gerada por regras — conecte a IA nas Configurações'}
             </span>
           </div>
-          <textarea value={texto} onChange={e => { setTexto(e.target.value); editarRascunho(t.id, e.target.value) }} />
+          <textarea value={texto} onChange={e => { setTexto(e.target.value); ultimoEditado.current = e.target.value; editarRascunho(t.id, e.target.value) }} />
+
+          {verTradRascunho && t.rascunhoTraducao && (
+            <div className="card-soft" style={{ padding: '10px 12px', marginTop: 10, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+              <div className="row gap-8 mb-8">
+                <Languages size={13} color="var(--purple)" />
+                <b style={{ fontSize: 12.5 }}>Tradução — só para você conferir; o envio usa o texto acima</b>
+              </div>
+              {t.rascunhoTraducao}
+            </div>
+          )}
+
+          <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+            <input value={instrucao} onChange={e => setInstrucao(e.target.value)}
+              placeholder="Instrução para refazer (ex.: ofereça 10% de desconto, seja mais curto)…"
+              style={{ flex: 1, minWidth: 220, border: '1px solid var(--purple-border)', borderRadius: 8, padding: '7px 11px', fontSize: 13, outline: 'none', background: 'var(--panel)' }}
+              onKeyDown={e => { if (e.key === 'Enter' && !gerando) (document.getElementById('btn-gerar') as HTMLButtonElement)?.click() }} />
+            <button id="btn-gerar" className="btn btn-sm" disabled={gerando}
+              onClick={async () => {
+                setGerando(true); setErroGerar(null); setVerTradRascunho(false)
+                const erro = await regenerarRascunho(t.id, instrucao.trim())
+                setGerando(false)
+                if (erro) setErroGerar(erro)
+                else setInstrucao('')
+              }}>
+              <Sparkles size={13} /> {gerando ? 'Gerando…' : 'Gerar nova resposta'}
+            </button>
+            <button className="btn btn-sm" disabled={traduzindoRasc}
+              onClick={async () => {
+                if (verTradRascunho) { setVerTradRascunho(false); return }
+                if (!t.rascunhoTraducao) {
+                  setTraduzindoRasc(true)
+                  const erro = await traduzirRascunho(t.id)
+                  setTraduzindoRasc(false)
+                  if (erro) { setErroGerar(erro); return }
+                }
+                setVerTradRascunho(true)
+              }}>
+              <Languages size={13} /> {traduzindoRasc ? 'Traduzindo…' : verTradRascunho ? 'Ocultar tradução' : 'Ver em português'}
+            </button>
+          </div>
+          {erroGerar && <p className="muted-sm" style={{ color: 'var(--red)', marginTop: 6 }}>{erroGerar}</p>}
+
           <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={() => { aprovarEnviar(t.id, texto); onBack() }}>
               <Check size={14} /> Aprovar e enviar

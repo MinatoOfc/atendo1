@@ -35,6 +35,7 @@ export interface Ticket {
   iaPausada?: boolean
   traducao?: string
   respostaTraducao?: string
+  rascunhoTraducao?: string
 }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
@@ -247,6 +248,8 @@ interface Store extends ServerState {
   desconectarShopify: (lojaId?: string) => void
   pausarIA: (id: string, pausar: boolean) => void
   traduzirTicket: (id: string) => Promise<boolean>
+  regenerarRascunho: (id: string, instrucao: string) => Promise<string | null>
+  traduzirRascunho: (id: string) => Promise<string | null>
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -506,6 +509,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (r.erro) { alert(r.erro); return false }
       aplicar(r)
       return true
+    },
+    regenerarRascunho: async (id, instrucao) => {
+      const r = await api(`/tickets/${id}/regenerar`, 'POST', { instrucao })
+      if (r.erro) return r.erro
+      aplicar(r)
+      return null
+    },
+    traduzirRascunho: async id => {
+      const r = await api(`/tickets/${id}/traduzir-rascunho`, 'POST')
+      if (r.erro) return r.erro
+      aplicar(r)
+      return null
     },
     }
   }, [state, carregado, tipsFechados, lojaAtiva, usuario, autenticando, prefs])

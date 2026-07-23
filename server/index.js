@@ -8,7 +8,7 @@ import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam,
 } from './logic.js'
-import { processarEmail, iaConfigurada, testarIA, statusIA } from './ai.js'
+import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA } from './ai.js'
 import { traduzirGratis } from './traducao.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
@@ -842,7 +842,42 @@ app.post('/api/tickets/:id/lido', (req, res) => {
 
 app.post('/api/tickets/:id/rascunho', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
-  t.rascunho = String(req.body.texto ?? ''); salvar(req.wsId); ok(req, res)
+  t.rascunho = String(req.body.texto ?? '')
+  t.rascunhoTraducao = undefined // texto mudou — tradução antiga não vale mais
+  salvar(req.wsId); ok(req, res)
+})
+
+// Refaz o rascunho com uma instrução do lojista ("ofereça 10% de desconto", "seja mais curto"…)
+app.post('/api/tickets/:id/regenerar', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  if (!iaConfigurada) {
+    return res.status(400).json({ erro: 'Gerar nova resposta usa o Claude — configure a ANTHROPIC_API_KEY primeiro.', state: visao(req.wsId) })
+  }
+  const instrucao = String(req.body.instrucao || '').trim()
+  const r = await processarEmailIA(req.estado, t, instrucao || 'Reescreva a resposta da melhor forma possível.')
+  if (!r || !r.resposta) {
+    return res.status(400).json({ erro: statusIA.erro || 'A IA não devolveu uma resposta. Tente de novo.', state: visao(req.wsId) })
+  }
+  t.rascunho = r.resposta
+  t.rascunhoTraducao = undefined
+  t.confianca = r.confianca
+  t.geradoPorIA = true
+  if (r.situacao) t.resumoSituacao = r.situacao
+  if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
+  salvar(req.wsId); ok(req, res)
+})
+
+// Traduz o rascunho para o lojista ler — Google, gratuito; o envio usa o original
+app.post('/api/tickets/:id/traduzir-rascunho', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  if (!t.rascunho) return res.status(400).json({ erro: 'Este ticket não tem rascunho para traduzir.', state: visao(req.wsId) })
+  if (!t.rascunhoTraducao) {
+    const r = await traduzirGratis([t.rascunho])
+    if (r.erro) return res.status(400).json({ erro: r.erro, state: visao(req.wsId) })
+    t.rascunhoTraducao = r.textos[0]
+    salvar(req.wsId)
+  }
+  ok(req, res)
 })
 
 app.post('/api/tickets/:id/aprovar', async (req, res) => {

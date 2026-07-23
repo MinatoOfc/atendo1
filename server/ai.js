@@ -181,7 +181,7 @@ export function montarSystem(state, ticket) {
   ].join('\n')
 }
 
-export async function processarEmailIA(state, ticket) {
+export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
   if (!client) return null
   const emailCliente = ticket.de.trim().toLowerCase()
   const lojaTicket = lojaDoTicket(state, ticket)
@@ -209,6 +209,11 @@ export async function processarEmailIA(state, ticket) {
           `- ${p.numero}: status ${p.status}, rastreio ${p.rastreio}${p.urlRastreio ? ` (${p.urlRastreio})` : ''}${p.transportadora ? `, transportadora ${p.transportadora}` : ''}, país ${p.pais}, valor ${p.valor}, criado em ${p.criadoEm}`
           + (p.itens?.length ? `\n  itens: ${p.itens.map(i => `${i.quantidade}x ${i.titulo}${i.variante ? ` (${i.variante})` : ''}`).join('; ')}` : '')).join('\n')
       : `Nenhum pedido encontrado para o e-mail ${ticket.de} na Shopify. Se o cliente falar de um pedido, peça o número do pedido ou o e-mail usado na compra.`,
+    ...(instrucaoExtra ? [
+      ``,
+      `INSTRUÇÃO DO LOJISTA para esta resposta (prioridade máxima — siga à risca, acima do fluxo padrão; este e-mail NÃO é spam, escreva a resposta):`,
+      instrucaoExtra,
+    ] : []),
   ].join('\n')
 
   try {
