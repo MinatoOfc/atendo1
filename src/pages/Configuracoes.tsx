@@ -425,6 +425,9 @@ export default function Configuracoes() {
   const [testandoIa, setTestandoIa] = useState(false)
   const [testandoShop, setTestandoShop] = useState(false)
   const [lojaShop, setLojaShop] = useState('')
+  const [confirmaRemocao, setConfirmaRemocao] = useState('')
+  const [removendoLoja, setRemovendoLoja] = useState(false)
+  const [erroRemocao, setErroRemocao] = useState<string | null>(null)
 
   // Configura a loja escolhida na seta do topo da barra lateral
   const lojaSel = s.lojas.find(l => l.id === s.lojaAtiva) ?? s.lojas.find(l => l.id === 'loja1') ?? null
@@ -526,6 +529,38 @@ export default function Configuracoes() {
       <p className="muted-sm" style={{ lineHeight: 1.6 }}>
         A assinatura fecha todas as respostas geradas. A moeda ({lojaSel?.moeda ?? 'EUR'}) vem da própria Shopify quando conectada.
       </p>
+
+      {s.lojas.length > 1 && s.lojaAtiva === 'todas' && (
+        <p className="muted-sm" style={{ marginTop: 24, lineHeight: 1.6 }}>
+          Para remover uma loja, selecione-a primeiro na seta do topo da barra lateral — assim não há dúvida de qual será apagada.
+        </p>
+      )}
+      {s.lojas.length > 1 && s.lojaAtiva !== 'todas' && (
+        <div className="card" style={{ marginTop: 24, padding: '14px 16px', borderColor: 'var(--danger-border)' }}>
+          <b style={{ fontSize: 13.5, color: 'var(--red)' }}>Remover esta loja</b>
+          <p className="muted-sm" style={{ lineHeight: 1.6, marginTop: 6 }}>
+            Apaga a loja <b>{lojaSel?.nome ?? lojaId}</b> e tudo que pertence a ela: conversas, pedidos e produtos sincronizados
+            e as integrações de e-mail e Shopify. <b>Não tem volta.</b> Digite <b>confirmar</b> para liberar o botão.
+          </p>
+          <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+            <input value={confirmaRemocao} onChange={e => setConfirmaRemocao(e.target.value)} placeholder='digite "confirmar"'
+              style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '7px 11px', fontSize: 13, outline: 'none', background: 'var(--panel)', width: 180 }} />
+            <button className="btn btn-sm btn-danger"
+              disabled={confirmaRemocao.trim().toLowerCase() !== 'confirmar' || removendoLoja}
+              style={confirmaRemocao.trim().toLowerCase() !== 'confirmar' ? { opacity: 0.5 } : undefined}
+              onClick={async () => {
+                setRemovendoLoja(true); setErroRemocao(null)
+                const erro = await s.removerLoja(lojaId, confirmaRemocao.trim())
+                setRemovendoLoja(false)
+                if (erro) setErroRemocao(erro)
+                else setConfirmaRemocao('')
+              }}>
+              {removendoLoja ? 'Removendo…' : 'Remover loja'}
+            </button>
+          </div>
+          {erroRemocao && <p className="muted-sm" style={{ color: 'var(--red)', marginTop: 6 }}>{erroRemocao}</p>}
+        </div>
+      )}
     </>
   )
 

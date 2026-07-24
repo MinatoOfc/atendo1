@@ -215,6 +215,7 @@ interface Store extends ServerState {
   lojasVisiveis: Loja[]
   atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean; idioma?: string }) => void
   criarLoja: (nome?: string) => Promise<string | null>
+  removerLoja: (id: string, confirmacao: string) => Promise<string | null>
   naoLidos: number
   aguardandoAprovacao: Ticket[]
   casosHumanos: Ticket[]
@@ -406,6 +407,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (r.erro) return r.erro
       aplicar(r as { state?: ServerState })
       if (r.lojaId) { setLojaAtivaState(r.lojaId); localStorage.setItem('atendo-loja-ativa', r.lojaId) }
+      return null
+    },
+    removerLoja: async (id, confirmacao) => {
+      const r = await api(`/lojas/${id}`, 'DELETE', { confirmacao })
+      if (r.erro) return r.erro
+      aplicar(r)
+      // a loja removida pode ser a selecionada — volta para a visão geral
+      if (lojaAtiva === id) { setLojaAtivaState('todas'); localStorage.setItem('atendo-loja-ativa', 'todas') }
       return null
     },
     naoLidos: tickets.filter(t => ['inbox', 'aprovacao', 'humano'].includes(t.status) && !t.lido).length,

@@ -18,9 +18,6 @@ export const configPadrao = {
   assinatura: 'Equipe de atendimento',
 }
 
-// Limite de lojas por conta — o seletor e a rota de criação respeitam este teto
-export const MAX_LOJAS = 5
-
 export const lojaPadrao = (id, nome) => ({
   id,
   nome,
@@ -60,8 +57,9 @@ export function normalizarEstado(s) {
     if (s.shopify?.token) estado.lojas[0].shopify = s.shopify
     if (s.moedaLoja) estado.lojas[0].moeda = s.moedaLoja
   } else {
-    estado.lojas = s.lojas.slice(0, MAX_LOJAS).map((l, i) => ({ ...lojaPadrao(`loja${i + 1}`, l.nome || `loja ${i + 1}`), ...l }))
-    while (estado.lojas.length < 2) estado.lojas.push(lojaPadrao(`loja${estado.lojas.length + 1}`, 'segunda loja'))
+    estado.lojas = s.lojas.map((l, i) => ({ ...lojaPadrao(`loja${i + 1}`, l.nome || `loja ${i + 1}`), ...l }))
+    // pelo menos uma loja sempre existe; a partir daí o lojista adiciona e remove à vontade
+    if (!estado.lojas.length) estado.lojas = [lojaPadrao('loja1', s.config?.nomeLoja || 'minha loja')]
   }
   delete estado.shopify
   delete estado.moedaLoja

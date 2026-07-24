@@ -15,8 +15,6 @@ const titulos: Record<string, string> = {
   '/produtos': 'Produtos', '/ganhos': 'Ganhos', '/configuracoes': 'Configurações',
 }
 
-const MAX_LOJAS = 5
-
 function SeletorLoja() {
   const { lojas, lojasVisiveis, lojaAtiva, setLojaAtiva, atualizarLoja, criarLoja, config } = useStore()
   const [aberto, setAberto] = useState(false)
@@ -26,7 +24,6 @@ function SeletorLoja() {
     : lojas.find(l => l.id === lojaAtiva)?.nome ?? config.nomeLoja
   // uma loja desativada (ex.: a "segunda loja" de fábrica) é reaproveitada antes de criar outra
   const inativa = lojas.find(l => !l.ativa)
-  const podeAdicionar = !!inativa || lojas.length < MAX_LOJAS
 
   return (
     <div style={{ position: 'relative' }}>
@@ -53,16 +50,14 @@ function SeletorLoja() {
               {(l.email.configurado || l.shopify.conectada) && <span className="badge-count" title="Integrações conectadas">●</span>}
             </button>
           ))}
-          {podeAdicionar && (
-            <button className="nav-item" style={{ color: 'var(--purple)' }}
-              onClick={() => {
-                if (inativa) { atualizarLoja(inativa.id, { ativa: true }); setLojaAtiva(inativa.id) }
-                else criarLoja()
-                setAberto(false)
-              }}>
-              <Plus /><span>Adicionar loja ({lojasVisiveis.length}/{MAX_LOJAS})</span>
-            </button>
-          )}
+          <button className="nav-item" style={{ color: 'var(--purple)' }}
+            onClick={() => {
+              if (inativa) { atualizarLoja(inativa.id, { ativa: true }); setLojaAtiva(inativa.id) }
+              else criarLoja()
+              setAberto(false)
+            }}>
+            <Plus /><span>Adicionar loja</span>
+          </button>
         </div>
       )}
     </div>

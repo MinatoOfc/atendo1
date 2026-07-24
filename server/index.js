@@ -3,7 +3,7 @@ import path from 'path'
 import crypto from 'crypto'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
-import { carregar, uid, estadoInicial, lojaPadrao, MAX_LOJAS } from './store.js'
+import { carregar, uid, estadoInicial, lojaPadrao } from './store.js'
 import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam,
@@ -814,9 +814,6 @@ app.post('/api/lojas', (req, res) => {
 
 app.post('/api/lojas/nova', (req, res) => {
   const lojas = req.estado.lojas
-  if (lojas.length >= MAX_LOJAS) {
-    return res.status(400).json({ erro: `Limite de ${MAX_LOJAS} lojas por conta.`, state: visao(req.wsId) })
-  }
   // primeiro id livre no padrão lojaN, para os sufixos de env continuarem alinhados
   let n = 1
   while (lojas.some(l => l.id === `loja${n}`)) n++
@@ -825,6 +822,28 @@ app.post('/api/lojas/nova', (req, res) => {
   lojas.push(loja)
   salvar(req.wsId)
   res.json({ lojaId: loja.id, state: visao(req.wsId) })
+})
+
+// Remove a loja e TUDO que é dela (conversas, pedidos, produtos, integrações).
+// Exige a palavra "confirmar" digitada — conferida também aqui no servidor.
+app.delete('/api/lojas/:id', (req, res) => {
+  const { id } = req.params
+  const loja = req.estado.lojas.find(l => l.id === id)
+  if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
+  if (req.estado.lojas.length <= 1) {
+    return res.status(400).json({ erro: 'Não dá para remover a única loja da conta.', state: visao(req.wsId) })
+  }
+  const confirmacao = String(req.body?.confirmacao || '').trim().toLowerCase()
+  if (confirmacao !== 'confirmar') {
+    return res.status(400).json({ erro: 'Digite "confirmar" para remover a loja.', state: visao(req.wsId) })
+  }
+  req.estado.lojas = req.estado.lojas.filter(l => l.id !== id)
+  req.estado.tickets = req.estado.tickets.filter(t => (t.lojaId ?? 'loja1') !== id)
+  req.estado.pedidos = req.estado.pedidos.filter(p => (p.lojaId ?? 'loja1') !== id)
+  req.estado.produtos = (req.estado.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== id)
+  statusShopifyPorLoja.delete(`${req.wsId}:${id}`)
+  cacheContas.delete(req.wsId) // os índices das contas de e-mail mudaram
+  salvar(req.wsId); ok(req, res)
 })
 
 /* ---- Tickets ---- */
