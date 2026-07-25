@@ -192,6 +192,7 @@ function visao(wsId) {
     politicas: estado.politicas,
     faqs: estado.faqs,
     comportamentos: estado.comportamentos ?? [],
+    resumosDiarios: estado.resumosDiarios ?? [],
     pedidos: estado.pedidos,
     produtos: estado.produtos ?? [],
     moeda: loja1?.moeda || 'EUR',
@@ -577,9 +578,75 @@ setInterval(() => {
   }
 }, 60_000)
 
+/* ---------------- Resumo diário ---------------- */
+
+// Fuso do lojista para a "meia-noite" (horas em relação ao UTC; padrão Brasília)
+const FUSO_RESUMO = Number(process.env.ATENDO_FUSO ?? -3)
+const diaLocal = ts => new Date(new Date(ts).getTime() + FUSO_RESUMO * 3600_000).toISOString().slice(0, 10)
+
+/** Fecha um dia: quem foi atendido, pedidos, casos e a distribuição por categoria. Sem IA — só contas. */
+function gerarResumoDoDia(estado, dia) {
+  const doDia = data => data && diaLocal(data) === dia
+  const atendidos = estado.tickets.filter(t =>
+    doDia(t.respondidoEm) || (t.historico ?? []).some(m => m.autor === 'atendo' && doDia(m.data)))
+  const recebidos = estado.tickets.filter(t =>
+    t.status !== 'spam' && (doDia(t.data) || (t.historico ?? []).some(m => m.autor === 'cliente' && doDia(m.data)))).length
+  const spam = estado.tickets.filter(t => t.status === 'spam' && doDia(t.data)).length
+
+  const categorias = {}
+  for (const t of atendidos) categorias[t.categoria] = (categorias[t.categoria] || 0) + 1
+
+  const clientes = atendidos.map(t => ({
+    nome: t.nome,
+    email: t.de,
+    categoria: t.categoria,
+    lojaId: t.lojaId ?? 'loja1',
+    situacao: t.resumoSituacao ?? null,
+    pedidos: estado.pedidos
+      .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1') && p.email && p.email.trim().toLowerCase() === t.de.trim().toLowerCase())
+      .map(p => p.numero).slice(0, 5),
+  }))
+
+  return { id: uid(), dia, geradoEm: new Date().toISOString(), atendimentos: atendidos.length, recebidos, spam, categorias, clientes }
+}
+
+/** Gera os resumos que faltam (ontem sempre; até 7 dias para trás cobre quedas na virada). */
+function atualizarResumos(wsId) {
+  const estado = workspaces.get(wsId)
+  estado.resumosDiarios ??= []
+  let mudou = false
+  for (let i = 1; i <= 7; i++) {
+    const dia = diaLocal(Date.now() - i * 24 * 3600_000)
+    if (estado.resumosDiarios.some(r => r.dia === dia)) continue
+    const r = gerarResumoDoDia(estado, dia)
+    if (i === 1 || r.atendimentos > 0 || r.recebidos > 0 || r.spam > 0) {
+      estado.resumosDiarios.push(r)
+      mudou = true
+    }
+  }
+  if (mudou) {
+    estado.resumosDiarios.sort((a, b) => b.dia.localeCompare(a.dia))
+    estado.resumosDiarios = estado.resumosDiarios.slice(0, 60)
+    salvar(wsId)
+  }
+}
+
+// Checagem periódica: logo depois da meia-noite (no fuso do lojista) o dia anterior é fechado
+setInterval(() => {
+  for (const wsId of workspaces.keys()) {
+    try { atualizarResumos(wsId) } catch (err) { console.error(`[resumo ${wsId}]`, err.message) }
+  }
+}, 10 * 60_000)
+
 /* ---------------- Rotas ---------------- */
 
 app.get('/api/state', (req, res) => ok(req, res))
+
+// Força a checagem dos resumos (a automática roda a cada 10 min de qualquer forma)
+app.post('/api/resumos/atualizar', (req, res) => {
+  atualizarResumos(req.wsId)
+  ok(req, res)
+})
 
 app.post('/api/sync', async (req, res) => {
   try {

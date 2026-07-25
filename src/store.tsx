@@ -40,6 +40,12 @@ export interface Ticket {
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
 export interface Comportamento { id: string; situacao: string; instrucao: string; ativa: boolean }
+export interface ResumoDiario {
+  id: string; dia: string; geradoEm: string
+  atendimentos: number; recebidos: number; spam: number
+  categorias: Record<string, number>
+  clientes: { nome: string; email: string; categoria: Categoria; lojaId?: string; situacao?: string | null; pedidos: string[] }[]
+}
 export interface Faq { id: string; pergunta: string; resposta: string; ativa: boolean }
 
 export interface Produto {
@@ -147,6 +153,7 @@ interface ServerState {
   tickets: Ticket[]
   politicas: Politica[]
   comportamentos?: Comportamento[]
+  resumosDiarios?: ResumoDiario[]
   faqs: Faq[]
   pedidos: Pedido[]
   produtos: Produto[]

@@ -35,6 +35,8 @@ export const estadoInicial = {
   faqs: [],
   // Regras de comportamento definidas pelo lojista: "nesta situação, aja assim"
   comportamentos: [],
+  // Fechamentos diários gerados à meia-noite: quem foi atendido, casos e percentuais
+  resumosDiarios: [],
   pedidos: [],
   produtos: [],
   config: { ...configPadrao },

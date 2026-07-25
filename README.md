@@ -52,6 +52,7 @@ No Railway: serviço → aba **Variables**. Todas são opcionais.
 |---|---|
 | `ANTHROPIC_API_KEY` | `sk-ant-...` (crie em console.anthropic.com) |
 | `ATENDO_MODEL` | opcional, padrão `claude-haiku-4-5` (o mais barato). Para respostas mais elaboradas: `claude-sonnet-5` ou `claude-opus-4-8` |
+| `ATENDO_FUSO` | opcional, padrão `-3` (Brasília). Fuso horário usado para fechar o Resumo diário à meia-noite |
 
 Sem a chave, as respostas são geradas por regras simples baseadas nas políticas cadastradas.
 
