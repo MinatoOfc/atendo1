@@ -345,7 +345,7 @@ function OpcoesShopifyProprio({ lojaId }: { lojaId: string }) {
 // Campo de texto que edita localmente e salva com atraso — sem isso, cada
 // tecla dispara um POST e a atualização periódica da tela pode sobrescrever
 // o que o usuário ainda está digitando.
-function CampoTexto({ label, valor, aoSalvar }: { label: string; valor: string; aoSalvar: (v: string) => void }) {
+function CampoTexto({ label, valor, aoSalvar, linhas }: { label: string; valor: string; aoSalvar: (v: string) => void; linhas?: number }) {
   const [texto, setTexto] = useState(valor)
   const editando = useRef(false)
   const timer = useRef<number>(0)
@@ -353,23 +353,25 @@ function CampoTexto({ label, valor, aoSalvar }: { label: string; valor: string; 
   // acompanha o servidor apenas quando o usuário não está no meio da digitação
   useEffect(() => { if (!editando.current) setTexto(valor) }, [valor])
 
+  const props = {
+    value: texto,
+    onFocus: () => { editando.current = true },
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setTexto(e.target.value)
+      clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => aoSalvar(e.target.value), 700)
+    },
+    onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      editando.current = false
+      clearTimeout(timer.current)
+      if (e.target.value !== valor) aoSalvar(e.target.value)
+    },
+  }
+
   return (
     <div className="field" style={{ marginBottom: 0 }}>
       <label>{label}</label>
-      <input
-        value={texto}
-        onFocus={() => { editando.current = true }}
-        onChange={e => {
-          setTexto(e.target.value)
-          clearTimeout(timer.current)
-          timer.current = window.setTimeout(() => aoSalvar(e.target.value), 700)
-        }}
-        onBlur={e => {
-          editando.current = false
-          clearTimeout(timer.current)
-          if (e.target.value !== valor) aoSalvar(e.target.value)
-        }}
-      />
+      {linhas ? <textarea rows={linhas} style={{ minHeight: 0, resize: 'vertical' }} {...props} /> : <input {...props} />}
     </div>
   )
 }
@@ -507,7 +509,7 @@ export default function Configuracoes() {
       {bannerLoja}
       <div className="grid-2 mb-16">
         <CampoTexto label="Nome da loja" valor={lojaSel?.nome ?? s.config.nomeLoja} aoSalvar={v => s.atualizarLoja(lojaId, { nome: v })} />
-        <CampoTexto label="Assinatura de e-mail" valor={s.config.assinatura} aoSalvar={v => s.setConfig({ assinatura: v })} />
+        <CampoTexto label="Assinatura de e-mail" valor={s.config.assinatura} aoSalvar={v => s.setConfig({ assinatura: v })} linhas={3} />
       </div>
       <div className="field mb-16" style={{ maxWidth: 340 }}>
         <label>Idioma das respostas da IA</label>
