@@ -625,8 +625,8 @@ function atualizarResumos(wsId) {
     }
   }
   if (mudou) {
+    // histórico permanente: os fechamentos ficam salvos para sempre, do mais recente ao mais antigo
     estado.resumosDiarios.sort((a, b) => b.dia.localeCompare(a.dia))
-    estado.resumosDiarios = estado.resumosDiarios.slice(0, 60)
     salvar(wsId)
   }
 }
