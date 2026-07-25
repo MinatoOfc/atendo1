@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   ShieldCheck, BookOpen, Inbox as InboxIcon, Sparkles, Plus, Lightbulb, X,
-  Library, Search, Trash2, Download, Wand2,
+  Library, Search, Trash2, Download, Wand2, Pencil,
 } from 'lucide-react'
 import { useStore } from '../store'
 import { Modal, TipCard } from '../components/Shared'
@@ -14,7 +14,16 @@ export default function Conhecimento() {
   const [pt, setPt] = useState(''); const [pc, setPc] = useState('')
   const [fq, setFq] = useState(''); const [fr, setFr] = useState('')
   const [cs, setCs] = useState(''); const [ci, setCi] = useState('')
+  const [editandoComp, setEditandoComp] = useState<string | null>(null)
+  const [confirmandoComp, setConfirmandoComp] = useState<string | null>(null)
   const comportamentos = s.comportamentos ?? []
+
+  const abrirNovoComp = () => { setEditandoComp(null); setCs(''); setCi(''); setModalComp(true) }
+  const abrirEdicaoComp = (id: string) => {
+    const c = comportamentos.find(x => x.id === id)
+    if (!c) return
+    setEditandoComp(id); setCs(c.situacao); setCi(c.instrucao); setModalComp(true)
+  }
   const guiaFechado = s.tipsFechados.includes('guia-conhecimento')
   const ativos = s.politicas.filter(p => p.ativa).length + s.faqs.filter(f => f.ativa).length
 
@@ -100,7 +109,7 @@ export default function Conhecimento() {
           <b style={{ fontSize: 15 }}>Comportamentos da IA</b>
           <span className="muted-sm">{comportamentos.length}</span>
         </div>
-        <button className="btn" onClick={() => setModalComp(true)}><Plus size={14} /> Adicionar comportamento</button>
+        <button className="btn" onClick={abrirNovoComp}><Plus size={14} /> Adicionar comportamento</button>
       </div>
       <p className="muted-sm mb-12">
         Ensine a IA a agir do seu jeito em situações específicas: descreva o contexto de uma conversa e diga como ela deve se comportar quando isso acontecer.
@@ -110,7 +119,7 @@ export default function Conhecimento() {
           <p className="muted-sm mb-12">
             Nenhum comportamento ainda. Ex.: situação "cliente diz que o produto chegou danificado" → como agir "peça uma foto e ofereça reenvio grátis antes de falar em reembolso".
           </p>
-          <button className="btn btn-sm" onClick={() => setModalComp(true)}><Plus size={13} /> Criar o primeiro</button>
+          <button className="btn btn-sm" onClick={abrirNovoComp}><Plus size={13} /> Criar o primeiro</button>
         </div>
       ) : (
         <div className="mb-24">
@@ -121,7 +130,19 @@ export default function Conhecimento() {
                 <div className="title">{c.situacao}</div>
                 <div className="sub">{c.instrucao}</div>
               </div>
-              <button onClick={() => s.removerComportamento(c.id)} style={{ color: 'var(--text-3)' }} title="Remover"><Trash2 size={15} /></button>
+              {confirmandoComp === c.id ? (
+                <div className="row gap-8" style={{ flexShrink: 0 }}>
+                  <button className="btn btn-sm btn-danger" onClick={() => { s.removerComportamento(c.id); setConfirmandoComp(null) }}>
+                    <Trash2 size={13} /> Excluir?
+                  </button>
+                  <button className="btn btn-sm" onClick={() => setConfirmandoComp(null)}>Cancelar</button>
+                </div>
+              ) : (
+                <>
+                  <button onClick={() => abrirEdicaoComp(c.id)} style={{ color: 'var(--text-3)' }} title="Editar"><Pencil size={15} /></button>
+                  <button onClick={() => setConfirmandoComp(c.id)} style={{ color: 'var(--text-3)' }} title="Remover"><Trash2 size={15} /></button>
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -173,7 +194,7 @@ export default function Conhecimento() {
       )}
 
       {modalComp && (
-        <Modal title="Adicionar comportamento da IA" onClose={() => setModalComp(false)}>
+        <Modal title={editandoComp ? 'Editar comportamento da IA' : 'Adicionar comportamento da IA'} onClose={() => setModalComp(false)}>
           <div className="field">
             <label>Situação</label>
             <textarea value={cs} onChange={e => setCs(e.target.value)} autoFocus rows={3}
@@ -189,8 +210,12 @@ export default function Conhecimento() {
           </p>
           <div className="row" style={{ justifyContent: 'flex-end' }}>
             <button className="btn btn-primary" disabled={!cs.trim() || !ci.trim()} style={!cs.trim() || !ci.trim() ? { opacity: 0.5 } : undefined}
-              onClick={() => { s.addComportamento(cs.trim(), ci.trim()); setCs(''); setCi(''); setModalComp(false) }}>
-              Salvar comportamento
+              onClick={() => {
+                if (editandoComp) s.editarComportamento(editandoComp, cs.trim(), ci.trim())
+                else s.addComportamento(cs.trim(), ci.trim())
+                setCs(''); setCi(''); setEditandoComp(null); setModalComp(false)
+              }}>
+              {editandoComp ? 'Salvar alterações' : 'Salvar comportamento'}
             </button>
           </div>
         </Modal>

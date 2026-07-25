@@ -240,6 +240,7 @@ interface Store extends ServerState {
   togglePolitica: (id: string) => void
   removerPolitica: (id: string) => void
   addComportamento: (situacao: string, instrucao: string) => void
+  editarComportamento: (id: string, situacao: string, instrucao: string) => void
   toggleComportamento: (id: string) => void
   removerComportamento: (id: string) => void
   addFaq: (pergunta: string, resposta: string) => void
@@ -478,6 +479,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     togglePolitica: id => api(`/politicas/${id}/toggle`).then(aplicar),
     removerPolitica: id => api(`/politicas/${id}`, 'DELETE').then(aplicar),
     addComportamento: (situacao, instrucao) => api('/comportamentos', 'POST', { situacao, instrucao }).then(aplicar),
+    editarComportamento: (id, situacao, instrucao) => api(`/comportamentos/${id}/editar`, 'POST', { situacao, instrucao }).then(aplicar),
     toggleComportamento: id => api(`/comportamentos/${id}/toggle`).then(aplicar),
     removerComportamento: id => api(`/comportamentos/${id}`, 'DELETE').then(aplicar),
     addFaq: (pergunta, resposta) => api('/faqs', 'POST', { pergunta, resposta }).then(aplicar),
