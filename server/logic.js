@@ -94,8 +94,16 @@ export function pareceSpam(assunto, corpo, de) {
   if (/@(.*\.)?(facebookmail|instagram|tiktok|linkedin|pinterest|klaviyo|mailchimp|sendgrid|hubspot|constantcontact|braze)\./.test(remetente)) return true
   // rodapé de newsletter/disparo em massa
   if (/unsubscribe|cancelar (a )?inscri[çc][ãa]o|descadastr|se d[ée]sinscrire|abmelden|afmelden|uitschrijven|darse de baja/.test(t)) return true
-  // abertura clássica de golpe/prospecção: "sua loja ainda está ativa?" sem citar produto nenhum
-  if (/is your (store|shop|website|site) (still )?(active|open|available|working|up and running)|are you (still )?(in business|accepting orders|taking orders)|sua loja (ainda )?(esta|está) (ativa|aberta|funcionando)|a loja (ainda )?(esta|está) (ativa|aberta|funcionando)/.test(t)) return true
+  // Aberturas clássicas de golpe: "loja ativa?", "you speak English?", "are you there?" —
+  // só contam como spam quando a mensagem NÃO cita nenhum assunto real (pedido, produto,
+  // entrega, tamanho…). Cliente real diz o que quer já na primeira mensagem.
+  // referência específica ("my order", "meu pedido", "#1042"), não palavras soltas que
+  // aparecem na própria frase do golpe ("...active to receive orders?")
+  const temAssuntoReal = /(my|our) order|order (number|#|status)|#\d|meu pedido|minha encomenda|mijn bestelling|meine bestellung|ma commande|mi pedido|produto|product\b|produkt|artikel|track|rastre|entrega|deliver|verzend|liefer|envio|ship(ping|s? to)|refund|reembolso|troca|devolu|return|size|tamanho|maat|größe|talla|taglia|compr(ei|ar|a)|buy|bought|purchase|koop|gekocht/.test(t)
+  if (!temAssuntoReal) {
+    if (/is your (store|shop|website|site) (still )?(active|open|available|working|up and running)|are you (still )?(in business|accepting|taking|open|there)|is (anyone|somebody|someone) there|sua loja (ainda )?(esta|está) (ativa|aberta|funcionando)|a loja (ainda )?(esta|está) (ativa|aberta|funcionando)/.test(t)) return true
+    if (/do you (guys )?speak (english|german|french|spanish|dutch|portuguese)|i guess you speak|you speak english|spreek je (engels|nederlands)|sprechen sie (englisch|deutsch)|parlez[- ]vous|fala(m)? (ingl[eê]s|portugu[eê]s|espanhol)|hablan? (ingl[eé]s|espa[ñn]ol)/.test(t)) return true
+  }
   // ofertas comerciais, agências e parcerias
   return /escale sua loja|seo|backlink|agency|agência de marketing|cold outreach|aumentar suas vendas|guest post|link building|grow your (store|business)|book a call|agende uma call|influencer|parceria paga|collab(oration)? (offer|proposal)|sponsored post|media kit|otimiza[çc][ãa]o de site|website (audit|review|optimization)|web design service/.test(t)
     || /@(.*\.)?(agency|marketing|seo)\./.test(remetente)
