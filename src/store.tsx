@@ -45,6 +45,7 @@ export interface ResumoDiario {
   atendimentos: number; recebidos: number; spam: number
   categorias: Record<string, number>
   clientes: { nome: string; email: string; categoria: Categoria; lojaId?: string; situacao?: string | null; pedidos: string[] }[]
+  porLoja?: Record<string, { atendimentos: number; recebidos: number; spam: number; categorias: Record<string, number> }>
 }
 export interface Faq { id: string; pergunta: string; resposta: string; ativa: boolean }
 

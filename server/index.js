@@ -590,12 +590,23 @@ function gerarResumoDoDia(estado, dia) {
   const doDia = data => data && diaLocal(data) === dia
   const atendidos = estado.tickets.filter(t =>
     doDia(t.respondidoEm) || (t.historico ?? []).some(m => m.autor === 'atendo' && doDia(m.data)))
-  const recebidos = estado.tickets.filter(t =>
-    t.status !== 'spam' && (doDia(t.data) || (t.historico ?? []).some(m => m.autor === 'cliente' && doDia(m.data)))).length
-  const spam = estado.tickets.filter(t => t.status === 'spam' && doDia(t.data)).length
+  const recebidosLista = estado.tickets.filter(t =>
+    t.status !== 'spam' && (doDia(t.data) || (t.historico ?? []).some(m => m.autor === 'cliente' && doDia(m.data))))
+  const spamLista = estado.tickets.filter(t => t.status === 'spam' && doDia(t.data))
 
   const categorias = {}
   for (const t of atendidos) categorias[t.categoria] = (categorias[t.categoria] || 0) + 1
+
+  // recorte por loja, para o resumo respeitar o seletor da barra lateral
+  const porLoja = {}
+  const balde = t => (porLoja[t.lojaId ?? 'loja1'] ??= { atendimentos: 0, recebidos: 0, spam: 0, categorias: {} })
+  for (const t of atendidos) {
+    const b = balde(t)
+    b.atendimentos++
+    b.categorias[t.categoria] = (b.categorias[t.categoria] || 0) + 1
+  }
+  for (const t of recebidosLista) balde(t).recebidos++
+  for (const t of spamLista) balde(t).spam++
 
   const clientes = atendidos.map(t => ({
     nome: t.nome,
@@ -608,7 +619,7 @@ function gerarResumoDoDia(estado, dia) {
       .map(p => p.numero).slice(0, 5),
   }))
 
-  return { id: uid(), dia, geradoEm: new Date().toISOString(), atendimentos: atendidos.length, recebidos, spam, categorias, clientes }
+  return { id: uid(), dia, geradoEm: new Date().toISOString(), atendimentos: atendidos.length, recebidos: recebidosLista.length, spam: spamLista.length, categorias, clientes, porLoja }
 }
 
 /** Gera os resumos que faltam (ontem sempre; até 7 dias para trás cobre quedas na virada). */
@@ -616,6 +627,13 @@ function atualizarResumos(wsId) {
   const estado = workspaces.get(wsId)
   estado.resumosDiarios ??= []
   let mudou = false
+  // resumos gerados antes do recorte por loja ganham o formato novo (mesmos tickets, mesmas contas)
+  for (const [i, r] of estado.resumosDiarios.entries()) {
+    if (!r.porLoja) {
+      estado.resumosDiarios[i] = { ...gerarResumoDoDia(estado, r.dia), id: r.id, geradoEm: r.geradoEm }
+      mudou = true
+    }
+  }
   for (let i = 1; i <= 7; i++) {
     const dia = diaLocal(Date.now() - i * 24 * 3600_000)
     if (estado.resumosDiarios.some(r => r.dia === dia)) continue

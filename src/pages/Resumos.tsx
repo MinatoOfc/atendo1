@@ -9,39 +9,54 @@ const formatarDia = (dia: string) => {
 
 export default function Resumos() {
   const s = useStore()
-  const resumos = s.resumosDiarios ?? []
   const multiLoja = s.lojasVisiveis.length > 1
   const nomeLoja = (id?: string) => s.lojas.find(l => l.id === (id ?? 'loja1'))?.nome
+
+  // loja selecionada na seta lateral: mostra só o recorte dela; "todas" = consolidado
+  const lojaFiltro = s.lojaAtiva !== 'todas' ? s.lojaAtiva : null
+  const zerado = { atendimentos: 0, recebidos: 0, spam: 0, categorias: {} as Record<string, number> }
+  const statsDe = (r: NonNullable<typeof s.resumosDiarios>[number]) =>
+    lojaFiltro ? (r.porLoja?.[lojaFiltro] ?? zerado) : r
+  const resumos = (s.resumosDiarios ?? []).filter(r => {
+    if (!lojaFiltro) return true
+    const st = statsDe(r)
+    return st.atendimentos + st.recebidos + st.spam > 0
+  })
 
   return (
     <div className="content-narrow">
       <div className="mb-16">
-        <h1 className="h2">Resumo diário</h1>
+        <h1 className="h2">Resumo diário{lojaFiltro ? ` — ${nomeLoja(lojaFiltro) ?? lojaFiltro}` : ''}</h1>
         <p className="muted" style={{ marginTop: 4 }}>
           Todo dia à meia-noite o atendo fecha o dia anterior: quem foi atendido, os pedidos envolvidos e a divisão dos casos. Gerado sem gastar IA.
+          {lojaFiltro
+            ? ' Mostrando só esta loja — para o consolidado, escolha "Todas as lojas" na seta lateral.'
+            : multiLoja ? ' Para ver uma loja específica, selecione-a na seta lateral.' : ''}
         </p>
       </div>
 
       {resumos.length === 0 ? (
-        <EmptyState icon={<CalendarDays />} title="Nenhum resumo ainda.">
+        <EmptyState icon={<CalendarDays />} title={lojaFiltro ? 'Nenhum resumo para esta loja ainda.' : 'Nenhum resumo ainda.'}>
           O primeiro fechamento aparece logo depois da próxima meia-noite. Cada dia vira um cartão aqui, do mais recente ao mais antigo.
         </EmptyState>
       ) : (
         resumos.map(r => {
-          const totalCat = Object.values(r.categorias).reduce((a, b) => a + b, 0)
-          const categorias = Object.entries(r.categorias).sort((a, b) => b[1] - a[1])
+          const stats = statsDe(r)
+          const clientes = lojaFiltro ? r.clientes.filter(c => (c.lojaId ?? 'loja1') === lojaFiltro) : r.clientes
+          const totalCat = Object.values(stats.categorias).reduce((a, b) => a + b, 0)
+          const categorias = Object.entries(stats.categorias).sort((a, b) => b[1] - a[1])
           return (
             <div key={r.id} className="card mb-16" style={{ padding: '18px 20px' }}>
               <div className="row spread mb-12" style={{ flexWrap: 'wrap', gap: 10 }}>
                 <b style={{ fontSize: 15 }}>{formatarDia(r.dia)}</b>
                 <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
-                  <span className="tag tag-green"><Send size={11} style={{ marginRight: 4 }} />{r.atendimentos} atendido{r.atendimentos !== 1 ? 's' : ''}</span>
-                  <span className="tag tag-outro"><InboxIcon size={11} style={{ marginRight: 4 }} />{r.recebidos} recebido{r.recebidos !== 1 ? 's' : ''}</span>
-                  {r.spam > 0 && <span className="tag tag-amber"><Shield size={11} style={{ marginRight: 4 }} />{r.spam} spam</span>}
+                  <span className="tag tag-green"><Send size={11} style={{ marginRight: 4 }} />{stats.atendimentos} atendido{stats.atendimentos !== 1 ? 's' : ''}</span>
+                  <span className="tag tag-outro"><InboxIcon size={11} style={{ marginRight: 4 }} />{stats.recebidos} recebido{stats.recebidos !== 1 ? 's' : ''}</span>
+                  {stats.spam > 0 && <span className="tag tag-amber"><Shield size={11} style={{ marginRight: 4 }} />{stats.spam} spam</span>}
                 </div>
               </div>
 
-              {r.atendimentos === 0 ? (
+              {stats.atendimentos === 0 ? (
                 <p className="muted-sm">Nenhum atendimento neste dia.</p>
               ) : (
                 <>
@@ -65,7 +80,7 @@ export default function Resumos() {
 
                   {/* Quem foi atendido */}
                   <div style={{ display: 'grid', gap: 6 }}>
-                    {r.clientes.map((c, i) => (
+                    {clientes.map((c, i) => (
                       <div key={i} className="row gap-10" style={{ padding: '7px 0', borderTop: '1px solid var(--border-soft)', flexWrap: 'wrap' }}>
                         <div className="avatar-sm" style={{ flexShrink: 0 }}>{(c.nome[0] ?? '?').toUpperCase()}</div>
                         <div style={{ minWidth: 170 }}>
