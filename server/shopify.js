@@ -102,13 +102,43 @@ async function chamar(cx, caminho) {
     const resp = await fetch(`https://${cx.loja}/admin/api/${versao}/${caminho}`, {
       headers: { 'X-Shopify-Access-Token': cx.token },
     })
+    // limite de requisições: espera o tempo que a Shopify pedir e tenta de novo uma vez
+    if (resp.status === 429) {
+      const espera = Math.min(10, Number(resp.headers.get('Retry-After') || 2))
+      await new Promise(r => setTimeout(r, espera * 1000))
+      return chamar(cx, caminho)
+    }
     if (!resp.ok) {
       return { erro: traduzirErro(resp.status, await resp.text().catch(() => ''), cx) }
     }
-    return { dados: await resp.json() }
+    // cursor da próxima página (cabeçalho Link, rel="next") — a API pagina de 250 em 250
+    const link = resp.headers.get('link') || ''
+    const proximaPagina = link.match(/[?&]page_info=([^&>]+)[^>]*>;\s*rel="next"/)?.[1] ?? null
+    return { dados: await resp.json(), proximaPagina }
   } catch (err) {
     return { erro: `Não foi possível alcançar ${cx.loja}: ${err.message}` }
   }
+}
+
+// Teto de segurança: mantém o estado e a tela saudáveis mesmo em lojas gigantes.
+// Ajustável por env se alguém precisar de mais.
+const MAX_PEDIDOS = Number(process.env.SHOPIFY_MAX_PEDIDOS ?? 5000)
+const MAX_PRODUTOS = Number(process.env.SHOPIFY_MAX_PRODUTOS ?? 1000)
+
+/** Percorre todas as páginas de um recurso (a Shopify entrega no máximo 250 por página). */
+async function chamarTodas(cx, recurso, query, extrair, maxItens) {
+  const itens = []
+  let caminho = `${recurso}?${query}&limit=250`
+  while (itens.length < maxItens) {
+    const { dados, erro, proximaPagina } = await chamar(cx, caminho)
+    if (erro) return itens.length ? { itens } : { erro } // erro no meio: fica com o que já veio
+    itens.push(...extrair(dados))
+    if (!proximaPagina) break
+    // com page_info, a Shopify só aceita limit e fields como parâmetros extras
+    const fields = new URLSearchParams(query).get('fields')
+    caminho = `${recurso}?limit=250${fields ? `&fields=${fields}` : ''}&page_info=${proximaPagina}`
+  }
+  return { itens: itens.slice(0, maxItens) }
 }
 
 export function mapearPedido(o) {
@@ -174,21 +204,21 @@ export function mapearProduto(p, dominio) {
 
 export async function buscarPedidosShopify(cx) {
   const campos = 'id,name,email,contact_email,total_price,created_at,cancelled_at,fulfillment_status,fulfillments,customer,shipping_address,line_items'
-  const { dados, erro } = await chamar(cx, `orders.json?status=any&limit=250&fields=${campos}`)
-  if (erro) return { erro }
-  return { pedidos: (dados.orders || []).map(mapearPedido) }
+  const r = await chamarTodas(cx, 'orders.json', `status=any&fields=${campos}`, d => d.orders || [], MAX_PEDIDOS)
+  if (r.erro) return { erro: r.erro }
+  return { pedidos: r.itens.map(mapearPedido) }
 }
 
 export async function buscarProdutosShopify(cx) {
   const campos = 'id,title,body_html,vendor,product_type,handle,status,tags,variants,image,images'
-  const { dados, erro } = await chamar(cx, `products.json?limit=250&fields=${campos}`)
-  if (erro) {
-    if (/403|recusou o acesso/i.test(erro)) {
+  const r = await chamarTodas(cx, 'products.json', `fields=${campos}`, d => d.products || [], MAX_PRODUTOS)
+  if (r.erro) {
+    if (/403|recusou o acesso/i.test(r.erro)) {
       return { erro: 'Faltou a permissão de leitura de produtos. Adicione o escopo read_products no app da Shopify, libere uma nova versão e reconecte.' }
     }
-    return { erro }
+    return { erro: r.erro }
   }
-  return { produtos: (dados.products || []).map(p => mapearProduto(p, cx.loja)) }
+  return { produtos: r.itens.map(p => mapearProduto(p, cx.loja)) }
 }
 
 /** Chamada leve para validar loja, token e permissões; devolve também a moeda. */
