@@ -289,6 +289,52 @@ export function criarConta(id, cfg, sufixo = '') {
     return novos
   }
 
+  /**
+   * Importação completa da caixa: percorre TODO o INBOX (até `limite`, dos mais
+   * recentes), do mais antigo ao mais novo, sem marcar nada como lido no
+   * servidor de e-mail. Usada pelo botão "Importar caixa completa".
+   */
+  async function buscarTodos(jaProcessados, limite = 2000, aoProgresso = null) {
+    if (!configurado) return []
+    const client = novoClienteImap()
+    const todos = []
+    try {
+      await client.connect()
+    } catch (err) {
+      Object.assign(status, { ok: false, erro: traduzirErro(err), verificadoEm: new Date().toISOString() })
+      throw new Error(status.erro)
+    }
+    const lock = await client.getMailboxLock('INBOX')
+    try {
+      const uids = await client.search({ since: new Date('2000-01-01') }, { uid: true })
+      const lista = (uids || []).slice(-limite) // os N mais recentes, em ordem cronológica
+      const processados = new Set(jaProcessados)
+      for (const uid of lista) {
+        const msg = await client.fetchOne(uid, { source: true }, { uid: true })
+        if (!msg?.source) continue
+        const parsed = await simpleParser(msg.source)
+        const idMsg = parsed.messageId || `uid-${uid}-${parsed.date?.getTime()}`
+        if (processados.has(idMsg)) continue
+        if (parsed.headers?.get?.(HEADER_AUTO)) continue
+        const remetente = parsed.from?.value?.[0]
+        if (!remetente?.address) continue
+        todos.push({
+          messageId: idMsg,
+          nome: remetente.name || remetente.address.split('@')[0],
+          de: remetente.address,
+          assunto: parsed.subject || '(sem assunto)',
+          corpo: (parsed.text || '').trim().slice(0, 8000),
+          data: (parsed.date || new Date()).toISOString(),
+        })
+        if (aoProgresso) aoProgresso(todos.length)
+      }
+    } finally {
+      lock.release()
+      await client.logout().catch(() => {})
+    }
+    return todos
+  }
+
   const comNome = endereco => (cfg.remetenteNome ? `${cfg.remetenteNome} <${endereco}>` : endereco)
 
   async function enviarPorApiResend({ para, assunto, corpo }) {
@@ -359,6 +405,7 @@ export function criarConta(id, cfg, sufixo = '') {
     verificarEnvio,
     diagnosticar,
     buscarNovos,
+    buscarTodos,
     enviar,
   }
 }

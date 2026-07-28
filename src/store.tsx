@@ -109,6 +109,7 @@ export interface Loja {
   assinatura?: string | null
   email: {
     configurado: boolean; endereco: string | null; status: StatusEmail | null
+    importacao?: { rodando: boolean; importados: number; erro?: string | null; concluidoEm?: string | null } | null
     provider?: string | null; remetenteNome?: string | null; origem?: 'site' | 'env' | null
   }
   shopify: {
@@ -227,6 +228,8 @@ interface Store extends ServerState {
   atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean; idioma?: string; assinatura?: string }) => void
   criarLoja: (nome?: string) => Promise<string | null>
   removerLoja: (id: string, confirmacao: string) => Promise<string | null>
+  importarCaixa: (lojaId: string) => Promise<string | null>
+  recarregar: () => void
   naoLidos: number
   aguardandoAprovacao: Ticket[]
   casosHumanos: Ticket[]
@@ -421,6 +424,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (r.lojaId) { setLojaAtivaState(r.lojaId); localStorage.setItem('atendo-loja-ativa', r.lojaId) }
       return null
     },
+    importarCaixa: async lojaId => {
+      const r = await api(`/lojas/${lojaId}/importar`, 'POST')
+      if (r.erro) return r.erro
+      aplicar(r)
+      return null
+    },
+    recarregar: () => api('/state', 'GET').then(aplicar),
     removerLoja: async (id, confirmacao) => {
       const r = await api(`/lojas/${id}`, 'DELETE', { confirmacao })
       if (r.erro) return r.erro

@@ -436,6 +436,15 @@ export default function Configuracoes() {
   const lojaId = lojaSel?.id ?? 'loja1'
   const emailOk = lojaSel ? lojaSel.email.configurado : s.integracoes.email
   const status = lojaSel?.email.status ?? s.integracoes.emailStatus
+  const importacao = lojaSel?.email.importacao ?? null
+
+  // enquanto a importação da caixa roda no servidor, atualiza o progresso na tela
+  useEffect(() => {
+    if (!importacao?.rodando) return
+    const i = window.setInterval(() => s.recarregar(), 3000)
+    return () => window.clearInterval(i)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importacao?.rodando])
   const ia = s.integracoes.iaStatus
   const shopConectada = lojaSel ? lojaSel.shopify.conectada : s.integracoes.shopify
   const shop = lojaSel?.shopify.status ?? s.integracoes.shopifyStatus
@@ -745,6 +754,19 @@ export default function Configuracoes() {
                 <Search size={13} /> {diagnosticando ? 'Lendo a caixa…' : 'Ver o que o atendo enxerga'}
               </button>
             </div>
+            <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+              <button className="btn btn-sm" disabled={!!importacao?.rodando}
+                onClick={async () => { const erro = await s.importarCaixa(lojaId); if (erro) alert(erro) }}>
+                <Inbox size={13} /> {importacao?.rodando ? `Importando… ${importacao.importados} e-mails` : 'Importar caixa completa'}
+              </button>
+              {importacao && !importacao.rodando && !importacao.erro && importacao.concluidoEm && (
+                <span className="tag tag-green"><Check size={11} style={{ marginRight: 4 }} /> {importacao.importados} e-mails importados</span>
+              )}
+              {importacao?.erro && <span className="muted-sm" style={{ color: 'var(--red)' }}>{importacao.erro}</span>}
+            </div>
+            <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+              Puxa todo o histórico da caixa de entrada desta loja (até 2000 e-mails), montando as conversas. Não gasta IA e não responde nada — os antigos entram como lidos; a IA só age nos que chegarem daqui em diante.
+            </p>
             {status?.ok === false && status.erro && (
               <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px', borderColor: 'var(--danger-border)', background: 'var(--danger-bg)' }}>
                 <div className="row gap-8 mb-8" style={{ color: 'var(--red)' }}>

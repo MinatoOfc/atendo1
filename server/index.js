@@ -169,6 +169,7 @@ function visaoLojas(wsId, estado) {
         remetenteNome: conta?.remetenteNome ?? null,
         origem: conta?.origem ?? null,
         status: conta ? { ...conta.status, envioPorApi, remetente: conta.remetente } : null,
+        importacao: importacoes.get(`${wsId}:${l.id}`) ?? null,
       },
       shopify: {
         conectada: !!cx,
@@ -682,6 +683,80 @@ app.post('/api/sync', async (req, res) => {
 app.post('/api/email/testar-config', async (req, res) => {
   const r = await testarConfig(req.body ?? {})
   res.json({ resultado: r })
+})
+
+/* ---- Importação completa da caixa (histórico, sem IA) ---- */
+
+const importacoes = new Map() // `${wsId}:${lojaId}` → { rodando, importados, erro, concluidoEm }
+
+async function importarHistorico(wsId, lojaId, prog) {
+  const estado = workspaces.get(wsId)
+  const conta = contaDaLoja(wsId, lojaId)
+  const LIMITE = Number(process.env.EMAIL_IMPORT_MAX ?? 2000)
+  const emails = await conta.buscarTodos(estado.emailsProcessados, LIMITE)
+  for (const e of emails) {
+    // Histórico entra SEM IA: nada de rascunho, custo zero e nenhuma resposta
+    // automática para e-mail antigo. Tudo chega como lido.
+    estado.emailsProcessados.push(e.messageId)
+    const texto = `${e.assunto} ${e.corpo}`
+    if (pareceSpam(e.assunto, e.corpo, e.de)) {
+      estado.tickets.push({
+        id: uid(), nome: e.nome, de: e.de, assunto: e.assunto, corpo: e.corpo, lojaId,
+        data: e.data, lido: true, origem: 'cliente',
+        categoria: 'outro', idioma: detectarIdiomaLocal(texto), status: 'spam',
+      })
+    } else {
+      const conversa = acharConversa(estado, e.de, e.assunto, lojaId)
+      if (conversa && conversa.data && e.data < conversa.data) {
+        // mensagem mais antiga que a atual da conversa: entra no histórico, na ordem certa
+        conversa.historico = conversa.historico || []
+        conversa.historico.push({ autor: 'cliente', corpo: e.corpo, data: e.data })
+        conversa.historico.sort((a, b) => (a.data || '').localeCompare(b.data || ''))
+      } else if (conversa) {
+        conversa.historico = conversa.historico || []
+        if (conversa.corpo) conversa.historico.push({ autor: 'cliente', corpo: conversa.corpo, data: conversa.data, traducao: conversa.traducao })
+        if (conversa.resposta) conversa.historico.push({ autor: 'atendo', corpo: conversa.resposta, data: conversa.respondidoEm || conversa.data })
+        conversa.corpo = e.corpo
+        conversa.data = e.data
+        conversa.lido = true
+        conversa.resposta = undefined
+        conversa.respondidoEm = undefined
+        conversa.traducao = undefined
+      } else {
+        estado.tickets.push({
+          id: uid(), nome: e.nome, de: e.de, assunto: e.assunto, corpo: e.corpo, lojaId,
+          data: e.data, lido: true, origem: 'cliente',
+          categoria: classificarLocal(texto), idioma: detectarIdiomaLocal(texto), status: 'inbox',
+        })
+      }
+    }
+    prog.importados++
+    if (prog.importados % 50 === 0) salvar(wsId)
+  }
+  estado.tickets.sort((a, b) => (b.data || '').localeCompare(a.data || ''))
+  salvar(wsId)
+  prog.rodando = false
+  prog.concluidoEm = new Date().toISOString()
+}
+
+app.post('/api/lojas/:id/importar', (req, res) => {
+  const lojaId = req.params.id
+  const chave = `${req.wsId}:${lojaId}`
+  if (importacoes.get(chave)?.rodando) {
+    return res.status(400).json({ erro: 'A importação desta loja já está em andamento.', state: visao(req.wsId) })
+  }
+  const conta = contaDaLoja(req.wsId, lojaId)
+  if (!conta?.configurado || conta.id !== lojaId) {
+    return res.status(400).json({ erro: 'Conecte o e-mail desta loja antes de importar.', state: visao(req.wsId) })
+  }
+  const prog = { rodando: true, importados: 0, erro: null, concluidoEm: null }
+  importacoes.set(chave, prog)
+  importarHistorico(req.wsId, lojaId, prog).catch(err => {
+    prog.rodando = false
+    prog.erro = err.message
+    console.error(`[importar ${chave}]`, err.message)
+  })
+  ok(req, res)
 })
 
 app.post('/api/lojas/:id/email', async (req, res) => {
