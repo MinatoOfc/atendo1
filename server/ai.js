@@ -97,20 +97,49 @@ function preco(p, moeda) {
   return p.precoMin === p.precoMax ? `${s} ${p.precoMin.toFixed(2)}` : `${s} ${p.precoMin.toFixed(2)} a ${s} ${p.precoMax.toFixed(2)}`
 }
 
-function montarCatalogo(produtos, moeda) {
+const normalizarTexto = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
+/**
+ * Catálogo enxuto para economizar tokens: só os produtos que têm a ver com a
+ * conversa vão completos (com opções, estoque e link); o restante vira uma
+ * linha de nome + preço. Antes, os 120 produtos iam inteiros em toda chamada —
+ * era de longe o maior custo por resposta.
+ */
+export function montarCatalogo(produtos, moeda, textoConversa = '') {
   const ativos = produtos.filter(p => p.ativo)
   if (!ativos.length) return '(catálogo não sincronizado — não afirme quais produtos a loja vende; peça ao cliente o que ele procura)'
-  const linhas = ativos.slice(0, 120).map(p => {
-    const partes = [`- ${p.titulo} — ${preco(p, moeda)}`]
-    if (p.tipo) partes.push(`categoria: ${p.tipo}`)
-    if (p.variantes.length) partes.push(`opções: ${p.variantes.slice(0, 8).join(', ')}`)
-    // estoque null = desconhecido (app sem read_inventory): não afirmar nada sobre disponibilidade
-    if (p.estoque != null) partes.push(p.estoque > 0 ? `em estoque (${p.estoque})` : 'sem estoque no momento')
-    if (p.descricao) partes.push(p.descricao.slice(0, 140))
-    return partes.join(' | ') + `\n  link: ${p.url}`
-  })
-  const extra = ativos.length > 120 ? `\n(e mais ${ativos.length - 120} produtos — se o cliente procurar algo fora desta lista, peça mais detalhes)` : ''
-  return linhas.join('\n') + extra
+
+  const termos = [...new Set(normalizarTexto(textoConversa).split(/[^a-z0-9]+/).filter(t => t.length > 3))]
+  const pontos = p => {
+    const alvo = normalizarTexto(`${p.titulo} ${p.tipo} ${p.tags.join(' ')} ${p.variantes.slice(0, 8).join(' ')}`)
+    return termos.reduce((s, t) => s + (alvo.includes(t) ? 1 : 0), 0)
+  }
+  const ordenados = ativos.map(p => [pontos(p), p]).sort((a, b) => b[0] - a[0])
+  const detalhados = ordenados.filter(([s]) => s > 0).slice(0, 12).map(([, p]) => p)
+  const resumo = new Set(detalhados)
+  const resumidos = ativos.filter(p => !resumo.has(p)).slice(0, 40)
+  const restantes = ativos.length - detalhados.length - resumidos.length
+
+  const linhas = []
+  if (detalhados.length) {
+    linhas.push('Produtos relacionados a esta conversa (detalhes completos):')
+    for (const p of detalhados) {
+      const partes = [`- ${p.titulo} — ${preco(p, moeda)}`]
+      if (p.tipo) partes.push(`categoria: ${p.tipo}`)
+      if (p.variantes.length) partes.push(`opções: ${p.variantes.slice(0, 5).join(', ')}`)
+      // estoque null = desconhecido (app sem read_inventory): não afirmar nada sobre disponibilidade
+      if (p.estoque != null) partes.push(p.estoque > 0 ? `em estoque (${p.estoque})` : 'sem estoque no momento')
+      if (p.descricao) partes.push(p.descricao.slice(0, 80))
+      linhas.push(partes.join(' | ') + `\n  link: ${p.url}`)
+    }
+    linhas.push('')
+  }
+  if (resumidos.length) {
+    linhas.push('Demais produtos da loja (nome e preço; se o cliente perguntar detalhes de um deles, responda com nome e preço e peça mais contexto sobre o que ele procura):')
+    for (const p of resumidos) linhas.push(`- ${p.titulo} — ${preco(p, moeda)}`)
+  }
+  if (restantes > 0) linhas.push(`(+${restantes} produtos não listados — se o cliente procurar algo fora da lista, peça mais detalhes)`)
+  return linhas.join('\n')
 }
 
 function lojaDoTicket(state, ticket) {
@@ -130,6 +159,11 @@ export function montarSystem(state, ticket) {
   const comportamentos = (state.comportamentos ?? []).filter(c => c.ativa)
   // cada loja só enxerga o próprio catálogo
   const produtos = (state.produtos ?? []).filter(p => !p.lojaId || !loja || p.lojaId === loja.id)
+  // texto da conversa para escolher quais produtos merecem detalhes completos
+  const textoConversa = [
+    ticket?.assunto, ticket?.corpo,
+    ...(ticket?.historico ?? []).slice(-4).map(m => m.corpo),
+  ].filter(Boolean).join(' ').slice(0, 6000)
   return [
     `Você é o atendimento ao cliente da loja "${nomeLoja}", um e-commerce.`,
     `Sua tarefa: ler o e-mail do cliente, classificá-lo e escrever a resposta${idiomaFixo ? ` em ${idiomaFixo}` : ' no idioma do cliente'}.`,
@@ -178,7 +212,7 @@ export function montarSystem(state, ticket) {
     faqs.length ? faqs.map(f => `- P: ${f.pergunta}\n  R: ${f.resposta}`).join('\n') : '(nenhuma cadastrada)',
     ``,
     `Catálogo de produtos da loja (preços em ${moeda}):`,
-    montarCatalogo(produtos, moeda),
+    montarCatalogo(produtos, moeda, textoConversa),
   ].join('\n')
 }
 
@@ -190,9 +224,14 @@ export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
     .filter(p => !p.lojaId || !lojaTicket || p.lojaId === lojaTicket.id)
     .filter(p => p.email && p.email.trim().toLowerCase() === emailCliente)
     .slice(0, 3)
-  const historico = (ticket.historico ?? [])
-    .map(m => `${m.autor === 'atendo' ? 'Loja (você)' : 'Cliente'} em ${m.data?.slice(0, 16)}:\n${m.corpo}`)
-    .join('\n---\n')
+  // conversas longas: só as últimas 8 mensagens, cada uma limitada — histórico
+  // inteiro crescia sem teto e encarecia cada resposta
+  const todasMensagens = ticket.historico ?? []
+  const recentes = todasMensagens.slice(-8)
+  const historico = [
+    ...(todasMensagens.length > recentes.length ? [`(${todasMensagens.length - recentes.length} mensagens mais antigas omitidas)`] : []),
+    ...recentes.map(m => `${m.autor === 'atendo' ? 'Loja (você)' : 'Cliente'} em ${m.data?.slice(0, 16)}:\n${String(m.corpo).slice(0, 1500)}`),
+  ].join('\n---\n')
   const user = [
     // sem a data de hoje o modelo não consegue calcular prazos de entrega
     `Hoje é ${new Date().toISOString().slice(0, 10)}.`,
@@ -202,7 +241,7 @@ export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
     `De: ${ticket.nome} <${ticket.de}>`,
     `Assunto: ${ticket.assunto}`,
     ``,
-    ticket.corpo,
+    String(ticket.corpo ?? '').slice(0, 4000),
     ``,
     pedidosCliente.length
       ? `Pedidos deste cliente na Shopify (localizados pelo e-mail ${ticket.de}), do mais recente ao mais antigo:\n`
