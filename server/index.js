@@ -1014,6 +1014,9 @@ app.post('/api/tickets/:id/traduzir', async (req, res) => {
   }
   if (t.corpo && !t.traducao) alvos.push({ corpo: t.corpo, aplicar: tx => { t.traducao = tx } })
   if (t.resposta && !t.respostaTraducao) alvos.push({ corpo: t.resposta, aplicar: tx => { t.respostaTraducao = tx } })
+  // situação e motivo podem ter vindo no idioma da loja em tickets antigos
+  if (t.resumoSituacao && !t.situacaoTraducao) alvos.push({ corpo: t.resumoSituacao, aplicar: tx => { t.situacaoTraducao = tx } })
+  if (t.motivoEscalada && !t.motivoTraducao) alvos.push({ corpo: t.motivoEscalada, aplicar: tx => { t.motivoTraducao = tx } })
   if (!alvos.length) return ok(req, res)
   // tradução pelo Google (gratuita) — não gasta créditos da Claude
   const r = await traduzirGratis(alvos.map(a => a.corpo))

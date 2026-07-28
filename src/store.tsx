@@ -36,6 +36,8 @@ export interface Ticket {
   traducao?: string
   respostaTraducao?: string
   rascunhoTraducao?: string
+  situacaoTraducao?: string
+  motivoTraducao?: string
 }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }

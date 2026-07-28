@@ -219,7 +219,10 @@ a { color: inherit; text-decoration: none; }
 /* ---------- Ticket detail ---------- */
 .detail-msg { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; background: var(--panel); }
 .detail-msg .head { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 12.5px; color: var(--text-2); }
-.detail-msg .body { font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+/* overflow-wrap: URLs e códigos gigantes quebram em vez de estourar a janela */
+.detail-msg .body { font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail-msg { min-width: 0; }
+.banner span { overflow-wrap: anywhere; min-width: 0; }
 .draft-box { border: 1px solid var(--purple-border); background: var(--purple-soft); border-radius: var(--radius); padding: 16px 18px; }
 .draft-box textarea {
   width: 100%; min-height: 140px; border: 1px solid var(--purple-border); border-radius: 8px;

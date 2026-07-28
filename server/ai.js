@@ -84,7 +84,7 @@ const SCHEMA = {
     resposta: { type: 'string', description: 'Resposta completa ao cliente, no idioma definido pelas instruções, pronta para envio. Se spam=true, deixe VAZIA ("") — spam não recebe resposta.' },
     confianca: { type: 'number', description: 'De 0 a 1: qualidade da resposta escrita. Pedir ao cliente um dado que falta (número do pedido, foto) é resposta boa e vale confiança alta — não abaixe a nota por não ter os dados.' },
     escalar_humano: { type: 'boolean', description: 'true apenas quando a LOJA precisa decidir algo (reembolso, exceção, caso jurídico). Não use quando basta pedir informação ao cliente.' },
-    motivo: { type: 'string', description: 'Por que foi escalado ou por que a confiança é baixa; string vazia se nada a sinalizar' },
+    motivo: { type: 'string', description: 'Por que foi escalado ou por que a confiança é baixa; string vazia se nada a sinalizar. SEMPRE em português — este campo é para o lojista, não para o cliente.' },
     spam: { type: 'boolean', description: 'true quando o e-mail NÃO é um cliente tratando do próprio pedido, de uma compra ou de um produto da loja: marketing, ofertas comerciais, parcerias, SEO, newsletters, notificações automáticas e e-mails genéricos sem relação com pedidos' },
   },
 }
@@ -176,6 +176,7 @@ export function montarSystem(state, ticket) {
     idiomaFixo
       ? `- Escreva TODA resposta em ${idiomaFixo}, SEMPRE — mesmo que o cliente escreva em outro idioma (escolha do lojista). O campo "idioma" do JSON continua sendo o idioma em que o CLIENTE escreveu.`
       : `- Responda no idioma em que o cliente escreveu.`,
+    `- Os campos "situacao" e "motivo" do JSON são para o LOJISTA (brasileiro): escreva-os SEMPRE em português, independentemente do idioma da resposta.`,
     `- Tom: cordial, direto, humano. Sem parecer robô. Termine com a assinatura abaixo, mantendo as quebras de linha exatamente como estão:`,
     loja?.assinatura || state.config.assinatura,
     ``,

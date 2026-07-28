@@ -193,6 +193,8 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   const alternarTraducao = async () => {
     const faltaTraduzir = (t.corpo && !t.traducao)
       || (t.resposta && !t.respostaTraducao)
+      || (t.resumoSituacao && !t.situacaoTraducao)
+      || (t.motivoEscalada && !t.motivoTraducao)
       || t.historico?.some(m => m.corpo && !m.traducao)
     if (faltaTraduzir) {
       setTraduzindo(true)
@@ -231,7 +233,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         </div>
         {resumoAberto && (
           <div style={{ marginTop: 8, display: 'grid', gap: 5, fontSize: 13, lineHeight: 1.55 }}>
-            <div><b>Situação:</b> <span className="muted">{t.resumoSituacao ?? `${nomeCategoria[t.categoria]} — ${t.assunto}`}</span></div>
+            <div><b>Situação:</b> <span className="muted">{(verTraducao && t.situacaoTraducao) || t.resumoSituacao || `${nomeCategoria[t.categoria]} — ${t.assunto}`}</span></div>
             <div><b>IA já fez:</b> <span className="muted">{iaJaFez}</span></div>
             <div><b>Status:</b> <span className="muted">{statusTexto}</span></div>
             <div><b>Custo da IA nesta conversa:</b> <span className="muted">US$ {(t.custoIA ?? 0).toFixed(4)}</span></div>
@@ -257,7 +259,10 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
       )}
 
       {t.motivoEscalada && t.status === 'humano' && (
-        <div className="banner card-purple mb-12"><Users size={15} color="var(--purple)" /> <b>Sinalizado para você:</b> {t.motivoEscalada}</div>
+        <div className="banner card-purple mb-12">
+          <Users size={15} color="var(--purple)" />
+          <span><b>Sinalizado para você:</b> {(verTraducao && t.motivoTraducao) || t.motivoEscalada}</span>
+        </div>
       )}
 
       {t.erroEnvio && (
