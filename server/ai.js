@@ -177,7 +177,7 @@ export function montarSystem(state, ticket) {
       ? `- Escreva TODA resposta em ${idiomaFixo}, SEMPRE — mesmo que o cliente escreva em outro idioma (escolha do lojista). O campo "idioma" do JSON continua sendo o idioma em que o CLIENTE escreveu.`
       : `- Responda no idioma em que o cliente escreveu.`,
     `- Tom: cordial, direto, humano. Sem parecer robô. Termine com a assinatura abaixo, mantendo as quebras de linha exatamente como estão:`,
-    state.config.assinatura,
+    loja?.assinatura || state.config.assinatura,
     ``,
     ...(comportamentos.length ? [
       `Comportamentos definidos pelo lojista — quando a conversa se encaixar em uma destas situações, siga a instrução correspondente à risca. Elas têm prioridade sobre o tom e o fluxo padrão (mas nunca sobre as regras invioláveis acima):`,
@@ -337,6 +337,7 @@ export async function processarEmail(state, ticket) {
   if (ia) return ia
   const loja = lojaDoTicket(state, ticket)
   const idiomaFixo = loja?.idioma && loja.idioma !== 'auto' ? loja.idioma : null
-  const local = gerarRascunhoLocal(ticket, state.politicas, state.faqs, state.pedidos, state.config.assinatura, idiomaFixo)
+  const assinatura = loja?.assinatura || state.config.assinatura
+  const local = gerarRascunhoLocal(ticket, state.politicas, state.faqs, state.pedidos, assinatura, idiomaFixo)
   return { ...local, spam: false, geradoPorIA: false }
 }

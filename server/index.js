@@ -161,6 +161,7 @@ function visaoLojas(wsId, estado) {
       ativa: l.ativa !== false,
       moeda: l.moeda || 'EUR',
       idioma: l.idioma || 'auto',
+      assinatura: l.assinatura ?? null,
       email: {
         configurado: conta?.configurado ?? false,
         endereco: conta?.endereco ?? null,
@@ -870,12 +871,14 @@ app.post('/api/shopify/testar', async (req, res) => {
 const IDIOMAS_RESPOSTA = ['auto', 'pt', 'en', 'es', 'fr', 'de', 'it', 'nl']
 
 app.post('/api/lojas', (req, res) => {
-  const { id, nome, ativa, idioma } = req.body ?? {}
+  const { id, nome, ativa, idioma, assinatura } = req.body ?? {}
   const loja = req.estado.lojas.find(l => l.id === id)
   if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
   if (typeof nome === 'string' && nome.trim()) loja.nome = nome.trim()
   if (typeof ativa === 'boolean' && loja.id !== 'loja1') loja.ativa = ativa
   if (typeof idioma === 'string' && IDIOMAS_RESPOSTA.includes(idioma)) loja.idioma = idioma
+  // assinatura própria da loja; vazia volta ao padrão do workspace
+  if (typeof assinatura === 'string') loja.assinatura = assinatura.trim() || null
   salvar(req.wsId); ok(req, res)
 })
 

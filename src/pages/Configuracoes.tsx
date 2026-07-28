@@ -509,7 +509,9 @@ export default function Configuracoes() {
       {bannerLoja}
       <div className="grid-2 mb-16">
         <CampoTexto label="Nome da loja" valor={lojaSel?.nome ?? s.config.nomeLoja} aoSalvar={v => s.atualizarLoja(lojaId, { nome: v })} />
-        <CampoTexto label="Assinatura de e-mail" valor={s.config.assinatura} aoSalvar={v => s.setConfig({ assinatura: v })} linhas={3} />
+        <CampoTexto label={`Assinatura de e-mail (${lojaSel?.nome ?? 'loja'})`}
+          valor={lojaSel?.assinatura ?? s.config.assinatura}
+          aoSalvar={v => s.atualizarLoja(lojaId, { assinatura: v })} linhas={3} />
       </div>
       <div className="field mb-16" style={{ maxWidth: 340 }}>
         <label>Idioma das respostas da IA</label>
@@ -529,7 +531,7 @@ export default function Configuracoes() {
         </p>
       </div>
       <p className="muted-sm" style={{ lineHeight: 1.6 }}>
-        A assinatura fecha todas as respostas geradas. A moeda ({lojaSel?.moeda ?? 'EUR'}) vem da própria Shopify quando conectada.
+        A assinatura fecha as respostas desta loja — cada loja tem a sua (troque de loja na seta lateral para editar as outras). A moeda ({lojaSel?.moeda ?? 'EUR'}) vem da própria Shopify quando conectada.
       </p>
 
       {s.lojas.length > 1 && s.lojaAtiva === 'todas' && (
