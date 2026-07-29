@@ -39,6 +39,8 @@ export const estadoInicial = {
   comportamentos: [],
   // Fechamentos diários gerados à meia-noite: quem foi atendido, casos e percentuais
   resumosDiarios: [],
+  // Livro-caixa da IA: { 'AAAA-MM-DD': { lojaId: valorUS$ } }
+  gastosIA: {},
   pedidos: [],
   produtos: [],
   config: { ...configPadrao },

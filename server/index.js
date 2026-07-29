@@ -197,6 +197,8 @@ function visao(wsId) {
     comportamentos: estado.comportamentos ?? [],
     resumosDiarios: estado.resumosDiarios ?? [],
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
+    gastosIA: estado.gastosIA ?? {},
+    hojeChave: diaLocal(Date.now()),
     pedidos: estado.pedidos,
     produtos: estado.produtos ?? [],
     moeda: loja1?.moeda || 'EUR',
@@ -339,6 +341,16 @@ const ok = (req, res) => res.json({ state: visao(req.wsId) })
 
 /* ---------------- Pipeline de um e-mail novo ---------------- */
 
+/** Registra um gasto de IA no livro-caixa do dia (fuso do lojista), por loja. */
+function registrarGasto(estado, lojaId, valor) {
+  if (!valor) return
+  estado.gastosIA ??= {}
+  const dia = diaLocal(Date.now())
+  const doDia = (estado.gastosIA[dia] ??= {})
+  const chave = lojaId ?? 'loja1'
+  doDia[chave] = Math.round(((doDia[chave] || 0) + valor) * 1e6) / 1e6
+}
+
 function aplicarResultado(estado, t, r) {
   t.categoria = r.categoria
   t.idioma = r.idioma
@@ -347,6 +359,7 @@ function aplicarResultado(estado, t, r) {
   t.geradoPorIA = r.geradoPorIA
   if (r.situacao) t.resumoSituacao = r.situacao
   if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
+  registrarGasto(estado, t.lojaId, r.custo)
 
   const minima = estado.config.confiancaMinima ?? 0.55
   const sensivel = estado.config.escalarSensiveis !== false && r.escalarHumano
@@ -388,6 +401,7 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId }
   const r = await processarEmail(estado, base)
   if (r.spam) {
     base.status = 'spam'
+    registrarGasto(estado, base.lojaId, r.custo)
     return base
   }
   aplicarResultado(estado, base, r)
@@ -399,13 +413,33 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId }
 const normalizarAssunto = s =>
   String(s || '').replace(/^\s*((re|fwd?|enc|aw|sv)\s*:\s*)+/i, '').trim().toLowerCase()
 
-function acharConversa(estado, de, assunto, lojaId) {
-  const alvo = normalizarAssunto(assunto)
-  return estado.tickets.find(t =>
+/** Números de pedido citados num texto: "#1784", "Bestellung 1784", "pedido nº 1784"… */
+export function numerosDePedido(texto) {
+  const achados = new Set()
+  const re = /(?:#\s?|\b(?:pedido|encomenda|order|bestell(?:ung|ing)?|bestelling|commande|ordine)\s*(?:nr\.?|n[º°o]\.?|#)?\s*)(\d{3,7})\b/gi
+  for (const m of String(texto || '').matchAll(re)) achados.add(m[1])
+  return achados
+}
+
+export function acharConversa(estado, de, assunto, lojaId, corpo = '') {
+  const candidatos = estado.tickets.filter(t =>
     (t.lojaId ?? 'loja1') === lojaId &&
     t.de.toLowerCase() === de.toLowerCase() &&
-    normalizarAssunto(t.assunto) === alvo &&
     !['spam', 'lixeira'].includes(t.status))
+
+  const alvo = normalizarAssunto(assunto)
+  const porAssunto = candidatos.find(t => normalizarAssunto(t.assunto) === alvo)
+  if (porAssunto) return porAssunto
+
+  // E-mails avulsos do mesmo cliente sobre o MESMO pedido viram uma conversa só,
+  // mesmo com assuntos diferentes.
+  const numeros = numerosDePedido(`${assunto} ${corpo}`)
+  if (!numeros.size) return null
+  return candidatos.find(t => {
+    const textoConversa = [t.assunto, t.corpo, ...(t.historico ?? []).slice(-6).map(m => m.corpo)].join(' ')
+    for (const n of numerosDePedido(textoConversa)) if (numeros.has(n)) return true
+    return false
+  })
 }
 
 async function anexarNaConversa(estado, t, { corpo, data, messageId }) {
@@ -439,6 +473,7 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId }) {
       t.rascunho = undefined
       t.enviaEm = undefined
       if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
+      registrarGasto(estado, t.lojaId, r.custo)
     } else {
       aplicarResultado(estado, t, r)
     }
@@ -475,7 +510,7 @@ async function sincronizar(wsId) {
         if (!conta.configurado) continue
         const emails = await conta.buscarNovos(estado.emailsProcessados)
         for (const e of emails) {
-          const conversa = acharConversa(estado, e.de, e.assunto, conta.id)
+          const conversa = acharConversa(estado, e.de, e.assunto, conta.id, e.corpo)
           if (conversa) {
             await anexarNaConversa(estado, conversa, e)
           } else {
@@ -708,7 +743,7 @@ async function importarHistorico(wsId, lojaId, prog) {
         categoria: 'outro', idioma: detectarIdiomaLocal(texto), status: 'spam',
       })
     } else {
-      const conversa = acharConversa(estado, e.de, e.assunto, lojaId)
+      const conversa = acharConversa(estado, e.de, e.assunto, lojaId, e.corpo)
       if (conversa && conversa.data && e.data < conversa.data) {
         // mensagem mais antiga que a atual da conversa: entra no histórico, na ordem certa
         conversa.historico = conversa.historico || []
@@ -1049,6 +1084,7 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
   t.geradoPorIA = true
   if (r.situacao) t.resumoSituacao = r.situacao
   if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
+  registrarGasto(req.estado, t.lojaId, r.custo)
   salvar(req.wsId); ok(req, res)
 })
 

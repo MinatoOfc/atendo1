@@ -1,4 +1,4 @@
-import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package } from 'lucide-react'
+import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
 import { EmptyState } from '../components/Shared'
 
@@ -23,6 +23,15 @@ export default function Resumos() {
     return st.atendimentos + st.recebidos + st.spam > 0
   })
 
+  // livro-caixa da IA: gasto do dia, respeitando a loja selecionada
+  const gastoDoDia = (dia: string) => {
+    const d = (s.gastosIA ?? {})[dia]
+    if (!d) return 0
+    return lojaFiltro ? (d[lojaFiltro] ?? 0) : Object.values(d).reduce((a, b) => a + b, 0)
+  }
+  const fmtGasto = (v: number) => `US$ ${v.toFixed(v > 0 && v < 0.1 ? 4 : 2)}`
+  const gastoHoje = s.hojeChave ? gastoDoDia(s.hojeChave) : 0
+
   return (
     <div className="content-narrow">
       <div className="mb-16">
@@ -33,6 +42,18 @@ export default function Resumos() {
             ? ' Mostrando só esta loja — para o consolidado, escolha "Todas as lojas" na seta lateral.'
             : multiLoja ? ' Para ver uma loja específica, selecione-a na seta lateral.' : ''}
         </p>
+      </div>
+
+      {/* Gasto de IA de hoje, ainda em andamento */}
+      <div className="card mb-16" style={{ padding: '14px 18px' }}>
+        <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <div className="row gap-8">
+            <Sparkles size={15} color="var(--purple)" />
+            <b style={{ fontSize: 14 }}>Gasto de IA hoje{lojaFiltro ? ` — ${nomeLoja(lojaFiltro) ?? ''}` : ''}</b>
+          </div>
+          <b style={{ fontSize: 15 }}>{fmtGasto(gastoHoje)}</b>
+        </div>
+        <p className="muted-sm" style={{ marginTop: 4 }}>Parcial do dia em andamento — fecha à meia-noite junto com o resumo.</p>
       </div>
 
       {resumos.length === 0 ? (
@@ -53,6 +74,7 @@ export default function Resumos() {
                   <span className="tag tag-green"><Send size={11} style={{ marginRight: 4 }} />{stats.atendimentos} atendido{stats.atendimentos !== 1 ? 's' : ''}</span>
                   <span className="tag tag-outro"><InboxIcon size={11} style={{ marginRight: 4 }} />{stats.recebidos} recebido{stats.recebidos !== 1 ? 's' : ''}</span>
                   {stats.spam > 0 && <span className="tag tag-amber"><Shield size={11} style={{ marginRight: 4 }} />{stats.spam} spam</span>}
+                  {gastoDoDia(r.dia) > 0 && <span className="tag tag-purple" title="Gasto de IA no dia"><Sparkles size={11} style={{ marginRight: 4 }} />{fmtGasto(gastoDoDia(r.dia))}</span>}
                 </div>
               </div>
 

@@ -162,6 +162,8 @@ interface ServerState {
   comportamentos?: Comportamento[]
   resumosDiarios?: ResumoDiario[]
   geminiDisponivel?: boolean
+  gastosIA?: Record<string, Record<string, number>>
+  hojeChave?: string
   faqs: Faq[]
   pedidos: Pedido[]
   produtos: Produto[]
