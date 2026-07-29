@@ -5,8 +5,10 @@
  * então a comparação de qualidade e custo é justa.
  */
 
-export const geminiConfigurado = !!process.env.GEMINI_API_KEY
-const MODELO = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+// trim: um espaço acidental no valor da env não pode quebrar a autenticação
+const CHAVE = (process.env.GEMINI_API_KEY || '').trim()
+export const geminiConfigurado = !!CHAVE
+const MODELO = (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim()
 
 // Preço por milhão de tokens (entrada, saída) — para o contador de custo por conversa
 const PRECOS = {
@@ -33,7 +35,7 @@ const SCHEMA_GEMINI = {
 /** Gera a resposta estruturada pelo Gemini. Retorna { r, custo } ou lança erro. */
 export async function gerarComGemini(system, user) {
   const resp = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${CHAVE}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
