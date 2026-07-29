@@ -176,11 +176,18 @@ export function mapearPedido(o) {
 export function mapearProduto(p, dominio) {
   const variantes = p.variants || []
   const precos = variantes.map(v => Number(v.price || 0)).filter(n => n > 0)
+  // Estoque não rastreado na Shopify (inventory_management vazio) ou venda
+  // permitida sem estoque (inventory_policy "continue"): o produto está SEMPRE
+  // disponível — o zero que a API devolve nesses casos não significa esgotado.
+  const rastreadas = variantes.filter(v => v.inventory_management)
+  const sempreDisponivel = (variantes.length > 0 && rastreadas.length === 0)
+    || variantes.some(v => v.inventory_policy === 'continue')
   // Sem o escopo read_inventory a API omite inventory_quantity — aí o estoque é
   // DESCONHECIDO (null), não zero: ninguém deve dizer ao cliente que esgotou.
-  const quantidades = variantes.map(v => v.inventory_quantity).filter(q => q !== undefined && q !== null)
-  const estoque = quantidades.length ? quantidades.reduce((soma, q) => soma + (Number(q) || 0), 0) : null
+  const quantidades = rastreadas.map(v => v.inventory_quantity).filter(q => q !== undefined && q !== null)
+  const estoque = sempreDisponivel ? null : (quantidades.length ? quantidades.reduce((soma, q) => soma + (Number(q) || 0), 0) : null)
   return {
+    sempreDisponivel,
     id: String(p.id),
     titulo: p.title,
     tipo: p.product_type || '',

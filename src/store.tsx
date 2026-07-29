@@ -57,6 +57,7 @@ export interface Produto {
   variantes: string[]; url: string; descricao: string; lojaId?: string
   imagem?: string | null
   imagemPorVariante?: Record<string, string>
+  sempreDisponivel?: boolean
 }
 
 export interface Pedido {

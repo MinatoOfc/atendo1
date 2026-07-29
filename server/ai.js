@@ -127,8 +127,9 @@ export function montarCatalogo(produtos, moeda, textoConversa = '') {
       const partes = [`- ${p.titulo} — ${preco(p, moeda)}`]
       if (p.tipo) partes.push(`categoria: ${p.tipo}`)
       if (p.variantes.length) partes.push(`opções: ${p.variantes.slice(0, 5).join(', ')}`)
-      // estoque null = desconhecido (app sem read_inventory): não afirmar nada sobre disponibilidade
-      if (p.estoque != null) partes.push(p.estoque > 0 ? `em estoque (${p.estoque})` : 'sem estoque no momento')
+      // estoque não rastreado = sempre à venda; null = desconhecido (não afirmar nada)
+      if (p.sempreDisponivel) partes.push('em estoque')
+      else if (p.estoque != null) partes.push(p.estoque > 0 ? `em estoque (${p.estoque})` : 'sem estoque no momento')
       if (p.descricao) partes.push(p.descricao.slice(0, 80))
       linhas.push(partes.join(' | ') + `\n  link: ${p.url}`)
     }

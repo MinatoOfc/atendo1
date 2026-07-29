@@ -110,7 +110,9 @@ export default function Produtos() {
                     {p.precoMin === p.precoMax ? moeda(p.precoMin) : `${moeda(p.precoMin)} – ${moeda(p.precoMax)}`}
                   </td>
                   <td>
-                    {p.estoque == null ? (
+                    {p.sempreDisponivel ? (
+                      <span className="tag tag-green" title="Estoque não rastreado na Shopify — sempre à venda">disponível</span>
+                    ) : p.estoque == null ? (
                       <span className="tag tag-outro" title="A Shopify não informou o estoque — reconecte a loja com o escopo read_inventory">—</span>
                     ) : (
                       <span className={'tag ' + (p.estoque > 0 ? 'tag-green' : 'tag-amber')}>
