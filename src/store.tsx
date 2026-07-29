@@ -107,6 +107,7 @@ export interface Loja {
   ativa: boolean
   moeda: string
   idioma?: string
+  iaModelo?: string
   assinatura?: string | null
   email: {
     configurado: boolean; endereco: string | null; status: StatusEmail | null
@@ -160,6 +161,7 @@ interface ServerState {
   politicas: Politica[]
   comportamentos?: Comportamento[]
   resumosDiarios?: ResumoDiario[]
+  geminiDisponivel?: boolean
   faqs: Faq[]
   pedidos: Pedido[]
   produtos: Produto[]
@@ -226,7 +228,7 @@ interface Store extends ServerState {
   lojaAtiva: string
   setLojaAtiva: (id: string) => void
   lojasVisiveis: Loja[]
-  atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean; idioma?: string; assinatura?: string }) => void
+  atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean; idioma?: string; assinatura?: string; iaModelo?: string }) => void
   criarLoja: (nome?: string) => Promise<string | null>
   removerLoja: (id: string, confirmacao: string) => Promise<string | null>
   importarCaixa: (lojaId: string) => Promise<string | null>

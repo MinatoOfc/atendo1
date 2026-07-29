@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { gerarRascunhoLocal } from './logic.js'
+import { geminiConfigurado, gerarComGemini } from './gemini.js'
 
 export const iaConfigurada = !!process.env.ANTHROPIC_API_KEY
 // Padrão econômico: Haiku 4.5 custa uma fração do Opus e dá conta de
@@ -218,10 +219,28 @@ export function montarSystem(state, ticket) {
   ].join('\n')
 }
 
+// resposta crua (Claude ou Gemini) → formato interno do atendo
+function normalizarResultado(r, custo) {
+  return {
+    categoria: r.categoria,
+    idioma: r.idioma,
+    resposta: r.resposta,
+    confianca: Math.max(0, Math.min(1, r.confianca)),
+    escalarHumano: r.escalar_humano,
+    motivo: r.motivo || null,
+    spam: r.spam,
+    situacao: r.situacao || null,
+    custo,
+    geradoPorIA: true,
+  }
+}
+
 export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
-  if (!client) return null
-  const emailCliente = ticket.de.trim().toLowerCase()
   const lojaTicket = lojaDoTicket(state, ticket)
+  // teste A/B por loja: lojas com iaModelo="gemini" respondem pelo Gemini Flash
+  const usarGemini = lojaTicket?.iaModelo === 'gemini' && geminiConfigurado
+  if (!client && !usarGemini) return null
+  const emailCliente = ticket.de.trim().toLowerCase()
   const pedidosCliente = state.pedidos
     .filter(p => !p.lojaId || !lojaTicket || p.lojaId === lojaTicket.id)
     .filter(p => p.email && p.email.trim().toLowerCase() === emailCliente)
@@ -258,6 +277,17 @@ export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
     ] : []),
   ].join('\n')
 
+  if (usarGemini) {
+    try {
+      const { r, custo } = await gerarComGemini(montarSystem(state, ticket), user)
+      return normalizarResultado(r, custo)
+    } catch (err) {
+      console.error('[gemini] falha:', err.message)
+      if (!client) return null
+      // Gemini fora do ar: a loja em teste não fica sem resposta — cai para o Claude
+    }
+  }
+
   try {
     const resp = await client.messages.create({
       model: MODEL,
@@ -278,18 +308,7 @@ export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
     }
     const r = JSON.parse(texto)
     Object.assign(statusIA, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
-    return {
-      categoria: r.categoria,
-      idioma: r.idioma,
-      resposta: r.resposta,
-      confianca: Math.max(0, Math.min(1, r.confianca)),
-      escalarHumano: r.escalar_humano,
-      motivo: r.motivo || null,
-      spam: r.spam,
-      situacao: r.situacao || null,
-      custo: custoDeUso(resp.usage),
-      geradoPorIA: true,
-    }
+    return normalizarResultado(r, custoDeUso(resp.usage))
   } catch (err) {
     registrarErro(traduzirErro(err))
     console.error('[ai] falha, usando regras locais:', statusIA.erro)

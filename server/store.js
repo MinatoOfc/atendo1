@@ -25,6 +25,8 @@ export const lojaPadrao = (id, nome) => ({
   moeda: 'EUR',
   // 'auto' = responder no idioma do cliente; ou um código fixo (pt, en, nl…)
   idioma: 'auto',
+  // modelo de IA da loja: 'claude' (padrão) ou 'gemini' (teste A/B)
+  iaModelo: 'claude',
   // Credencial obtida via OAuth da Shopify. NUNCA é enviada ao frontend.
   shopify: { loja: null, token: null, instaladoEm: null },
 })

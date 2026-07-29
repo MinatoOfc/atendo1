@@ -539,6 +539,19 @@ export default function Configuracoes() {
           A mudança vale para os próximos e-mails; rascunhos que já estão na fila de aprovação não são refeitos.
         </p>
       </div>
+      <div className="field mb-16" style={{ maxWidth: 340 }}>
+        <label>Modelo de IA desta loja</label>
+        <select value={lojaSel?.iaModelo ?? 'claude'} onChange={e => s.atualizarLoja(lojaId, { iaModelo: e.target.value })}>
+          <option value="claude">Claude Haiku (padrão)</option>
+          <option value="gemini" disabled={!s.geminiDisponivel}>
+            Gemini Flash{s.geminiDisponivel ? ' (teste)' : ' — adicione GEMINI_API_KEY no Railway'}
+          </option>
+        </select>
+        <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+          Teste A/B por loja: as respostas desta loja usam o modelo escolhido, com o mesmo prompt e as mesmas regras.
+          O custo por conversa aparece nos tickets, para comparar. Se o Gemini falhar, a resposta cai automaticamente para o Claude.
+        </p>
+      </div>
       <p className="muted-sm" style={{ lineHeight: 1.6 }}>
         A assinatura fecha as respostas desta loja — cada loja tem a sua (troque de loja na seta lateral para editar as outras). A moeda ({lojaSel?.moeda ?? 'EUR'}) vem da própria Shopify quando conectada.
       </p>
