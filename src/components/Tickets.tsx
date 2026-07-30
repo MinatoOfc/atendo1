@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  ArrowLeft, Check, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
+  ArrowLeft, Check, CheckCheck, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
   Package, ExternalLink, PenSquare,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
@@ -154,7 +154,7 @@ const rotuloStatus: Record<string, string> = {
 }
 
 export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, config, lojas } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, config, lojas } = useStore()
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
@@ -381,6 +381,10 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             <button className="btn btn-primary" onClick={() => { aprovarEnviar(t.id, texto); onBack() }}>
               <Check size={14} /> Aprovar e enviar
             </button>
+            <button className="btn" title="Fecha o caso sem enviar nada — ele sai daqui e fica como respondido"
+              onClick={() => { marcarResolvido(t.id); onBack() }}>
+              <CheckCheck size={14} /> Resolvido sem enviar
+            </button>
             {t.status !== 'humano' && (
               <button className="btn" onClick={() => { moverPara(t.id, 'humano', 'Escalado manualmente por você'); onBack() }}>
                 <Users size={14} /> Escalar para mim
@@ -405,6 +409,10 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             <button className="btn btn-primary" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
               onClick={() => { aprovarEnviar(t.id, manual.trim()); onBack() }}>
               <Send size={14} /> Enviar resposta
+            </button>
+            <button className="btn" title="Fecha o caso sem enviar nada — ele sai daqui e fica como respondido"
+              onClick={() => { marcarResolvido(t.id); onBack() }}>
+              <CheckCheck size={14} /> Resolvido sem enviar
             </button>
             <button className="btn" onClick={() => { moverPara(t.id, 'spam'); onBack() }}><Shield size={14} /> Spam</button>
             <button className="btn btn-danger" onClick={() => { moverPara(t.id, 'lixeira'); onBack() }}><Trash2 size={14} /> Excluir</button>

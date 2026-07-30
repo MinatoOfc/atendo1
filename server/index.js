@@ -1057,6 +1057,20 @@ const acharTicket = (req, res) => {
   return t
 }
 
+// Fecha o caso SEM enviar e-mail: sai do atendimento humano/aprovações como resolvido
+app.post('/api/tickets/:id/resolver', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  t.status = 'enviado'
+  t.respondidoEm = new Date().toISOString()
+  t.lido = true
+  t.enviaEm = undefined
+  t.erroEnvio = undefined
+  t.tentativasEnvio = undefined
+  t.motivoEscalada = undefined
+  t.resolucao = t.resolucao || 'Resolvido sem resposta por e-mail'
+  salvar(req.wsId); ok(req, res)
+})
+
 app.post('/api/tickets/:id/lido', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   t.lido = true; salvar(req.wsId); ok(req, res)

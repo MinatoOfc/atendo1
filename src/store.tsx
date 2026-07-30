@@ -244,6 +244,7 @@ interface Store extends ServerState {
   sincronizar: () => Promise<number>
   enviarNovoEmail: (para: string, assunto: string, corpo: string) => void
   marcarLido: (id: string) => void
+  marcarResolvido: (id: string) => void
   aprovarEnviar: (id: string, texto: string) => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
@@ -468,6 +469,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, lido: true } : t)) }))
       api(`/tickets/${id}/lido`).then(aplicar)
     },
+
+    marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
 
     editarRascunho: (id, texto) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, rascunho: texto } : t)) }))
