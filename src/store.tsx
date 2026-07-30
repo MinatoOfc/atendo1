@@ -31,6 +31,7 @@ export interface Ticket {
   lojaId?: string
   historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string; traducao?: string }[]
   resumoSituacao?: string
+  resolucao?: string
   custoIA?: number
   iaPausada?: boolean
   traducao?: string
@@ -46,7 +47,7 @@ export interface ResumoDiario {
   id: string; dia: string; geradoEm: string
   atendimentos: number; recebidos: number; spam: number
   categorias: Record<string, number>
-  clientes: { nome: string; email: string; categoria: Categoria; lojaId?: string; situacao?: string | null; pedidos: string[] }[]
+  clientes: { nome: string; email: string; categoria: Categoria; lojaId?: string; situacao?: string | null; resolucao?: string | null; pedidos: string[] }[]
   porLoja?: Record<string, { atendimentos: number; recebidos: number; spam: number; categorias: Record<string, number> }>
 }
 export interface Faq { id: string; pergunta: string; resposta: string; ativa: boolean }

@@ -77,9 +77,10 @@ function custoDeUso(u) {
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'motivo', 'spam', 'situacao'],
+  required: ['categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'motivo', 'spam', 'situacao', 'resolucao'],
   properties: {
     situacao: { type: 'string', description: 'Resumo de UMA frase, em português, do que o cliente quer nesta conversa — para o atendente entender o caso de relance. Ex.: "Cliente solicita reembolso de 3 polos por reação alérgica ao material".' },
+    resolucao: { type: 'string', description: 'UMA frase curta, em português, do que ESTA resposta resolve/encaminha — para o relatório do dia. Ex.: "Reembolso de 100% aprovado", "Troca por tamanho XXL combinada", "Enviado código de rastreio". Vazia se spam ou se nada foi resolvido.' },
     categoria: { type: 'string', enum: ['rastreio', 'reembolso', 'troca', 'produto', 'entrega', 'outro'] },
     idioma: { type: 'string', description: 'Código ISO 639-1 do idioma do cliente, ex.: pt, en, it, de, fr, es' },
     resposta: { type: 'string', description: 'Resposta completa ao cliente, no idioma definido pelas instruções, pronta para envio. Se spam=true, deixe VAZIA ("") — spam não recebe resposta.' },
@@ -178,7 +179,7 @@ export function montarSystem(state, ticket) {
     idiomaFixo
       ? `- Escreva TODA resposta em ${idiomaFixo}, SEMPRE — mesmo que o cliente escreva em outro idioma (escolha do lojista). O campo "idioma" do JSON continua sendo o idioma em que o CLIENTE escreveu.`
       : `- Responda no idioma em que o cliente escreveu.`,
-    `- Os campos "situacao" e "motivo" do JSON são para o LOJISTA (brasileiro): escreva-os SEMPRE em português, independentemente do idioma da resposta.`,
+    `- Os campos "situacao", "motivo" e "resolucao" do JSON são para o LOJISTA (brasileiro): escreva-os SEMPRE em português, independentemente do idioma da resposta.`,
     `- Tom: cordial, direto, humano. Sem parecer robô. Termine com a assinatura abaixo, mantendo as quebras de linha exatamente como estão:`,
     loja?.assinatura || state.config.assinatura,
     ``,
@@ -230,6 +231,7 @@ function normalizarResultado(r, custo) {
     motivo: r.motivo || null,
     spam: r.spam,
     situacao: r.situacao || null,
+    resolucao: r.resolucao || null,
     custo,
     geradoPorIA: true,
   }

@@ -21,6 +21,7 @@ const SCHEMA_GEMINI = {
   type: 'OBJECT',
   properties: {
     situacao: { type: 'STRING', description: 'Resumo de UMA frase, em português, do que o cliente quer nesta conversa' },
+    resolucao: { type: 'STRING', description: 'UMA frase curta, em português, do que esta resposta resolve (ex.: "Reembolso de 100% aprovado"); vazia se spam' },
     categoria: { type: 'STRING', enum: ['rastreio', 'reembolso', 'troca', 'produto', 'entrega', 'outro'] },
     idioma: { type: 'STRING', description: 'Código ISO 639-1 do idioma do cliente, ex.: pt, en, it, de, fr, es, nl' },
     resposta: { type: 'STRING', description: 'Resposta completa ao cliente; vazia se spam=true' },
@@ -29,7 +30,7 @@ const SCHEMA_GEMINI = {
     motivo: { type: 'STRING', description: 'Sempre em português; vazio se nada a sinalizar' },
     spam: { type: 'BOOLEAN' },
   },
-  required: ['situacao', 'categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'motivo', 'spam'],
+  required: ['situacao', 'resolucao', 'categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'motivo', 'spam'],
 }
 
 /** Gera a resposta estruturada pelo Gemini. Retorna { r, custo } ou lança erro. */

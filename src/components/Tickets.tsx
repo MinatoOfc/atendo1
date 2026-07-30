@@ -234,6 +234,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         {resumoAberto && (
           <div style={{ marginTop: 8, display: 'grid', gap: 5, fontSize: 13, lineHeight: 1.55 }}>
             <div><b>Situação:</b> <span className="muted">{(verTraducao && t.situacaoTraducao) || t.resumoSituacao || `${nomeCategoria[t.categoria]} — ${t.assunto}`}</span></div>
+            {t.resolucao && <div><b>Resolução:</b> <span className="muted">{t.resolucao}</span></div>}
             <div><b>IA já fez:</b> <span className="muted">{iaJaFez}</span></div>
             <div><b>Status:</b> <span className="muted">{statusTexto}</span></div>
             <div><b>Custo da IA nesta conversa:</b> <span className="muted">US$ {(t.custoIA ?? 0).toFixed(4)}</span></div>

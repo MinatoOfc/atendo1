@@ -358,6 +358,7 @@ function aplicarResultado(estado, t, r) {
   t.confianca = r.confianca
   t.geradoPorIA = r.geradoPorIA
   if (r.situacao) t.resumoSituacao = r.situacao
+  if (r.resolucao) t.resolucao = r.resolucao
   if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
   registrarGasto(estado, t.lojaId, r.custo)
 
@@ -652,6 +653,7 @@ function gerarResumoDoDia(estado, dia) {
     categoria: t.categoria,
     lojaId: t.lojaId ?? 'loja1',
     situacao: t.resumoSituacao ?? null,
+    resolucao: t.resolucao ?? null,
     pedidos: estado.pedidos
       .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1') && p.email && p.email.trim().toLowerCase() === t.de.trim().toLowerCase())
       .map(p => p.numero).slice(0, 5),

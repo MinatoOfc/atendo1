@@ -1,5 +1,7 @@
-import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles } from 'lucide-react'
+import { useState } from 'react'
+import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
+import type { ResumoDiario } from '../store'
 import { EmptyState } from '../components/Shared'
 
 const formatarDia = (dia: string) => {
@@ -11,6 +13,7 @@ export default function Resumos() {
   const s = useStore()
   const multiLoja = s.lojasVisiveis.length > 1
   const nomeLoja = (id?: string) => s.lojas.find(l => l.id === (id ?? 'loja1'))?.nome
+  const [copiado, setCopiado] = useState<string | null>(null)
 
   // loja selecionada na seta lateral: mostra só o recorte dela; "todas" = consolidado
   const lojaFiltro = s.lojaAtiva !== 'todas' ? s.lojaAtiva : null
@@ -31,6 +34,30 @@ export default function Resumos() {
   }
   const fmtGasto = (v: number) => `US$ ${v.toFixed(v > 0 && v < 0.1 ? 4 : 2)}`
   const gastoHoje = s.hojeChave ? gastoDoDia(s.hojeChave) : 0
+
+  // Relatório do dia em texto, no formato de anotação do lojista:
+  // RELATÓRIO 29/07 / Loja: X / PEDIDO 1419 - Reembolso 100% aprovado ...
+  const copiarRelatorio = (r: ResumoDiario) => {
+    const clientesDoDia = lojaFiltro ? r.clientes.filter(c => (c.lojaId ?? 'loja1') === lojaFiltro) : r.clientes
+    const [ano, mes, dia] = r.dia.split('-')
+    const linhas = [`RELATÓRIO ${dia}/${mes}/${ano}`]
+    const porLoja = new Map<string, typeof clientesDoDia>()
+    for (const c of clientesDoDia) {
+      const chave = c.lojaId ?? 'loja1'
+      porLoja.set(chave, [...(porLoja.get(chave) ?? []), c])
+    }
+    for (const [lojaId, clientes] of porLoja) {
+      linhas.push('', `Loja: ${nomeLoja(lojaId) ?? lojaId}`)
+      for (const c of clientes) {
+        const quem = c.pedidos[0] ? `PEDIDO ${c.pedidos[0].replace('#', '')}` : c.nome.toUpperCase()
+        const oque = c.resolucao || c.situacao || nomeCategoria[c.categoria] || 'atendido'
+        linhas.push(`${quem} - ${oque}`)
+      }
+    }
+    navigator.clipboard.writeText(linhas.join('\n'))
+    setCopiado(r.id)
+    window.setTimeout(() => setCopiado(x => (x === r.id ? null : x)), 2500)
+  }
 
   return (
     <div className="content-narrow">
@@ -75,6 +102,11 @@ export default function Resumos() {
                   <span className="tag tag-outro"><InboxIcon size={11} style={{ marginRight: 4 }} />{stats.recebidos} recebido{stats.recebidos !== 1 ? 's' : ''}</span>
                   {stats.spam > 0 && <span className="tag tag-amber"><Shield size={11} style={{ marginRight: 4 }} />{stats.spam} spam</span>}
                   {gastoDoDia(r.dia) > 0 && <span className="tag tag-purple" title="Gasto de IA no dia"><Sparkles size={11} style={{ marginRight: 4 }} />{fmtGasto(gastoDoDia(r.dia))}</span>}
+                  {stats.atendimentos > 0 && (
+                    <button className="btn btn-sm" onClick={() => copiarRelatorio(r)} title="Copiar o relatório do dia em texto">
+                      {copiado === r.id ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar relatório</>}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -109,7 +141,10 @@ export default function Resumos() {
                           <div style={{ fontSize: 13, fontWeight: 600 }}>{c.nome}</div>
                           <div className="muted-sm">{c.email}</div>
                         </div>
-                        {c.situacao && <span className="muted-sm" style={{ flex: 1, minWidth: 160, lineHeight: 1.45 }}>{c.situacao}</span>}
+                        <span style={{ flex: 1, minWidth: 160, lineHeight: 1.45 }}>
+                          {c.resolucao && <span style={{ fontSize: 12.5, display: 'block' }}><Check size={11} style={{ verticalAlign: -1, marginRight: 4, color: 'var(--green)' }} />{c.resolucao}</span>}
+                          {c.situacao && <span className="muted-sm">{c.situacao}</span>}
+                        </span>
                         <div className="row gap-8" style={{ marginLeft: 'auto', flexWrap: 'wrap' }}>
                           {c.pedidos.map(p => <span key={p} className="tag tag-rastreio"><Package size={10} style={{ marginRight: 3 }} />{p}</span>)}
                           {multiLoja && nomeLoja(c.lojaId) && <span className="tag tag-purple">{nomeLoja(c.lojaId)}</span>}
