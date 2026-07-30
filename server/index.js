@@ -411,8 +411,9 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId }
 
 /* ---------------- Conversas (threading) ---------------- */
 
-const normalizarAssunto = s =>
-  String(s || '').replace(/^\s*((re|fwd?|enc|aw|sv)\s*:\s*)+/i, '').trim().toLowerCase()
+// remove prefixos de resposta/encaminhamento, inclusive numerados: "Re[4]:", "AW:", "WG:"…
+export const normalizarAssunto = s =>
+  String(s || '').replace(/^\s*((re|fwd?|enc|aw|wg|sv)(\[\d+\])?\s*:\s*)+/i, '').trim().toLowerCase()
 
 /** Números de pedido citados num texto: "#1784", "Bestellung 1784", "pedido nº 1784"… */
 export function numerosDePedido(texto) {
@@ -441,6 +442,65 @@ export function acharConversa(estado, de, assunto, lojaId, corpo = '') {
     for (const n of numerosDePedido(textoConversa)) if (numeros.has(n)) return true
     return false
   })
+}
+
+const textoDaConversa = t =>
+  [t.assunto, t.corpo, ...(t.historico ?? []).slice(-6).map(m => m.corpo)].join(' ')
+
+/** O mais novo absorve o mais antigo: mensagens viram histórico ordenado, custo soma. */
+function fundirTickets(estado, x, y) {
+  const [novo, velho] = (x.data || '') >= (y.data || '') ? [x, y] : [y, x]
+  const doVelho = [
+    ...(velho.historico ?? []),
+    ...(velho.corpo ? [{ autor: 'cliente', corpo: velho.corpo, data: velho.data, traducao: velho.traducao }] : []),
+    ...(velho.resposta ? [{ autor: 'atendo', corpo: velho.resposta, data: velho.respondidoEm || velho.data }] : []),
+  ]
+  novo.historico = [...doVelho, ...(novo.historico ?? [])]
+    .sort((a, b) => (a.data || '').localeCompare(b.data || ''))
+  novo.custoIA = Math.round(((novo.custoIA || 0) + (velho.custoIA || 0)) * 1e6) / 1e6
+  estado.tickets = estado.tickets.filter(t => t.id !== velho.id)
+}
+
+/**
+ * Junta conversas que nasceram separadas mas são a mesma coisa: mesmo cliente e
+ * mesma loja, com assunto equivalente OU o mesmo pedido citado. Roda a cada
+ * sincronização — cobre inclusive tickets criados antes desta regra existir.
+ */
+export function fundirConversasDuplicadas(estado) {
+  let mudou = false
+  const grupos = new Map()
+  for (const t of estado.tickets) {
+    if (['spam', 'lixeira'].includes(t.status)) continue
+    const chave = `${t.lojaId ?? 'loja1'}|${t.de.toLowerCase()}`
+    grupos.set(chave, [...(grupos.get(chave) ?? []), t])
+  }
+  for (const [, grupo] of grupos) {
+    if (grupo.length < 2) continue
+    let denovo = true
+    while (denovo) {
+      denovo = false
+      const atuais = grupo.filter(t => estado.tickets.includes(t))
+      externo:
+      for (let i = 0; i < atuais.length; i++) {
+        for (let j = i + 1; j < atuais.length; j++) {
+          const a = atuais[i], b = atuais[j]
+          let mesma = normalizarAssunto(a.assunto) === normalizarAssunto(b.assunto)
+          if (!mesma) {
+            const nb = numerosDePedido(textoDaConversa(b))
+            for (const n of numerosDePedido(textoDaConversa(a))) {
+              if (nb.has(n)) { mesma = true; break }
+            }
+          }
+          if (!mesma) continue
+          fundirTickets(estado, a, b)
+          mudou = true
+          denovo = true
+          break externo
+        }
+      }
+    }
+  }
+  return mudou
 }
 
 async function anexarNaConversa(estado, t, { corpo, data, messageId }) {
@@ -541,7 +601,9 @@ async function sincronizar(wsId) {
       }
     }
 
-    if (novos > 0) salvar(wsId)
+    // junta conversas duplicadas do mesmo cliente/pedido (inclusive antigas)
+    const fundiu = fundirConversasDuplicadas(estado)
+    if (novos > 0 || fundiu) salvar(wsId)
     return novos
   } finally {
     sincronizando.delete(wsId)
