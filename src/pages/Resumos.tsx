@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check } from 'lucide-react'
+import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
-import type { ResumoDiario } from '../store'
+import type { ResumoDiario, Ticket } from '../store'
 import { EmptyState } from '../components/Shared'
 
 const formatarDia = (dia: string) => {
@@ -34,6 +34,41 @@ export default function Resumos() {
   }
   const fmtGasto = (v: number) => `US$ ${v.toFixed(v > 0 && v < 0.1 ? 4 : 2)}`
   const gastoHoje = s.hojeChave ? gastoDoDia(s.hojeChave) : 0
+
+  /* ---- Relatório manual: só os casos que o lojista marcou nas conversas ---- */
+  const numeroDoTicket = (t: Ticket) => {
+    const doCliente = s.pedidos.find(p =>
+      (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1') && p.email && p.email.trim().toLowerCase() === t.de.trim().toLowerCase())
+    if (doCliente) return doCliente.numero.replace('#', '')
+    const m = `${t.assunto} ${t.corpo}`.match(/(?:#\s?|\b(?:pedido|encomenda|order|bestell(?:ung|ing)?|bestelling|commande|ordine)\s*(?:nr\.?|n[º°o]\.?|#)?\s*)(\d{3,7})\b/i)
+    return m?.[1] ?? null
+  }
+  const linhaDoTicket = (t: Ticket) => {
+    const numero = numeroDoTicket(t)
+    const quem = numero ? `PEDIDO ${numero}` : t.nome.toUpperCase()
+    return `${quem} - ${t.resolucao || t.resumoSituacao || nomeCategoria[t.categoria] || 'atendido'}`
+  }
+  // s.tickets já vem filtrado pela loja ativa da seta lateral
+  const manuaisDe = (dia: string) => s.tickets.filter(t => t.relatorioDia === dia)
+  const manuaisHoje = s.hojeChave ? manuaisDe(s.hojeChave) : []
+
+  const copiarManual = (dia: string) => {
+    const itens = manuaisDe(dia)
+    const [ano, mes, d] = dia.split('-')
+    const linhas = [`RELATÓRIO ${d}/${mes}/${ano}`]
+    const porLoja = new Map<string, Ticket[]>()
+    for (const t of itens) {
+      const chave = t.lojaId ?? 'loja1'
+      porLoja.set(chave, [...(porLoja.get(chave) ?? []), t])
+    }
+    for (const [lojaId, ts] of porLoja) {
+      linhas.push('', `Loja: ${nomeLoja(lojaId) ?? lojaId}`)
+      for (const t of ts) linhas.push(linhaDoTicket(t))
+    }
+    navigator.clipboard.writeText(linhas.join('\n'))
+    setCopiado(`manual-${dia}`)
+    window.setTimeout(() => setCopiado(x => (x === `manual-${dia}` ? null : x)), 2500)
+  }
 
   // Relatório do dia em texto, no formato de anotação do lojista:
   // RELATÓRIO 29/07 / Loja: X / PEDIDO 1419 - Reembolso 100% aprovado ...
@@ -71,6 +106,38 @@ export default function Resumos() {
         </p>
       </div>
 
+      {/* Relatório manual: casos marcados à mão nas conversas */}
+      <div className="card mb-16" style={{ padding: '14px 18px' }}>
+        <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <div className="row gap-8">
+            <ClipboardList size={15} color="var(--purple)" />
+            <b style={{ fontSize: 14 }}>Relatório manual de hoje</b>
+            <span className="muted-sm">{manuaisHoje.length} caso{manuaisHoje.length !== 1 ? 's' : ''}</span>
+          </div>
+          {manuaisHoje.length > 0 && s.hojeChave && (
+            <button className="btn btn-sm" onClick={() => copiarManual(s.hojeChave!)}>
+              {copiado === `manual-${s.hojeChave}` ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar relatório</>}
+            </button>
+          )}
+        </div>
+        {manuaisHoje.length === 0 ? (
+          <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+            Abra uma conversa e clique em "Adicionar ao relatório" — só os casos que você marcar entram aqui.
+          </p>
+        ) : (
+          <div style={{ marginTop: 10, display: 'grid', gap: 4 }}>
+            {manuaisHoje.map(t => (
+              <div key={t.id} className="row gap-8" style={{ fontSize: 13, padding: '3px 0' }}>
+                <span style={{ flex: 1 }}>{linhaDoTicket(t)}</span>
+                <span className="muted-sm">{nomeLoja(t.lojaId)}</span>
+                <button title="Remover do relatório" style={{ color: 'var(--text-3)' }}
+                  onClick={() => s.alternarRelatorio(t.id, false)}><X size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Gasto de IA de hoje, ainda em andamento */}
       <div className="card mb-16" style={{ padding: '14px 18px' }}>
         <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
@@ -103,8 +170,13 @@ export default function Resumos() {
                   {stats.spam > 0 && <span className="tag tag-amber"><Shield size={11} style={{ marginRight: 4 }} />{stats.spam} spam</span>}
                   {gastoDoDia(r.dia) > 0 && <span className="tag tag-purple" title="Gasto de IA no dia"><Sparkles size={11} style={{ marginRight: 4 }} />{fmtGasto(gastoDoDia(r.dia))}</span>}
                   {stats.atendimentos > 0 && (
-                    <button className="btn btn-sm" onClick={() => copiarRelatorio(r)} title="Copiar o relatório do dia em texto">
+                    <button className="btn btn-sm" onClick={() => copiarRelatorio(r)} title="Copiar o relatório do dia em texto (todos os atendidos)">
                       {copiado === r.id ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar relatório</>}
+                    </button>
+                  )}
+                  {manuaisDe(r.dia).length > 0 && (
+                    <button className="btn btn-sm" onClick={() => copiarManual(r.dia)} title="Copiar só os casos marcados à mão neste dia">
+                      {copiado === `manual-${r.dia}` ? <><Check size={13} /> Copiado</> : <><ClipboardList size={13} /> Manual ({manuaisDe(r.dia).length})</>}
                     </button>
                   )}
                 </div>

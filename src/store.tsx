@@ -32,6 +32,7 @@ export interface Ticket {
   historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string; traducao?: string }[]
   resumoSituacao?: string
   resolucao?: string
+  relatorioDia?: string
   custoIA?: number
   iaPausada?: boolean
   traducao?: string
@@ -245,6 +246,7 @@ interface Store extends ServerState {
   enviarNovoEmail: (para: string, assunto: string, corpo: string) => void
   marcarLido: (id: string) => void
   marcarResolvido: (id: string) => void
+  alternarRelatorio: (id: string, adicionar: boolean) => void
   aprovarEnviar: (id: string, texto: string) => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
@@ -471,6 +473,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
 
     marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
+    alternarRelatorio: (id, adicionar) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar }).then(aplicar),
 
     editarRascunho: (id, texto) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, rascunho: texto } : t)) }))

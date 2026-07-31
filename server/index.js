@@ -1119,6 +1119,13 @@ const acharTicket = (req, res) => {
   return t
 }
 
+// Marca/desmarca a conversa para o relatório manual do dia
+app.post('/api/tickets/:id/relatorio', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  t.relatorioDia = req.body?.adicionar ? diaLocal(Date.now()) : undefined
+  salvar(req.wsId); ok(req, res)
+})
+
 // Fecha o caso SEM enviar e-mail: sai do atendimento humano/aprovações como resolvido
 app.post('/api/tickets/:id/resolver', (req, res) => {
   const t = acharTicket(req, res); if (!t) return

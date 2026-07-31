@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft, Check, CheckCheck, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
-  Package, ExternalLink, PenSquare,
+  Package, ExternalLink, PenSquare, ClipboardList,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
@@ -154,7 +154,7 @@ const rotuloStatus: Record<string, string> = {
 }
 
 export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, config, lojas } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, alternarRelatorio, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, config, lojas } = useStore()
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
@@ -227,9 +227,16 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
 
       {/* Resumo da conversa */}
       <div className="card-soft mb-12" style={{ padding: '14px 16px' }}>
-        <div className="row spread">
+        <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
           <b style={{ fontSize: 13.5 }}>Resumo da conversa</b>
-          <button className="btn-ghost btn-sm" onClick={() => setResumoAberto(a => !a)}>{resumoAberto ? 'Ocultar' : 'Mostrar'}</button>
+          <div className="row gap-8">
+            <button className={'btn btn-sm' + (t.relatorioDia ? ' btn-primary' : '')}
+              title={t.relatorioDia ? 'Remover do relatório manual' : 'Marcar este caso para o relatório manual de hoje (página Resumo diário)'}
+              onClick={() => alternarRelatorio(t.id, !t.relatorioDia)}>
+              <ClipboardList size={13} /> {t.relatorioDia ? 'No relatório ✓' : 'Adicionar ao relatório'}
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => setResumoAberto(a => !a)}>{resumoAberto ? 'Ocultar' : 'Mostrar'}</button>
+          </div>
         </div>
         {resumoAberto && (
           <div style={{ marginTop: 8, display: 'grid', gap: 5, fontSize: 13, lineHeight: 1.55 }}>
