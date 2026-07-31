@@ -10,6 +10,7 @@ import {
 } from './logic.js'
 import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA } from './ai.js'
 import { traduzirGratis } from './traducao.js'
+import { numerosDePedido } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
   buscarPedidosShopify, buscarProdutosShopify, testarShopify,
@@ -418,12 +419,7 @@ export const normalizarAssunto = s =>
   String(s || '').replace(/^\s*((re|fwd?|enc|aw|wg|sv)(\[\d+\])?\s*:\s*)+/i, '').trim().toLowerCase()
 
 /** Números de pedido citados num texto: "#1784", "Bestellung 1784", "pedido nº 1784"… */
-export function numerosDePedido(texto) {
-  const achados = new Set()
-  const re = /(?:#\s?|\b(?:pedido|encomenda|order|bestell(?:ung|ing)?|bestelling|commande|ordine)\s*(?:nr\.?|n[º°o]\.?|#)?\s*)(\d{3,7})\b/gi
-  for (const m of String(texto || '').matchAll(re)) achados.add(m[1])
-  return achados
-}
+export { numerosDePedido }
 
 export function acharConversa(estado, de, assunto, lojaId, corpo = '') {
   const candidatos = estado.tickets.filter(t =>

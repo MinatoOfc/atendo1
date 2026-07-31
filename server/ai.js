@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { gerarRascunhoLocal } from './logic.js'
 import { geminiConfigurado, gerarComGemini } from './gemini.js'
+import { numerosDePedido, emailsCitados } from './refs.js'
 
 export const iaConfigurada = !!process.env.ANTHROPIC_API_KEY
 // Padrão econômico: Haiku 4.5 custa uma fração do Opus e dá conta de
@@ -243,9 +244,16 @@ export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
   const usarGemini = lojaTicket?.iaModelo === 'gemini' && geminiConfigurado
   if (!client && !usarGemini) return null
   const emailCliente = ticket.de.trim().toLowerCase()
+  // O cliente às vezes abre o chamado com outro e-mail e só passa o e-mail da
+  // compra (ou o número do pedido) no meio da conversa — procura por tudo isso
+  const textoConversa = [ticket.assunto, ticket.corpo, ticket.resposta, ...(ticket.historico ?? []).map(m => m.corpo)].join('\n')
+  const emails = emailsCitados(textoConversa)
+  emails.add(emailCliente)
+  const numeros = numerosDePedido(textoConversa)
   const pedidosCliente = state.pedidos
     .filter(p => !p.lojaId || !lojaTicket || p.lojaId === lojaTicket.id)
-    .filter(p => p.email && p.email.trim().toLowerCase() === emailCliente)
+    .filter(p => (p.email && emails.has(p.email.trim().toLowerCase()))
+      || (p.numero && numeros.has(String(p.numero).replace(/\D/g, ''))))
     .slice(0, 3)
   // conversas longas: só as últimas 8 mensagens, cada uma limitada — histórico
   // inteiro crescia sem teto e encarecia cada resposta
@@ -267,11 +275,11 @@ export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
     String(ticket.corpo ?? '').slice(0, 4000),
     ``,
     pedidosCliente.length
-      ? `Pedidos deste cliente na Shopify (localizados pelo e-mail ${ticket.de}), do mais recente ao mais antigo:\n`
+      ? `Pedidos deste cliente na Shopify (localizados pelo e-mail do remetente ou por e-mail/número de pedido citado na conversa), do mais recente ao mais antigo:\n`
         + pedidosCliente.map(p =>
-          `- ${p.numero}: status ${p.status}, rastreio ${p.rastreio}${p.urlRastreio ? ` (${p.urlRastreio})` : ''}${p.transportadora ? `, transportadora ${p.transportadora}` : ''}, país ${p.pais}, valor ${p.valor}, criado em ${p.criadoEm}`
+          `- ${p.numero}: status ${p.status}, rastreio ${p.rastreio}${p.urlRastreio ? ` (${p.urlRastreio})` : ''}${p.transportadora ? `, transportadora ${p.transportadora}` : ''}, país ${p.pais}, valor ${p.valor}, criado em ${p.criadoEm}${p.email && p.email.trim().toLowerCase() !== emailCliente ? `, comprado com o e-mail ${p.email}` : ''}`
           + (p.itens?.length ? `\n  itens: ${p.itens.map(i => `${i.quantidade}x ${i.titulo}${i.variante ? ` (${i.variante})` : ''}`).join('; ')}` : '')).join('\n')
-      : `Nenhum pedido encontrado para o e-mail ${ticket.de} na Shopify. Se o cliente falar de um pedido, peça o número do pedido ou o e-mail usado na compra.`,
+      : `Nenhum pedido encontrado na Shopify — nem pelo e-mail ${ticket.de}, nem pelos e-mails ou números de pedido citados na conversa. Se o cliente falar de um pedido, peça o número do pedido ou o e-mail usado na compra.`,
     ...(instrucaoExtra ? [
       ``,
       `INSTRUÇÃO DO LOJISTA para esta resposta (prioridade máxima — siga à risca, acima do fluxo padrão; este e-mail NÃO é spam, escreva a resposta):`,

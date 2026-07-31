@@ -79,9 +79,18 @@ function PainelPedidos({ t }: { t: Ticket }) {
     return (i.varianteId && pr?.imagemPorVariante?.[i.varianteId]) || pr?.imagem || null
   }
   const emailCliente = t.de.trim().toLowerCase()
+  // o cliente às vezes abre o chamado com outro e-mail e só passa o e-mail da
+  // compra (ou o nº do pedido) no meio da conversa — procura por tudo isso
+  const textoConversa = [t.assunto, t.corpo, t.resposta, ...(t.historico?.map(m => m.corpo) ?? [])].join('\n').toLowerCase()
+  const emailsCitados = new Set([emailCliente, ...(textoConversa.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? [])])
+  const numerosCitados = new Set<string>()
+  for (const m of textoConversa.matchAll(/(?:#\s?|\b(?:pedido|encomenda|order|bestell(?:ung|ing)?|bestelling|commande|ordine)\s*(?:nr\.?|n[º°o]\.?|#)?\s*)(\d{3,7})\b/g)) {
+    numerosCitados.add(m[1])
+  }
   const doCliente = pedidos
     .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
-    .filter(p => p.email && p.email.trim().toLowerCase() === emailCliente)
+    .filter(p => (p.email && emailsCitados.has(p.email.trim().toLowerCase()))
+      || (p.numero && numerosCitados.has(p.numero.replace(/\D/g, ''))))
     .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''))
     .slice(0, 5)
 
@@ -94,9 +103,9 @@ function PainelPedidos({ t }: { t: Ticket }) {
         </div>
         {doCliente.length === 0 ? (
           <p className="muted-sm" style={{ lineHeight: 1.6 }}>
-            Nenhum pedido localizado para <b>{t.de}</b>.
+            Nenhum pedido localizado para <b>{t.de}</b> nem pelos e-mails e números de pedido citados na conversa.
             <br /><br />
-            O cliente pode ter comprado com outro e-mail — peça o número do pedido na resposta.
+            O cliente pode ter comprado com outro e-mail — peça o número do pedido ou o e-mail da compra na resposta.
           </p>
         ) : (
           doCliente.map(p => (
@@ -107,6 +116,11 @@ function PainelPedidos({ t }: { t: Ticket }) {
                   {statusPedido[p.status]?.rotulo ?? p.status}
                 </span>
               </div>
+              {p.email && p.email.trim().toLowerCase() !== emailCliente && (
+                <div className="muted-sm" style={{ marginTop: -4, marginBottom: 8, overflowWrap: 'anywhere' }}>
+                  comprado com {p.email}
+                </div>
+              )}
               {(p.itens?.length ?? 0) > 0 && (
                 <div style={{ display: 'grid', gap: 4, marginBottom: 8 }}>
                   {p.itens!.map((i, idx) => (
