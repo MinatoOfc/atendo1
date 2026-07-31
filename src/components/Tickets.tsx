@@ -154,7 +154,7 @@ const rotuloStatus: Record<string, string> = {
 }
 
 export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, alternarRelatorio, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, config, lojas } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, alternarRelatorio, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
@@ -166,6 +166,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   const [erroGerar, setErroGerar] = useState<string | null>(null)
   const [verTradRascunho, setVerTradRascunho] = useState(false)
   const [traduzindoRasc, setTraduzindoRasc] = useState(false)
+  const [traducaoManual, setTraducaoManual] = useState<string | null>(null)
   const [resumoAberto, setResumoAberto] = useState(true)
 
   // Regeneração e troca de ticket atualizam o texto na tela — mas o eco do
@@ -206,6 +207,53 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
     }
     setVerTraducao(v => !v)
   }
+
+  // Barra de IA das caixas manuais (Responder manualmente / Nova mensagem):
+  // gera o texto direto na caixa, sem virar rascunho nem mudar o status
+  const gerarNaCaixa = async () => {
+    setGerando(true); setErroGerar(null)
+    const r = await gerarTexto(t.id, instrucao.trim())
+    setGerando(false)
+    if (r.erro) { setErroGerar(r.erro); return }
+    setManual(r.texto ?? '')
+    setTraducaoManual(null)
+    setInstrucao('')
+  }
+  const traduzirCaixa = async () => {
+    if (traducaoManual) { setTraducaoManual(null); return }
+    if (!manual.trim()) return
+    setTraduzindoRasc(true); setErroGerar(null)
+    const r = await traduzirTexto(manual)
+    setTraduzindoRasc(false)
+    if (r.erro) { setErroGerar(r.erro); return }
+    setTraducaoManual(r.traducao ?? null)
+  }
+  const barraIAManual = (
+    <>
+      {traducaoManual && (
+        <div className="card-soft" style={{ padding: '10px 12px', marginTop: 10, fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+          <div className="row gap-8 mb-8">
+            <Languages size={13} color="var(--purple)" />
+            <b style={{ fontSize: 12.5 }}>Tradução — só para você conferir; o envio usa o texto acima</b>
+          </div>
+          {traducaoManual}
+        </div>
+      )}
+      <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+        <input value={instrucao} onChange={e => setInstrucao(e.target.value)}
+          placeholder="Instrução para a IA (ex.: avise que houve erro no endereço)…"
+          style={{ flex: 1, minWidth: 220, border: '1px solid var(--purple-border)', borderRadius: 8, padding: '7px 11px', fontSize: 13, outline: 'none', background: 'var(--panel)' }}
+          onKeyDown={e => { if (e.key === 'Enter' && !gerando) gerarNaCaixa() }} />
+        <button className="btn btn-sm" disabled={gerando} onClick={gerarNaCaixa}>
+          <Sparkles size={13} /> {gerando ? 'Gerando…' : 'Gerar com IA'}
+        </button>
+        <button className="btn btn-sm" disabled={traduzindoRasc || (!manual.trim() && !traducaoManual)} onClick={traduzirCaixa}>
+          <Languages size={13} /> {traduzindoRasc ? 'Traduzindo…' : traducaoManual ? 'Ocultar tradução' : 'Ver em português'}
+        </button>
+      </div>
+      {erroGerar && <p className="muted-sm" style={{ color: 'var(--red)', marginTop: 6 }}>{erroGerar}</p>}
+    </>
+  )
 
   return (
     <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', maxWidth: 1180, margin: '0 auto' }}>
@@ -409,9 +457,10 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           <div className="row gap-8 mb-12">
             <PenSquare size={15} color="var(--purple)" />
             <span className="h3" style={{ color: 'var(--purple)' }}>Responder manualmente</span>
-            <span className="muted-sm">escreva a resposta do seu jeito — a IA não interfere nem gasta tokens</span>
+            <span className="muted-sm">escreva do seu jeito — ou peça um texto à IA na barra abaixo</span>
           </div>
-          <textarea value={manual} onChange={e => setManual(e.target.value)} placeholder="Escreva sua resposta ao cliente…" />
+          <textarea value={manual} onChange={e => { setManual(e.target.value); setTraducaoManual(null) }} placeholder="Escreva sua resposta ao cliente…" />
+          {barraIAManual}
           <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
             <button className="btn btn-primary" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
               onClick={() => { aprovarEnviar(t.id, manual.trim()); onBack() }}>
@@ -436,9 +485,11 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             <div className="row gap-8 mb-12">
               <PenSquare size={15} color="var(--purple)" />
               <span className="h3" style={{ color: 'var(--purple)' }}>Nova mensagem ao cliente</span>
+              <span className="muted-sm">escreva do seu jeito — ou peça um texto à IA na barra abaixo</span>
             </div>
-            <textarea value={manual} onChange={e => setManual(e.target.value)} placeholder="Escreva a mensagem…" autoFocus />
-            <div className="row gap-8" style={{ marginTop: 12 }}>
+            <textarea value={manual} onChange={e => { setManual(e.target.value); setTraducaoManual(null) }} placeholder="Escreva a mensagem…" autoFocus />
+            {barraIAManual}
+            <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
               <button className="btn btn-primary" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
                 onClick={() => { aprovarEnviar(t.id, manual.trim()); setManual(''); setNovaResposta(false) }}>
                 <Send size={14} /> Enviar

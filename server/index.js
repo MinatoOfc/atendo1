@@ -1163,6 +1163,14 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
   if (!r || !r.resposta) {
     return res.status(400).json({ erro: statusIA.erro || 'A IA não devolveu uma resposta. Tente de novo.', state: visao(req.wsId) })
   }
+  // Modo "só o texto": usado pelas caixas de resposta manual/nova mensagem —
+  // devolve o texto gerado sem virar rascunho nem mexer no status da conversa
+  if (req.body.somenteTexto) {
+    if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
+    registrarGasto(req.estado, t.lojaId, r.custo)
+    salvar(req.wsId)
+    return res.json({ ok: true, texto: r.resposta, state: visao(req.wsId) })
+  }
   t.rascunho = r.resposta
   t.rascunhoTraducao = undefined
   t.confianca = r.confianca
@@ -1184,6 +1192,15 @@ app.post('/api/tickets/:id/traduzir-rascunho', async (req, res) => {
     salvar(req.wsId)
   }
   ok(req, res)
+})
+
+// Traduz um texto avulso (o que o lojista escreveu/gerou na caixa manual) — Google, gratuito
+app.post('/api/traduzir-texto', async (req, res) => {
+  const texto = String(req.body?.texto || '').trim()
+  if (!texto) return res.status(400).json({ erro: 'Nada para traduzir.' })
+  const r = await traduzirGratis([texto])
+  if (r.erro) return res.status(400).json({ erro: r.erro })
+  res.json({ ok: true, traducao: r.textos[0] })
 })
 
 app.post('/api/tickets/:id/aprovar', async (req, res) => {

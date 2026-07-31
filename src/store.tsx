@@ -243,7 +243,7 @@ interface Store extends ServerState {
   setConfig: (patch: Partial<Config>) => void
   fecharTip: (id: string) => void
   sincronizar: () => Promise<number>
-  enviarNovoEmail: (para: string, assunto: string, corpo: string) => void
+  enviarNovoEmail: (para: string, assunto: string, corpo: string, lojaId?: string) => void
   marcarLido: (id: string) => void
   marcarResolvido: (id: string) => void
   alternarRelatorio: (id: string, adicionar: boolean) => void
@@ -275,6 +275,8 @@ interface Store extends ServerState {
   traduzirTicket: (id: string) => Promise<boolean>
   regenerarRascunho: (id: string, instrucao: string) => Promise<string | null>
   traduzirRascunho: (id: string) => Promise<string | null>
+  gerarTexto: (id: string, instrucao: string) => Promise<{ erro?: string; texto?: string }>
+  traduzirTexto: (texto: string) => Promise<{ erro?: string; traducao?: string }>
 }
 
 const Ctx = createContext<Store>(null as unknown as Store)
@@ -465,7 +467,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return r.novos ?? 0
     },
 
-    enviarNovoEmail: (para, assunto, corpo) => api('/compose', 'POST', { para, assunto, corpo }).then(aplicar),
+    enviarNovoEmail: (para, assunto, corpo, lojaId) =>
+      api('/compose', 'POST', { para, assunto, corpo, lojaId: lojaId ?? (lojaAtiva !== 'todas' ? lojaAtiva : undefined) }).then(aplicar),
 
     marcarLido: id => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, lido: true } : t)) }))
@@ -565,6 +568,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (r.erro) return r.erro
       aplicar(r)
       return null
+    },
+    gerarTexto: async (id, instrucao) => {
+      const r = (await api(`/tickets/${id}/regenerar`, 'POST', { instrucao, somenteTexto: true })) as { erro?: string; texto?: string; state?: ServerState }
+      if (r.erro) return { erro: r.erro }
+      aplicar(r)
+      return { texto: r.texto }
+    },
+    traduzirTexto: async texto => {
+      const r = (await api('/traduzir-texto', 'POST', { texto })) as { erro?: string; traducao?: string }
+      if (r.erro) return { erro: r.erro }
+      return { traducao: r.traducao }
     },
     }
   }, [state, carregado, tipsFechados, lojaAtiva, usuario, autenticando, prefs])

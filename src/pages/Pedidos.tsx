@@ -1,8 +1,9 @@
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ShoppingBag, Search, ChevronRight } from 'lucide-react'
-import { useStore } from '../store'
+import { ShoppingBag, Search, ChevronRight, Mail } from 'lucide-react'
+import { useStore, type Pedido } from '../store'
 import { EmptyState, TipCard, MiniFoto } from '../components/Shared'
+import ComposeModal from '../components/ComposeModal'
 
 const statusPedido: Record<string, { label: string; cls: string }> = {
   aguardando: { label: 'Aguardando envio', cls: 'tag-amber' },
@@ -25,6 +26,8 @@ export default function Pedidos() {
   const nav = useNavigate()
   const [busca, setBusca] = useState('')
   const [expandido, setExpandido] = useState<string | null>(null)
+  // e-mail direto ao cliente do pedido (ex.: aviso de erro no endereço)
+  const [emailPara, setEmailPara] = useState<Pedido | null>(null)
 
   const q = normalizar(busca.trim())
   const filtrados = q
@@ -110,6 +113,14 @@ export default function Pedidos() {
                         ) : (
                           <span className="muted-sm">Itens ainda não sincronizados — clique em Sincronizar no topo para carregar os itens deste pedido.</span>
                         )}
+                        {p.email && (
+                          <div style={{ marginTop: 10 }}>
+                            <button className="btn btn-sm" onClick={e => { e.stopPropagation(); setEmailPara(p) }}
+                              title={`Enviar e-mail para ${p.email}`}>
+                              <Mail size={13} /> Enviar e-mail ao cliente
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   )}
@@ -119,6 +130,12 @@ export default function Pedidos() {
           </tbody>
         </table>
       </div>
+      {emailPara && (
+        <ComposeModal
+          onClose={() => setEmailPara(null)}
+          inicial={{ para: emailPara.email, assunto: `Pedido ${emailPara.numero}`, lojaId: emailPara.lojaId }}
+        />
+      )}
     </div>
   )
 }
