@@ -367,7 +367,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         </div>
       )}
 
-      {t.status === 'enviado' && t.resposta && (
+      {t.resposta && (
         <div className="detail-msg" style={{ background: 'var(--panel-soft)' }}>
           <div className="head">
             <span>
@@ -419,12 +419,11 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             <button className="btn btn-sm" disabled={traduzindoRasc}
               onClick={async () => {
                 if (verTradRascunho) { setVerTradRascunho(false); return }
-                if (!t.rascunhoTraducao) {
-                  setTraduzindoRasc(true)
-                  const erro = await traduzirRascunho(t.id)
-                  setTraduzindoRasc(false)
-                  if (erro) { setErroGerar(erro); return }
-                }
+                // sempre pergunta ao servidor — ele retraduz se o rascunho mudou
+                setTraduzindoRasc(true)
+                const erro = await traduzirRascunho(t.id)
+                setTraduzindoRasc(false)
+                if (erro) { setErroGerar(erro); return }
                 setVerTradRascunho(true)
               }}>
               <Languages size={13} /> {traduzindoRasc ? 'Traduzindo…' : verTradRascunho ? 'Ocultar tradução' : 'Ver em português'}
@@ -433,12 +432,19 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           {erroGerar && <p className="muted-sm" style={{ color: 'var(--red)', marginTop: 6 }}>{erroGerar}</p>}
 
           <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={() => { aprovarEnviar(t.id, texto); onBack() }}>
+            {t.status === 'humano' && (
+              <button className="btn" title="Envia a mensagem ao cliente, mas a conversa continua em atendimento humano até você aprovar"
+                onClick={() => aprovarEnviar(t.id, texto, true)}>
+                <Send size={14} /> Enviar (continua comigo)
+              </button>
+            )}
+            <button className="btn btn-primary" title="Envia a mensagem e fecha o caso"
+              onClick={() => { aprovarEnviar(t.id, texto); onBack() }}>
               <Check size={14} /> Aprovar e enviar
             </button>
-            <button className="btn" title="Fecha o caso sem enviar nada — ele sai daqui e fica como respondido"
+            <button className="btn" title={t.resposta ? 'Fecha o caso sem enviar mais nada' : 'Fecha o caso sem enviar nada — ele sai daqui e fica como respondido'}
               onClick={() => { marcarResolvido(t.id); onBack() }}>
-              <CheckCheck size={14} /> Resolvido sem enviar
+              <CheckCheck size={14} /> {t.resposta ? 'Aprovar e fechar' : 'Resolvido sem enviar'}
             </button>
             {t.status !== 'humano' && (
               <button className="btn" onClick={() => { moverPara(t.id, 'humano', 'Escalado manualmente por você'); onBack() }}>
@@ -462,13 +468,21 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           <textarea value={manual} onChange={e => { setManual(e.target.value); setTraducaoManual(null) }} placeholder="Escreva sua resposta ao cliente…" />
           {barraIAManual}
           <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+            {t.status === 'humano' && (
+              <button className="btn" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
+                title="Envia a mensagem ao cliente, mas a conversa continua em atendimento humano até você aprovar"
+                onClick={() => { aprovarEnviar(t.id, manual.trim(), true); setManual(''); setTraducaoManual(null) }}>
+                <Send size={14} /> Enviar (continua comigo)
+              </button>
+            )}
             <button className="btn btn-primary" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
+              title="Envia a mensagem e fecha o caso"
               onClick={() => { aprovarEnviar(t.id, manual.trim()); onBack() }}>
-              <Send size={14} /> Enviar resposta
+              <Send size={14} /> {t.status === 'humano' ? 'Aprovar e enviar' : 'Enviar resposta'}
             </button>
-            <button className="btn" title="Fecha o caso sem enviar nada — ele sai daqui e fica como respondido"
+            <button className="btn" title={t.resposta ? 'Fecha o caso sem enviar mais nada' : 'Fecha o caso sem enviar nada — ele sai daqui e fica como respondido'}
               onClick={() => { marcarResolvido(t.id); onBack() }}>
-              <CheckCheck size={14} /> Resolvido sem enviar
+              <CheckCheck size={14} /> {t.resposta ? 'Aprovar e fechar' : 'Resolvido sem enviar'}
             </button>
             <button className="btn" onClick={() => { moverPara(t.id, 'spam'); onBack() }}><Shield size={14} /> Spam</button>
             <button className="btn btn-danger" onClick={() => { moverPara(t.id, 'lixeira'); onBack() }}><Trash2 size={14} /> Excluir</button>

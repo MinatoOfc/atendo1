@@ -355,9 +355,10 @@ function aplicarResultado(estado, t, r) {
   t.categoria = r.categoria
   t.idioma = r.idioma
   t.rascunho = r.resposta
+  t.rascunhoTraducao = undefined // rascunho novo — a tradução antiga era de outro texto
   t.confianca = r.confianca
   t.geradoPorIA = r.geradoPorIA
-  if (r.situacao) t.resumoSituacao = r.situacao
+  if (r.situacao) { t.resumoSituacao = r.situacao; t.situacaoTraducao = undefined }
   if (r.resolucao) t.resolucao = r.resolucao
   if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
   registrarGasto(estado, t.lojaId, r.custo)
@@ -369,6 +370,7 @@ function aplicarResultado(estado, t, r) {
   // mesmo que o modelo devolva escalar_humano=false ou confiança alta.
   const reembolso = r.categoria === 'reembolso'
 
+  t.motivoTraducao = undefined // motivo muda junto com o resultado — tradução antiga não vale
   if (sensivel || incerto || reembolso) {
     t.status = 'humano'
     t.motivoEscalada = reembolso
@@ -508,12 +510,13 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId }) {
 
   t.historico = t.historico || []
   if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao })
-  if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data })
+  if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data, traducao: t.respostaTraducao })
 
   t.corpo = corpo
   t.data = data || new Date().toISOString()
   t.lido = false
   t.resposta = undefined
+  t.respostaTraducao = undefined
   t.respondidoEm = undefined
   t.enviaEm = undefined
   t.erroEnvio = undefined
@@ -527,11 +530,13 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId }) {
   } else if (t.iaPausada) {
     t.status = 'humano'
     t.motivoEscalada = 'IA pausada nesta conversa — responda manualmente ou retome a IA'
+    t.motivoTraducao = undefined
   } else {
     const r = await processarEmail(estado, t)
     if (r.spam) {
       t.status = 'spam'
       t.rascunho = undefined
+      t.rascunhoTraducao = undefined
       t.enviaEm = undefined
       if (r.custo) t.custoIA = Math.round(((t.custoIA || 0) + r.custo) * 1e6) / 1e6
       registrarGasto(estado, t.lojaId, r.custo)
@@ -619,21 +624,23 @@ async function enviarResposta(wsId, ticket, texto) {
   if (canal) {
     await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto })
   }
-  // Nova resposta numa conversa já respondida: arquiva a troca anterior no
-  // histórico antes de sobrescrever, para nada se perder na tela.
-  if (ticket.status === 'enviado' && ticket.resposta) {
+  // Nova resposta numa conversa que já tem resposta enviada (respondida ou
+  // mantida em atendimento humano): arquiva a troca anterior no histórico
+  // antes de sobrescrever, para nada se perder na tela.
+  if (ticket.resposta) {
     ticket.historico = ticket.historico || []
     if (ticket.corpo) {
       ticket.historico.push({ autor: 'cliente', corpo: ticket.corpo, data: ticket.data, traducao: ticket.traducao })
       ticket.corpo = ''
       ticket.traducao = undefined
     }
-    ticket.historico.push({ autor: 'atendo', corpo: ticket.resposta, data: ticket.respondidoEm || ticket.data })
+    ticket.historico.push({ autor: 'atendo', corpo: ticket.resposta, data: ticket.respondidoEm || ticket.data, traducao: ticket.respostaTraducao })
     ticket.respostaTraducao = undefined
   }
   ticket.status = 'enviado'
   ticket.resposta = texto
   ticket.rascunho = texto
+  ticket.rascunhoTraducao = undefined
   ticket.respondidoEm = new Date().toISOString()
   ticket.enviaEm = undefined
   ticket.lido = true
@@ -1136,7 +1143,7 @@ app.post('/api/tickets/:id/resolver', (req, res) => {
   t.erroEnvio = undefined
   t.tentativasEnvio = undefined
   t.motivoEscalada = undefined
-  t.resolucao = t.resolucao || 'Resolvido sem resposta por e-mail'
+  t.resolucao = t.resolucao || (t.resposta ? 'Resolvido' : 'Resolvido sem resposta por e-mail')
   salvar(req.wsId); ok(req, res)
 })
 
@@ -1185,10 +1192,13 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
 app.post('/api/tickets/:id/traduzir-rascunho', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   if (!t.rascunho) return res.status(400).json({ erro: 'Este ticket não tem rascunho para traduzir.', state: visao(req.wsId) })
-  if (!t.rascunhoTraducao) {
+  // retraduz sempre que o rascunho mudou desde a última tradução — nunca
+  // mostra tradução de um texto antigo (cobre inclusive tickets já salvos)
+  if (!t.rascunhoTraducao || t.rascunhoTraduzidoDe !== t.rascunho) {
     const r = await traduzirGratis([t.rascunho])
     if (r.erro) return res.status(400).json({ erro: r.erro, state: visao(req.wsId) })
     t.rascunhoTraducao = r.textos[0]
+    t.rascunhoTraduzidoDe = t.rascunho
     salvar(req.wsId)
   }
   ok(req, res)
@@ -1206,7 +1216,18 @@ app.post('/api/traduzir-texto', async (req, res) => {
 app.post('/api/tickets/:id/aprovar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   try {
+    const motivo = t.motivoEscalada
+    const motivoTrad = t.motivoTraducao
     await enviarResposta(req.wsId, t, String(req.body.texto ?? t.rascunho ?? ''))
+    // "Enviar e manter comigo": a mensagem sai, mas a conversa continua em
+    // atendimento humano até o lojista aprovar (fechar) de verdade
+    if (req.body.manterAberto) {
+      t.status = 'humano'
+      t.motivoEscalada = motivo
+      t.motivoTraducao = motivoTrad
+      t.rascunho = undefined
+      t.rascunhoTraducao = undefined
+    }
     salvar(req.wsId); ok(req, res)
   } catch (err) {
     console.error('[enviar]', err)

@@ -247,7 +247,7 @@ interface Store extends ServerState {
   marcarLido: (id: string) => void
   marcarResolvido: (id: string) => void
   alternarRelatorio: (id: string, adicionar: boolean) => void
-  aprovarEnviar: (id: string, texto: string) => void
+  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean) => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
   restaurar: (id: string) => void
@@ -484,13 +484,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       debounces.current[id] = window.setTimeout(() => { api(`/tickets/${id}/rascunho`, 'POST', { texto }) }, 800)
     },
 
-    aprovarEnviar: (id, texto) => {
+    aprovarEnviar: (id, texto, manterAberto) => {
       clearTimeout(debounces.current[id])
       setState(s => ({
         ...s,
-        tickets: s.tickets.map(t => (t.id === id ? { ...t, status: 'enviado', resposta: texto, respondidoEm: new Date().toISOString(), enviaEm: undefined } : t)),
+        tickets: s.tickets.map(t => (t.id === id
+          ? { ...t, status: manterAberto ? t.status : 'enviado', resposta: texto, respondidoEm: new Date().toISOString(), enviaEm: undefined }
+          : t)),
       }))
-      api(`/tickets/${id}/aprovar`, 'POST', { texto }).then(r => {
+      api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto }).then(r => {
         if (r.erro) alert(r.erro)
         aplicar(r)
       })
