@@ -371,10 +371,16 @@ function aplicarResultado(estado, t, r) {
   // Regra fixa do código, não da IA: reembolso SEMPRE espera decisão humana,
   // mesmo que o modelo devolva escalar_humano=false ou confiança alta.
   const reembolso = r.categoria === 'reembolso'
+  // Resposta vazia nunca pode cair no envio automático — vira caso humano
+  const semResposta = !String(r.resposta || '').trim()
 
   t.motivoTraducao = undefined // motivo muda junto com o resultado — tradução antiga não vale
-  if (sensivel || incerto || reembolso) {
+  if (sensivel || incerto || reembolso || semResposta) {
     t.status = 'humano'
+    // Caso escalado é do lojista: sem mensagem pré-gerada — ele escreve na
+    // conversa ou pede à IA na hora ("Gerar com IA"), sem gastar tokens à toa
+    t.rascunho = undefined
+    t.rascunhoTraducao = undefined
     t.motivoEscalada = reembolso
       ? (r.motivo || 'Reembolso — sempre passa pela sua aprovação')
       : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
