@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft, Check, CheckCheck, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
-  Package, ExternalLink, PenSquare, ClipboardList,
+  Package, ExternalLink, PenSquare, ClipboardList, X, Plus,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket } from '../store'
-import { MiniFoto } from './Shared'
+import { MiniFoto, Modal } from './Shared'
 
 export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Ticket) => void; tagStatus?: boolean }) {
   const { lojasVisiveis, lojaAtiva, prefs, pedidos } = useStore()
@@ -158,6 +158,61 @@ function PainelPedidos({ t }: { t: Ticket }) {
   )
 }
 
+/* Popup do "Adicionar ao relatório": o lojista escolhe (e configura) o texto
+   pré-definido que vira a linha do caso no relatório manual do dia */
+function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
+  const { opcoesRelatorio = [], alternarRelatorio, salvarOpcoesRelatorio } = useStore()
+  const [novo, setNovo] = useState('')
+  const escolher = (texto?: string) => { alternarRelatorio(t.id, true, texto); onClose() }
+  return (
+    <Modal title="Adicionar ao relatório de hoje" onClose={onClose}>
+      <p className="muted-sm" style={{ marginBottom: 12, lineHeight: 1.5 }}>
+        Escolha como este caso aparece no relatório manual — a linha sai como <b>PEDIDO Nº - texto escolhido</b>.
+      </p>
+      {opcoesRelatorio.map(o => (
+        <div key={o} className="row gap-8 mb-8">
+          <button className={'btn' + (t.relatorioDia && t.relatorioTexto === o ? ' btn-primary' : '')}
+            style={{ flex: 1, justifyContent: 'flex-start' }} onClick={() => escolher(o)}>
+            {o}
+          </button>
+          <button className="btn-ghost btn-sm" title="Tirar esta opção da lista"
+            onClick={() => salvarOpcoesRelatorio(opcoesRelatorio.filter(x => x !== o))}>
+            <X size={13} />
+          </button>
+        </div>
+      ))}
+      <button className={'btn mb-12' + (t.relatorioDia && !t.relatorioTexto ? ' btn-primary' : '')}
+        style={{ width: '100%', justifyContent: 'flex-start' }}
+        title="A linha usa a resolução que a IA anotou para esta conversa"
+        onClick={() => escolher(undefined)}>
+        <Sparkles size={13} /> Usar a resolução automática{t.resolucao ? ` — “${t.resolucao.length > 46 ? t.resolucao.slice(0, 46) + '…' : t.resolucao}”` : ''}
+      </button>
+      <div className="field">
+        <label>Outro texto</label>
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+          <input value={novo} onChange={e => setNovo(e.target.value)} placeholder="ex.: REEMBOLSO 50%"
+            style={{ flex: 1, minWidth: 160 }}
+            onKeyDown={e => { if (e.key === 'Enter' && novo.trim()) escolher(novo.trim()) }} />
+          <button className="btn" disabled={!novo.trim()} title="Usa este texto só neste caso"
+            onClick={() => escolher(novo.trim())}>Usar</button>
+          <button className="btn" disabled={!novo.trim()} title="Adiciona à lista de opções para as próximas vezes"
+            onClick={() => { salvarOpcoesRelatorio([...opcoesRelatorio, novo.trim()]); setNovo('') }}>
+            <Plus size={13} /> Salvar opção
+          </button>
+        </div>
+      </div>
+      {t.relatorioDia && (
+        <div className="row spread" style={{ marginTop: 14, flexWrap: 'wrap', gap: 8 }}>
+          <span className="muted-sm">No relatório como: <b>{t.relatorioTexto ?? 'resolução automática'}</b></span>
+          <button className="btn btn-danger btn-sm" onClick={() => { alternarRelatorio(t.id, false); onClose() }}>
+            <X size={13} /> Remover do relatório
+          </button>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 const rotuloStatus: Record<string, string> = {
   inbox: 'Aguardando primeira resposta',
   aprovacao: 'Aguardando sua aprovação',
@@ -168,7 +223,7 @@ const rotuloStatus: Record<string, string> = {
 }
 
 export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, alternarRelatorio, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
@@ -182,6 +237,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   const [traduzindoRasc, setTraduzindoRasc] = useState(false)
   const [traducaoManual, setTraducaoManual] = useState<string | null>(null)
   const [resumoAberto, setResumoAberto] = useState(true)
+  const [modalRelatorio, setModalRelatorio] = useState(false)
 
   // Regeneração e troca de ticket atualizam o texto na tela — mas o eco do
   // salvamento automático (debounce) nunca pode reverter o que você digita.
@@ -293,8 +349,8 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           <b style={{ fontSize: 13.5 }}>Resumo da conversa</b>
           <div className="row gap-8">
             <button className={'btn btn-sm' + (t.relatorioDia ? ' btn-primary' : '')}
-              title={t.relatorioDia ? 'Remover do relatório manual' : 'Marcar este caso para o relatório manual de hoje (página Resumo diário)'}
-              onClick={() => alternarRelatorio(t.id, !t.relatorioDia)}>
+              title={t.relatorioDia ? 'Trocar o texto ou remover do relatório' : 'Marcar este caso para o relatório manual de hoje (página Resumo diário)'}
+              onClick={() => setModalRelatorio(true)}>
               <ClipboardList size={13} /> {t.relatorioDia ? 'No relatório ✓' : 'Adicionar ao relatório'}
             </button>
             <button className="btn-ghost btn-sm" onClick={() => setResumoAberto(a => !a)}>{resumoAberto ? 'Ocultar' : 'Mostrar'}</button>
@@ -542,6 +598,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
     </div>
 
     <PainelPedidos t={t} />
+    {modalRelatorio && <ModalRelatorio t={t} onClose={() => setModalRelatorio(false)} />}
     </div>
   )
 }

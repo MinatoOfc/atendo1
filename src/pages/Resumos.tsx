@@ -37,16 +37,22 @@ export default function Resumos() {
 
   /* ---- Relatório manual: só os casos que o lojista marcou nas conversas ---- */
   const numeroDoTicket = (t: Ticket) => {
+    // mesma busca do painel do ticket: remetente + e-mails e números citados na conversa
+    const texto = [t.assunto, t.corpo, t.resposta, ...(t.historico?.map(m => m.corpo) ?? [])].join('\n').toLowerCase()
+    const emails = new Set([t.de.trim().toLowerCase(), ...(texto.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? [])])
+    const numeroCitado = texto.match(/(?:#\s?|\b(?:pedido|encomenda|order|bestell(?:ung|ing)?|bestelling|commande|ordine)\s*(?:nr\.?|n[º°o]\.?|#)?\s*)(\d{3,7})\b/i)?.[1] ?? null
     const doCliente = s.pedidos.find(p =>
-      (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1') && p.email && p.email.trim().toLowerCase() === t.de.trim().toLowerCase())
+      (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1')
+      && ((p.email && emails.has(p.email.trim().toLowerCase()))
+        || (numeroCitado !== null && p.numero.replace(/\D/g, '') === numeroCitado)))
     if (doCliente) return doCliente.numero.replace('#', '')
-    const m = `${t.assunto} ${t.corpo}`.match(/(?:#\s?|\b(?:pedido|encomenda|order|bestell(?:ung|ing)?|bestelling|commande|ordine)\s*(?:nr\.?|n[º°o]\.?|#)?\s*)(\d{3,7})\b/i)
-    return m?.[1] ?? null
+    return numeroCitado
   }
   const linhaDoTicket = (t: Ticket) => {
     const numero = numeroDoTicket(t)
     const quem = numero ? `PEDIDO ${numero}` : t.nome.toUpperCase()
-    return `${quem} - ${t.resolucao || t.resumoSituacao || nomeCategoria[t.categoria] || 'atendido'}`
+    // texto escolhido no popup vem primeiro; sem ele, cai na resolução automática
+    return `${quem} - ${t.relatorioTexto || t.resolucao || t.resumoSituacao || nomeCategoria[t.categoria] || 'atendido'}`
   }
   // s.tickets já vem filtrado pela loja ativa da seta lateral
   const manuaisDe = (dia: string) => s.tickets.filter(t => t.relatorioDia === dia)

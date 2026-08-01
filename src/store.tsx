@@ -33,6 +33,7 @@ export interface Ticket {
   resumoSituacao?: string
   resolucao?: string
   relatorioDia?: string
+  relatorioTexto?: string
   custoIA?: number
   iaPausada?: boolean
   traducao?: string
@@ -165,6 +166,7 @@ interface ServerState {
   resumosDiarios?: ResumoDiario[]
   geminiDisponivel?: boolean
   gastosIA?: Record<string, Record<string, number>>
+  opcoesRelatorio?: string[]
   hojeChave?: string
   faqs: Faq[]
   pedidos: Pedido[]
@@ -246,7 +248,8 @@ interface Store extends ServerState {
   enviarNovoEmail: (para: string, assunto: string, corpo: string, lojaId?: string) => void
   marcarLido: (id: string) => void
   marcarResolvido: (id: string) => void
-  alternarRelatorio: (id: string, adicionar: boolean) => void
+  alternarRelatorio: (id: string, adicionar: boolean, texto?: string) => void
+  salvarOpcoesRelatorio: (opcoes: string[]) => void
   aprovarEnviar: (id: string, texto: string, manterAberto?: boolean) => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
@@ -476,7 +479,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
 
     marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
-    alternarRelatorio: (id, adicionar) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar }).then(aplicar),
+    alternarRelatorio: (id, adicionar, texto) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar, texto }).then(aplicar),
+    salvarOpcoesRelatorio: opcoes => api('/relatorio-opcoes', 'POST', { opcoes }).then(aplicar),
 
     editarRascunho: (id, texto) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, rascunho: texto } : t)) }))

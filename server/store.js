@@ -41,6 +41,9 @@ export const estadoInicial = {
   resumosDiarios: [],
   // Livro-caixa da IA: { 'AAAA-MM-DD': { lojaId: valorUS$ } }
   gastosIA: {},
+  // Opções pré-definidas para a linha do relatório manual ("PEDIDO N - texto");
+  // o lojista adiciona e remove as suas no popup de "Adicionar ao relatório"
+  opcoesRelatorio: ['REEMBOLSO 100%', 'REEMBOLSO 60%', 'REENVIO DO PEDIDO', 'TROCA DE TAMANHO'],
   pedidos: [],
   produtos: [],
   config: { ...configPadrao },

@@ -199,6 +199,7 @@ function visao(wsId) {
     resumosDiarios: estado.resumosDiarios ?? [],
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
     gastosIA: estado.gastosIA ?? {},
+    opcoesRelatorio: estado.opcoesRelatorio ?? [],
     hojeChave: diaLocal(Date.now()),
     pedidos: estado.pedidos,
     produtos: estado.produtos ?? [],
@@ -1125,7 +1126,25 @@ const acharTicket = (req, res) => {
 // Marca/desmarca a conversa para o relatório manual do dia
 app.post('/api/tickets/:id/relatorio', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
-  t.relatorioDia = req.body?.adicionar ? diaLocal(Date.now()) : undefined
+  if (req.body?.adicionar) {
+    t.relatorioDia = diaLocal(Date.now())
+    // texto escolhido no popup; vazio = usa a resolução automática da conversa
+    const texto = String(req.body.texto || '').trim()
+    t.relatorioTexto = texto || undefined
+  } else {
+    t.relatorioDia = undefined
+    t.relatorioTexto = undefined
+  }
+  salvar(req.wsId); ok(req, res)
+})
+
+// Lista de opções pré-definidas do relatório manual (configurável pelo lojista)
+app.post('/api/relatorio-opcoes', (req, res) => {
+  const opcoes = Array.isArray(req.body?.opcoes)
+    ? [...new Set(req.body.opcoes.map(o => String(o).trim()).filter(Boolean))].slice(0, 50)
+    : null
+  if (!opcoes) return res.status(400).json({ erro: 'opcoes deve ser uma lista de textos', state: visao(req.wsId) })
+  req.estado.opcoesRelatorio = opcoes
   salvar(req.wsId); ok(req, res)
 })
 
