@@ -280,8 +280,9 @@ export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
     pedidosCliente.length
       ? `Pedidos deste cliente na Shopify (localizados pelo e-mail do remetente ou por e-mail/número de pedido citado na conversa), do mais recente ao mais antigo:\n`
         + pedidosCliente.map(p =>
-          `- ${p.numero}: status ${p.status}, rastreio ${p.rastreio}${p.urlRastreio ? ` (${p.urlRastreio})` : ''}${p.transportadora ? `, transportadora ${p.transportadora}` : ''}, país ${p.pais}, valor ${p.valor}, criado em ${p.criadoEm}${p.email && p.email.trim().toLowerCase() !== emailCliente ? `, comprado com o e-mail ${p.email}` : ''}`
-          + (p.itens?.length ? `\n  itens: ${p.itens.map(i => `${i.quantidade}x ${i.titulo}${i.variante ? ` (${i.variante})` : ''}`).join('; ')}` : '')).join('\n')
+          `- ${p.numero}: status ${p.status}, rastreio ${p.rastreio}${p.urlRastreio ? ` (${p.urlRastreio})` : ''}${p.transportadora ? `, transportadora ${p.transportadora}` : ''}, país ${p.pais}, VALOR TOTAL PAGO ${p.valor} ${lojaTicket?.moeda || state.lojas?.[0]?.moeda || ''}, criado em ${p.criadoEm}${p.email && p.email.trim().toLowerCase() !== emailCliente ? `, comprado com o e-mail ${p.email}` : ''}`
+          + (p.itens?.length ? `\n  itens: ${p.itens.map(i => `${i.quantidade}x ${i.titulo}${i.variante ? ` (${i.variante})` : ''}${i.preco ? ` a ${i.preco} pago cada` : ''}`).join('; ')}` : '')).join('\n')
+        + `\nREGRA DE VALORES: para reembolso, estorno ou qualquer conta sobre um pedido, use SEMPRE o VALOR TOTAL PAGO acima — é o que o cliente pagou de fato, já com promoções e descontos. NUNCA calcule somando preços do catálogo (o catálogo serve só para informar preço de produto novo). Reembolso parcial = percentual sobre o VALOR TOTAL PAGO.`
       : `Nenhum pedido encontrado na Shopify — nem pelo e-mail ${ticket.de}, nem pelos e-mails ou números de pedido citados na conversa. Se o cliente falar de um pedido, peça o número do pedido ou o e-mail usado na compra.`,
     ...(instrucaoExtra ? [
       ``,

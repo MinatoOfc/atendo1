@@ -161,15 +161,25 @@ export function mapearPedido(o) {
     urlRastreio: f?.tracking_url || null,
     transportadora: f?.tracking_company || null,
     criadoEm: (o.created_at || '').slice(0, 10),
-    itens: (o.line_items || []).map(li => ({
-      titulo: li.title,
-      variante: li.variant_title || null, // ex.: "Zwart / L" — cor e tamanho
-      quantidade: Number(li.quantity) || 1,
-      preco: Number(li.price || 0),
-      // ligam o item ao produto sincronizado — é de lá que vem a foto
-      produtoId: li.product_id ? String(li.product_id) : null,
-      varianteId: li.variant_id ? String(li.variant_id) : null,
-    })),
+    itens: (o.line_items || []).map(li => {
+      const qtd = Number(li.quantity) || 1
+      // Preço realmente PAGO por unidade: tabela menos os descontos alocados à
+      // linha (promoções de item e do pedido). Com o preço de tabela cru, a IA
+      // "calculava" reembolsos maiores do que o cliente pagou.
+      const bruto = Number(li.price || 0) * qtd
+      const descontos = Array.isArray(li.discount_allocations) && li.discount_allocations.length
+        ? li.discount_allocations.reduce((s, d) => s + Number(d.amount || 0), 0)
+        : Number(li.total_discount || 0)
+      return {
+        titulo: li.title,
+        variante: li.variant_title || null, // ex.: "Zwart / L" — cor e tamanho
+        quantidade: qtd,
+        preco: Math.round(Math.max(0, bruto - descontos) / qtd * 100) / 100,
+        // ligam o item ao produto sincronizado — é de lá que vem a foto
+        produtoId: li.product_id ? String(li.product_id) : null,
+        varianteId: li.variant_id ? String(li.variant_id) : null,
+      }
+    }),
   }
 }
 
