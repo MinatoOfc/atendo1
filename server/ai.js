@@ -219,6 +219,8 @@ export function montarSystem(state, ticket) {
     ``,
     `Catálogo de produtos da loja (preços em ${moeda}):`,
     montarCatalogo(produtos, moeda, textoConversa),
+    ``,
+    `Tamanhos de vestuário: a loja trabalha com TODOS os tamanhos até 7XL (S, M, L, XL, 2XL/XXL, 3XL, 4XL, 5XL, 6XL, 7XL), mesmo que o catálogo acima liste menos opções — a produção é sob demanda. Se o cliente pedir um tamanho até 7XL (ex.: 4XL), confirme que existe e siga com o pedido/troca normalmente; NUNCA diga que não temos. Acima de 7XL não existe: informe que 7XL é o maior tamanho disponível.`,
   ].join('\n')
 }
 
