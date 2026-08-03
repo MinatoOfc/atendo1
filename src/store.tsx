@@ -126,8 +126,12 @@ export interface Loja {
 export interface Usuario { id: string; nome: string; email: string }
 
 /** Preferências deste dispositivo (ficam no navegador, não no servidor). */
+export type Paleta = 'notion' | 'oceano' | 'floresta' | 'sol' | 'lavanda' | 'cereja'
+const paletasValidas: readonly Paleta[] = ['notion', 'oceano', 'floresta', 'sol', 'lavanda', 'cereja']
+
 export interface Prefs {
   tema: 'claro' | 'escuro'
+  paleta: Paleta
   densidade: 'confortavel' | 'compacto'
   mostrarPreview: boolean
   moedaExibicao: 'loja' | 'USD' | 'EUR' | 'BRL'
@@ -135,7 +139,7 @@ export interface Prefs {
 }
 
 const prefsPadrao: Prefs = {
-  tema: 'claro', densidade: 'confortavel', mostrarPreview: true,
+  tema: 'claro', paleta: 'notion', densidade: 'confortavel', mostrarPreview: true,
   moedaExibicao: 'loja', tamanhoFonte: 'padrao',
 }
 
@@ -297,7 +301,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [usuario, setUsuario] = useState<Usuario | null>(null)
   const [autenticando, setAutenticando] = useState(true)
   const [prefs, setPrefs] = useState<Prefs>(() => {
-    try { return { ...prefsPadrao, ...JSON.parse(localStorage.getItem('atendo-prefs') ?? '{}') } } catch { return prefsPadrao }
+    try {
+      const p: Prefs = { ...prefsPadrao, ...JSON.parse(localStorage.getItem('atendo-prefs') ?? '{}') }
+      // valor desconhecido salvo no navegador (ex.: versão futura) cai no padrão
+      if (!paletasValidas.includes(p.paleta)) p.paleta = 'notion'
+      return p
+    } catch { return prefsPadrao }
   })
   const debounces = useRef<Record<string, number>>({})
 
@@ -305,6 +314,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     localStorage.setItem('atendo-prefs', JSON.stringify(prefs))
     document.documentElement.dataset.theme = prefs.tema === 'escuro' ? 'dark' : ''
+    if (prefs.paleta && prefs.paleta !== 'notion') document.documentElement.dataset.paleta = prefs.paleta
+    else delete document.documentElement.dataset.paleta
     const zoom = { pequeno: '0.92', padrao: '1', grande: '1.08' }[prefs.tamanhoFonte]
     ;(document.body.style as CSSStyleDeclaration & { zoom?: string }).zoom = zoom
   }, [prefs])

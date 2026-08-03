@@ -45,7 +45,8 @@ function LinhaPref({ titulo, desc, children }: { titulo: string; desc: string; c
         <b style={{ fontSize: 13.5 }}>{titulo}</b>
         <div className="muted-sm" style={{ marginTop: 3, lineHeight: 1.5 }}>{desc}</div>
       </div>
-      <div className="row gap-8" style={{ flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>{children}</div>
+      {/* flex 1 + minWidth 0 (e não flexShrink 0): deixa o contêiner encolher para o wrap funcionar em janelas estreitas */}
+      <div className="row gap-8" style={{ flex: '1 1 auto', minWidth: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>{children}</div>
     </div>
   )
 }
@@ -998,6 +999,22 @@ export default function Configuracoes() {
         <button className={'chip' + (s.prefs.tema === 'escuro' ? ' active-purple' : '')} onClick={() => s.setPref({ tema: 'escuro' })}>
           <Moon size={13} /> Escuro
         </button>
+      </LinhaPref>
+      <LinhaPref titulo="Cor do tema" desc="Muda a cor de destaque e o tom dos fundos — funciona no claro e no escuro.">
+        {([
+          { id: 'notion', nome: 'Padrão', cor: '#2383e2' },
+          { id: 'oceano', nome: 'Oceano', cor: '#0e8785' },
+          { id: 'floresta', nome: 'Floresta', cor: '#2e7d54' },
+          { id: 'sol', nome: 'Pôr do sol', cor: '#b85427' },
+          { id: 'lavanda', nome: 'Lavanda', cor: '#7d5bb0' },
+          { id: 'cereja', nome: 'Cereja', cor: '#b8425f' },
+        ] as const).map(p => (
+          <button key={p.id} className={'chip' + (s.prefs.paleta === p.id ? ' active-purple' : '')}
+            onClick={() => s.setPref({ paleta: p.id })}>
+            <span style={{ width: 11, height: 11, borderRadius: '50%', background: p.cor, display: 'inline-block', flexShrink: 0 }} />
+            {p.nome}
+          </button>
+        ))}
       </LinhaPref>
       <LinhaPref titulo="Moeda de exibição" desc="Como os valores aparecem em Produtos, Pedidos e Ganhos. Conversão pela cotação do dia (BCE) — os dados continuam na moeda da loja.">
         <button className={'chip' + (s.prefs.moedaExibicao === 'loja' ? ' active-purple' : '')} onClick={() => s.setPref({ moedaExibicao: 'loja' })}>Moeda da loja</button>
