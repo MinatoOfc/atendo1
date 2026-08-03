@@ -7,6 +7,7 @@ export default defineConfig({
     port: 5199,
     proxy: {
       '/api': 'http://localhost:8787',
+      '/r': 'http://localhost:8787', // link público do relatório manual
     },
   },
 })

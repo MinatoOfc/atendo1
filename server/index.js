@@ -10,7 +10,7 @@ import {
 } from './logic.js'
 import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA } from './ai.js'
 import { traduzirGratis } from './traducao.js'
-import { numerosDePedido } from './refs.js'
+import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
   buscarPedidosShopify, buscarProdutosShopify, testarShopify,
@@ -200,6 +200,7 @@ function visao(wsId) {
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
     gastosIA: estado.gastosIA ?? {},
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
+    relatorioLink: estado.tokenRelatorio ? `/r/${wsId}/${estado.tokenRelatorio}` : null,
     hojeChave: diaLocal(Date.now()),
     pedidos: estado.pedidos,
     produtos: estado.produtos ?? [],
@@ -768,6 +769,112 @@ setInterval(() => {
     try { atualizarResumos(wsId) } catch (err) { console.error(`[resumo ${wsId}]`, err.message) }
   }
 }, 10 * 60_000)
+
+/* ---------------- Link público do relatório manual ----------------
+   O lojista cria um link secreto e manda para o chefe: a página mostra os
+   relatórios manuais por dia, sempre atualizados, sem login. Revogável. */
+
+app.post('/api/relatorio-link', (req, res) => {
+  if (req.body?.acao === 'revogar') req.estado.tokenRelatorio = undefined
+  else req.estado.tokenRelatorio = req.estado.tokenRelatorio || crypto.randomBytes(16).toString('hex')
+  salvar(req.wsId); ok(req, res)
+})
+
+const escaparHtml = s => String(s ?? '').replace(/[&<>"']/g, c => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+))
+
+const categoriaRelatorio = { reembolso: 'Reembolso', troca: 'Troca', rastreio: 'Rastreio', entrega: 'Entrega', produto: 'Produto', outro: 'Atendido' }
+
+// mesmo critério do painel do ticket: remetente + e-mails/números citados na conversa
+function numeroDoTicketRelatorio(estado, t) {
+  const texto = [t.assunto, t.corpo, t.resposta, ...(t.historico ?? []).map(m => m.corpo)].join('\n')
+  const emails = emailsCitados(texto)
+  emails.add(String(t.de || '').trim().toLowerCase())
+  const numeros = numerosDePedido(texto)
+  const numeroCitado = numeros.size ? [...numeros][0] : null
+  const doCliente = (estado.pedidos ?? []).find(p =>
+    (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1')
+    && ((p.email && emails.has(p.email.trim().toLowerCase()))
+      || (numeroCitado !== null && String(p.numero).replace(/\D/g, '') === numeroCitado)))
+  if (doCliente) return String(doCliente.numero).replace('#', '')
+  return numeroCitado
+}
+
+app.get('/r/:wsId/:token', async (req, res) => {
+  try {
+  const { wsId, token } = req.params
+  let estado = workspaces.get(wsId)
+  if (!estado) {
+    // no modo arquivo carregarWorkspace é síncrono; await cobre os dois casos
+    try {
+      const carregado = await db.carregarWorkspace(wsId)
+      if (carregado) { workspaces.set(wsId, carregado); estado = carregado }
+    } catch { /* workspace ilegível: cai no 404 abaixo */ }
+  }
+  const a = Buffer.from(String(token || ''))
+  const b = Buffer.from(String(estado?.tokenRelatorio || ''))
+  if (!estado || !b.length || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(404).send('Link inválido ou revogado.')
+  }
+
+  const porDia = new Map()
+  for (const t of estado.tickets) {
+    if (!t.relatorioDia) continue
+    if (!porDia.has(t.relatorioDia)) porDia.set(t.relatorioDia, [])
+    porDia.get(t.relatorioDia).push(t)
+  }
+  const dias = [...porDia.keys()].sort().reverse().slice(0, 60)
+  const nomeLoja = id => estado.lojas.find(l => l.id === (id ?? 'loja1'))?.nome ?? 'Loja'
+
+  const blocos = dias.map(dia => {
+    const [ano, mes, d] = dia.split('-')
+    const porLoja = new Map()
+    for (const t of porDia.get(dia)) {
+      const nome = nomeLoja(t.lojaId)
+      if (!porLoja.has(nome)) porLoja.set(nome, [])
+      porLoja.get(nome).push(t)
+    }
+    const grupos = [...porLoja.entries()].map(([loja, ts]) => {
+      const linhas = ts.map(t => {
+        const numero = numeroDoTicketRelatorio(estado, t)
+        const quem = numero ? `PEDIDO ${numero}` : String(t.nome || '').toUpperCase()
+        const oque = t.relatorioTexto || t.resolucao || t.resumoSituacao || categoriaRelatorio[t.categoria] || 'atendido'
+        return `<div class="linha">${escaparHtml(`${quem} - ${oque}`)}</div>`
+      }).join('')
+      return `<div class="loja">Loja: ${escaparHtml(loja)}</div>${linhas}`
+    }).join('')
+    return `<section class="dia"><h2>RELATÓRIO ${d}/${mes}/${ano}</h2>${grupos}</section>`
+  }).join('')
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8')
+  res.send(`<!doctype html>
+<html lang="pt-BR"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Relatórios diários</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #101010; color: #d7d7d7; font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; padding: 32px 18px 60px; }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 19px; margin-bottom: 4px; }
+  .sub { color: #8a8a8a; font-size: 12.5px; margin-bottom: 26px; }
+  .dia { background: #191919; border: 1px solid #2a2a2a; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  .dia h2 { font-size: 14.5px; margin-bottom: 10px; letter-spacing: 0.02em; }
+  .loja { color: #9b9b9b; font-size: 12.5px; margin: 10px 0 6px; }
+  .linha { font-size: 13.5px; line-height: 1.7; }
+  .vazio { color: #8a8a8a; font-size: 13.5px; }
+</style></head>
+<body><main>
+<h1>Relatórios diários</h1>
+<p class="sub">Atualizado automaticamente — recarregue a página para ver o dia atual.</p>
+${blocos || '<p class="vazio">Nenhum caso marcado ainda.</p>'}
+</main></body></html>`)
+  } catch (err) {
+    console.error('[relatorio-link]', err)
+    res.status(500).send('Erro ao montar a página. Tente de novo.')
+  }
+})
 
 /* ---------------- Rotas ---------------- */
 

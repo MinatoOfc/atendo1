@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X } from 'lucide-react'
+import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2 } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
 import type { ResumoDiario, Ticket } from '../store'
 import { EmptyState } from '../components/Shared'
@@ -141,6 +141,48 @@ export default function Resumos() {
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      {/* Link público para o chefe acompanhar os relatórios manuais sem login */}
+      <div className="card mb-16" style={{ padding: '14px 18px' }}>
+        <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <div className="row gap-8">
+            <Link2 size={15} color="var(--purple)" />
+            <b style={{ fontSize: 14 }}>Link para acompanhamento</b>
+          </div>
+          {!s.relatorioLink && (
+            <button className="btn btn-sm btn-primary" onClick={() => s.configurarRelatorioLink('criar')}>
+              <Link2 size={13} /> Criar link
+            </button>
+          )}
+        </div>
+        {s.relatorioLink ? (
+          <>
+            <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+              <input readOnly value={window.location.origin + s.relatorioLink}
+                onFocus={e => e.currentTarget.select()}
+                style={{ flex: 1, minWidth: 220, border: '1px solid var(--border)', borderRadius: 8, padding: '7px 11px', fontSize: 12.5, background: 'var(--panel-soft)', color: 'var(--text-2)' }} />
+              <button className="btn btn-sm" onClick={() => {
+                navigator.clipboard.writeText(window.location.origin + s.relatorioLink!)
+                setCopiado('link-relatorio')
+                window.setTimeout(() => setCopiado(x => (x === 'link-relatorio' ? null : x)), 2500)
+              }}>
+                {copiado === 'link-relatorio' ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar link</>}
+              </button>
+              <button className="btn btn-sm btn-danger" title="O link atual para de funcionar na hora"
+                onClick={() => s.configurarRelatorioLink('revogar')}>
+                <X size={13} /> Revogar
+              </button>
+            </div>
+            <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.5 }}>
+              Mande este link uma vez para quem precisa acompanhar (ex.: seu chefe): a página mostra os relatórios manuais de todos os dias, sempre atualizados, sem precisar de login. Se revogar, o link morre na hora.
+            </p>
+          </>
+        ) : (
+          <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+            Crie um link secreto para alguém acompanhar os relatórios manuais direto no navegador, sem login e sem você precisar copiar e colar todo dia.
+          </p>
         )}
       </div>
 
