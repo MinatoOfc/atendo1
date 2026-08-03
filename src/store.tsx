@@ -34,6 +34,8 @@ export interface Ticket {
   resolucao?: string
   relatorioDia?: string
   relatorioTexto?: string
+  /** linha final editada à mão — tem prioridade sobre a montada automaticamente */
+  relatorioLinha?: string
   custoIA?: number
   iaPausada?: boolean
   traducao?: string
@@ -173,6 +175,8 @@ interface ServerState {
   opcoesRelatorio?: string[]
   /** caminho do link público do relatório manual (ex.: /r/ws-x/token) ou null */
   relatorioLink?: string | null
+  /** false = o dia de hoje só aparece no link depois da meia-noite */
+  linkMostraHoje?: boolean
   hojeChave?: string
   faqs: Faq[]
   pedidos: Pedido[]
@@ -256,7 +260,8 @@ interface Store extends ServerState {
   marcarResolvido: (id: string) => void
   alternarRelatorio: (id: string, adicionar: boolean, texto?: string) => void
   salvarOpcoesRelatorio: (opcoes: string[]) => void
-  configurarRelatorioLink: (acao: 'criar' | 'revogar') => void
+  configurarRelatorioLink: (acao: 'criar' | 'revogar' | 'mostrar-hoje', valor?: boolean) => void
+  editarLinhaRelatorio: (id: string, linha: string) => void
   aprovarEnviar: (id: string, texto: string, manterAberto?: boolean) => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
@@ -496,7 +501,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
     alternarRelatorio: (id, adicionar, texto) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar, texto }).then(aplicar),
     salvarOpcoesRelatorio: opcoes => api('/relatorio-opcoes', 'POST', { opcoes }).then(aplicar),
-    configurarRelatorioLink: acao => api('/relatorio-link', 'POST', { acao }).then(aplicar),
+    configurarRelatorioLink: (acao, valor) => api('/relatorio-link', 'POST', { acao, valor }).then(aplicar),
+    editarLinhaRelatorio: (id, linha) => api(`/tickets/${id}/relatorio-linha`, 'POST', { linha }).then(aplicar),
 
     editarRascunho: (id, texto) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, rascunho: texto } : t)) }))

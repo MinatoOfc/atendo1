@@ -201,6 +201,7 @@ function visao(wsId) {
     gastosIA: estado.gastosIA ?? {},
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
     relatorioLink: estado.tokenRelatorio ? `/r/${wsId}/${estado.tokenRelatorio}` : null,
+    linkMostraHoje: estado.linkMostraHoje !== false,
     hojeChave: diaLocal(Date.now()),
     pedidos: estado.pedidos,
     produtos: estado.produtos ?? [],
@@ -775,7 +776,9 @@ setInterval(() => {
    relatórios manuais por dia, sempre atualizados, sem login. Revogável. */
 
 app.post('/api/relatorio-link', (req, res) => {
-  if (req.body?.acao === 'revogar') req.estado.tokenRelatorio = undefined
+  const { acao } = req.body ?? {}
+  if (acao === 'revogar') req.estado.tokenRelatorio = undefined
+  else if (acao === 'mostrar-hoje') req.estado.linkMostraHoje = !!req.body.valor
   else req.estado.tokenRelatorio = req.estado.tokenRelatorio || crypto.randomBytes(16).toString('hex')
   salvar(req.wsId); ok(req, res)
 })
@@ -824,7 +827,11 @@ app.get('/r/:wsId/:token', async (req, res) => {
     if (!porDia.has(t.relatorioDia)) porDia.set(t.relatorioDia, [])
     porDia.get(t.relatorioDia).push(t)
   }
-  const dias = [...porDia.keys()].sort().reverse().slice(0, 60)
+  // com "mostrar hoje" desligado, o dia atual só entra no link depois da
+  // meia-noite — dá tempo de o lojista revisar as linhas antes do chefe ver
+  const hoje = diaLocal(Date.now())
+  const dias = [...porDia.keys()].filter(d => estado.linkMostraHoje !== false || d !== hoje)
+    .sort().reverse().slice(0, 60)
   const nomeLoja = id => estado.lojas.find(l => l.id === (id ?? 'loja1'))?.nome ?? 'Loja'
 
   const blocos = dias.map(dia => {
@@ -837,6 +844,8 @@ app.get('/r/:wsId/:token', async (req, res) => {
     }
     const grupos = [...porLoja.entries()].map(([loja, ts]) => {
       const linhas = ts.map(t => {
+        // linha editada à mão pelo lojista tem a palavra final
+        if (t.relatorioLinha) return `<div class="linha">${escaparHtml(t.relatorioLinha)}</div>`
         const numero = numeroDoTicketRelatorio(estado, t)
         const quem = numero ? `PEDIDO ${numero}` : String(t.nome || '').toUpperCase()
         const oque = t.relatorioTexto || t.resolucao || t.resumoSituacao || categoriaRelatorio[t.categoria] || 'atendido'
@@ -1240,14 +1249,24 @@ const acharTicket = (req, res) => {
 app.post('/api/tickets/:id/relatorio', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   if (req.body?.adicionar) {
-    t.relatorioDia = diaLocal(Date.now())
+    // já marcado: mantém o dia original (trocar o texto não move o caso de dia)
+    t.relatorioDia = t.relatorioDia || diaLocal(Date.now())
     // texto escolhido no popup; vazio = usa a resolução automática da conversa
     const texto = String(req.body.texto || '').trim()
     t.relatorioTexto = texto || undefined
+    t.relatorioLinha = undefined // texto novo invalida a linha editada à mão
   } else {
     t.relatorioDia = undefined
     t.relatorioTexto = undefined
+    t.relatorioLinha = undefined
   }
+  salvar(req.wsId); ok(req, res)
+})
+
+// Edição da linha final do relatório (o que o chefe vê), ex.: corrigir o nº do pedido
+app.post('/api/tickets/:id/relatorio-linha', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  t.relatorioLinha = String(req.body?.linha || '').trim() || undefined
   salvar(req.wsId); ok(req, res)
 })
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2 } from 'lucide-react'
+import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
 import type { ResumoDiario, Ticket } from '../store'
 import { EmptyState } from '../components/Shared'
@@ -14,6 +14,8 @@ export default function Resumos() {
   const multiLoja = s.lojasVisiveis.length > 1
   const nomeLoja = (id?: string) => s.lojas.find(l => l.id === (id ?? 'loja1'))?.nome
   const [copiado, setCopiado] = useState<string | null>(null)
+  // edição inline da linha do relatório manual (o que o chefe vê no link)
+  const [editando, setEditando] = useState<{ id: string; texto: string } | null>(null)
 
   // loja selecionada na seta lateral: mostra só o recorte dela; "todas" = consolidado
   const lojaFiltro = s.lojaAtiva !== 'todas' ? s.lojaAtiva : null
@@ -49,6 +51,7 @@ export default function Resumos() {
     return numeroCitado
   }
   const linhaDoTicket = (t: Ticket) => {
+    if (t.relatorioLinha) return t.relatorioLinha // linha editada à mão tem a palavra final
     const numero = numeroDoTicket(t)
     const quem = numero ? `PEDIDO ${numero}` : t.nome.toUpperCase()
     // texto escolhido no popup vem primeiro; sem ele, cai na resolução automática
@@ -134,10 +137,29 @@ export default function Resumos() {
           <div style={{ marginTop: 10, display: 'grid', gap: 4 }}>
             {manuaisHoje.map(t => (
               <div key={t.id} className="row gap-8" style={{ fontSize: 13, padding: '3px 0' }}>
-                <span style={{ flex: 1 }}>{linhaDoTicket(t)}</span>
-                <span className="muted-sm">{nomeLoja(t.lojaId)}</span>
-                <button title="Remover do relatório" style={{ color: 'var(--text-3)' }}
-                  onClick={() => s.alternarRelatorio(t.id, false)}><X size={14} /></button>
+                {editando?.id === t.id ? (
+                  <>
+                    <input value={editando.texto} autoFocus
+                      onChange={e => setEditando({ id: t.id, texto: e.target.value })}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { s.editarLinhaRelatorio(t.id, editando.texto.trim()); setEditando(null) }
+                        if (e.key === 'Escape') setEditando(null)
+                      }}
+                      style={{ flex: 1, border: '1px solid var(--purple-border)', borderRadius: 6, padding: '4px 9px', fontSize: 13, outline: 'none', background: 'var(--panel)' }} />
+                    <button title="Salvar linha" style={{ color: 'var(--green)' }}
+                      onClick={() => { s.editarLinhaRelatorio(t.id, editando.texto.trim()); setEditando(null) }}><Check size={14} /></button>
+                    <button title="Cancelar" style={{ color: 'var(--text-3)' }} onClick={() => setEditando(null)}><X size={14} /></button>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ flex: 1 }}>{linhaDoTicket(t)}{t.relatorioLinha && <span className="muted-sm" style={{ marginLeft: 6 }}>(editada)</span>}</span>
+                    <span className="muted-sm">{nomeLoja(t.lojaId)}</span>
+                    <button title="Editar a linha (o que aparece no link e no copiar)" style={{ color: 'var(--text-3)' }}
+                      onClick={() => setEditando({ id: t.id, texto: linhaDoTicket(t) })}><Pencil size={13} /></button>
+                    <button title="Remover do relatório" style={{ color: 'var(--text-3)' }}
+                      onClick={() => s.alternarRelatorio(t.id, false)}><X size={14} /></button>
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -175,8 +197,16 @@ export default function Resumos() {
                 <X size={13} /> Revogar
               </button>
             </div>
+            <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+              <span className="muted-sm">O dia de hoje aparece no link:</span>
+              <button className={'chip' + (s.linkMostraHoje !== false ? ' active-purple' : '')}
+                onClick={() => s.configurarRelatorioLink('mostrar-hoje', true)}>Em tempo real</button>
+              <button className={'chip' + (s.linkMostraHoje === false ? ' active-purple' : '')}
+                title="Você edita as linhas com calma; o dia entra no link depois da meia-noite"
+                onClick={() => s.configurarRelatorioLink('mostrar-hoje', false)}>Só depois da meia-noite</button>
+            </div>
             <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.5 }}>
-              Mande este link uma vez para quem precisa acompanhar (ex.: seu chefe): a página mostra os relatórios manuais de todos os dias, sempre atualizados, sem precisar de login. Se revogar, o link morre na hora.
+              Mande este link uma vez para quem precisa acompanhar (ex.: seu chefe): a página mostra os relatórios manuais de todos os dias, sempre atualizados, sem precisar de login. Use o lápis na lista acima para ajustar qualquer linha antes de ele ver. Se revogar, o link morre na hora.
             </p>
           </>
         ) : (
