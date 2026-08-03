@@ -153,6 +153,9 @@ export default function Resumos() {
                 ) : (
                   <>
                     <span style={{ flex: 1 }}>{linhaDoTicket(t)}{t.relatorioLinha && <span className="muted-sm" style={{ marginLeft: 6 }}>(editada)</span>}</span>
+                    {t.relatorioProcessado && (
+                      <span className="tag tag-green" title={'Processado pelo dono em ' + new Date(t.relatorioProcessado).toLocaleString('pt-BR')}>✓ processado</span>
+                    )}
                     <span className="muted-sm">{nomeLoja(t.lojaId)}</span>
                     <button title="Editar a linha (o que aparece no link e no copiar)" style={{ color: 'var(--text-3)' }}
                       onClick={() => setEditando({ id: t.id, texto: linhaDoTicket(t) })}><Pencil size={13} /></button>
@@ -253,8 +256,11 @@ export default function Resumos() {
                     </button>
                   )}
                   {manuaisDe(r.dia).length > 0 && (
-                    <button className="btn btn-sm" onClick={() => copiarManual(r.dia)} title="Copiar só os casos marcados à mão neste dia">
-                      {copiado === `manual-${r.dia}` ? <><Check size={13} /> Copiado</> : <><ClipboardList size={13} /> Manual ({manuaisDe(r.dia).length})</>}
+                    <button className="btn btn-sm" onClick={() => copiarManual(r.dia)}
+                      title={`Copiar só os casos marcados à mão neste dia · ${manuaisDe(r.dia).filter(t => t.relatorioProcessado).length} de ${manuaisDe(r.dia).length} processados pelo dono`}>
+                      {copiado === `manual-${r.dia}` ? <><Check size={13} /> Copiado</> : (
+                        <><ClipboardList size={13} /> Manual ({manuaisDe(r.dia).filter(t => t.relatorioProcessado).length}/{manuaisDe(r.dia).length} ✓)</>
+                      )}
                     </button>
                   )}
                 </div>

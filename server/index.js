@@ -880,11 +880,17 @@ app.get('/r/:wsId/:token', async (req, res) => {
     const grupos = [...porLoja.entries()].map(([loja, ts]) => {
       const linhas = ts.map(t => {
         // linha editada à mão pelo lojista tem a palavra final
-        if (t.relatorioLinha) return `<div class="linha">${escaparHtml(t.relatorioLinha)}</div>`
-        const numero = numeroDoTicketRelatorio(estado, t)
-        const quem = numero ? `PEDIDO ${numero}` : String(t.nome || '').toUpperCase()
-        const oque = t.relatorioTexto || t.resolucao || t.resumoSituacao || categoriaRelatorio[t.categoria] || 'atendido'
-        return `<div class="linha">${escaparHtml(`${quem} - ${oque}`)}</div>`
+        let texto = t.relatorioLinha
+        if (!texto) {
+          const numero = numeroDoTicketRelatorio(estado, t)
+          const quem = numero ? `PEDIDO ${numero}` : String(t.nome || '').toUpperCase()
+          const oque = t.relatorioTexto || t.resolucao || t.resumoSituacao || categoriaRelatorio[t.categoria] || 'atendido'
+          texto = `${quem} - ${oque}`
+        }
+        // checkbox de processado: o dono marca conforme executa cada caso
+        return `<label class="linha${t.relatorioProcessado ? ' feito' : ''}">`
+          + `<input type="checkbox" data-id="${escaparHtml(t.id)}"${t.relatorioProcessado ? ' checked' : ''}>`
+          + `<span>${escaparHtml(texto)}</span></label>`
       }).join('')
       return `<div class="loja">Loja: ${escaparHtml(loja)}</div>${linhas}`
     }).join('')
@@ -906,17 +912,64 @@ app.get('/r/:wsId/:token', async (req, res) => {
   .dia { background: #191919; border: 1px solid #2a2a2a; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
   .dia h2 { font-size: 14.5px; margin-bottom: 10px; letter-spacing: 0.02em; }
   .loja { color: #9b9b9b; font-size: 12.5px; margin: 10px 0 6px; }
-  .linha { font-size: 13.5px; line-height: 1.7; }
+  .linha { font-size: 13.5px; line-height: 1.7; display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
+  .linha input { margin-top: 5px; accent-color: #58a6ff; cursor: pointer; }
+  .linha.feito span { opacity: 0.45; text-decoration: line-through; }
   .vazio { color: #8a8a8a; font-size: 13.5px; }
 </style></head>
 <body><main>
 <h1>Relatórios diários</h1>
-<p class="sub">Atualizado automaticamente — recarregue a página para ver o dia atual.</p>
+<p class="sub">Atualizado automaticamente — recarregue a página para ver o dia atual. Marque a caixinha de cada caso conforme for processando: o andamento fica salvo e visível para a equipe.</p>
 ${blocos || '<p class="vazio">Nenhum caso marcado ainda.</p>'}
-</main></body></html>`)
+</main>
+<script>
+document.addEventListener('change', function (e) {
+  var cb = e.target
+  if (!cb.matches || !cb.matches('.linha input')) return
+  var linha = cb.closest('.linha')
+  cb.disabled = true
+  fetch(location.pathname + '/processar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticketId: cb.getAttribute('data-id'), processado: cb.checked }),
+  }).then(function (r) {
+    if (!r.ok) throw new Error('falhou')
+    linha.classList.toggle('feito', cb.checked)
+  }).catch(function () { cb.checked = !cb.checked })
+    .finally(function () { cb.disabled = false })
+})
+</script>
+</body></html>`)
   } catch (err) {
     console.error('[relatorio-link]', err)
     res.status(500).send('Erro ao montar a página. Tente de novo.')
+  }
+})
+
+// O dono marca um caso do relatório como processado (mesmo token da página)
+app.post('/r/:wsId/:token/processar', async (req, res) => {
+  try {
+    const { wsId, token } = req.params
+    let estado = workspaces.get(wsId)
+    if (!estado) {
+      try {
+        const carregado = await db.carregarWorkspace(wsId)
+        if (carregado) { workspaces.set(wsId, carregado); estado = carregado }
+      } catch { /* cai no 404 abaixo */ }
+    }
+    const a = Buffer.from(String(token || ''))
+    const b = Buffer.from(String(estado?.tokenRelatorio || ''))
+    if (!estado || !b.length || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(404).end()
+    }
+    const t = estado.tickets.find(x => x.id === req.body?.ticketId && x.relatorioDia)
+    if (!t) return res.status(404).end()
+    t.relatorioProcessado = req.body.processado ? new Date().toISOString() : undefined
+    salvar(wsId)
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[relatorio-processar]', err)
+    res.status(500).end()
   }
 })
 

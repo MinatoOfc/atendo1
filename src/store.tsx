@@ -40,6 +40,8 @@ export interface Ticket {
   relatorioTexto?: string
   /** linha final editada à mão — tem prioridade sobre a montada automaticamente */
   relatorioLinha?: string
+  /** quando o dono marcou este caso como processado no link do relatório (ISO) */
+  relatorioProcessado?: string
   custoIA?: number
   iaPausada?: boolean
   traducao?: string

@@ -50,6 +50,10 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
       {tagStatus && t.status === 'humano' && <span className="tag tag-amber">para você</span>}
       {/* caso em atendimento humano que já teve resposta enviada (segue aberto com você) */}
       {t.status === 'humano' && t.resposta && <span className="tag tag-green">respondido</span>}
+      {/* está esperando decisão há dias — sobe a prioridade visual */}
+      {t.status === 'humano' && Date.now() - new Date(t.data).getTime() >= 2 * 86400_000 && (
+        <span className="tag tag-reembolso">esperando há {Math.floor((Date.now() - new Date(t.data).getTime()) / 86400_000)}d</span>
+      )}
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}
@@ -89,7 +93,7 @@ const statusPedido: Record<string, { rotulo: string; cls: string }> = {
  * para a equipe responder sem sair da conversa.
  */
 function PainelPedidos({ t }: { t: Ticket }) {
-  const { pedidos, fmtMoeda, produtos } = useStore()
+  const { pedidos, fmtMoeda, produtos, tickets } = useStore()
   // foto da variante escolhida (a cor comprada); sem ela, a foto principal do produto
   const fotoDe = (i: { produtoId?: string | null; varianteId?: string | null }) => {
     const pr = i.produtoId ? produtos.find(x => x.id === i.produtoId) : null
@@ -104,15 +108,47 @@ function PainelPedidos({ t }: { t: Ticket }) {
   for (const m of textoConversa.matchAll(/(?:#\s?|\b(?:pedido|encomenda|order|bestell(?:ung|ing)?|bestelling|commande|ordine)\s*(?:nr\.?|n[º°o]\.?|#)?\s*)(\d{3,7})\b/g)) {
     numerosCitados.add(m[1])
   }
-  const doCliente = pedidos
+  const todosDoCliente = pedidos
     .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
     .filter(p => (p.email && emailsCitados.has(p.email.trim().toLowerCase()))
       || (p.numero && numerosCitados.has(p.numero.replace(/\D/g, ''))))
     .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''))
-    .slice(0, 5)
+  const doCliente = todosDoCliente.slice(0, 5)
+
+  // Ficha do cliente: histórico de casos ANTERIORES deste cliente na mesma
+  // loja — reembolsos recorrentes mudam a decisão (e denunciam abuso)
+  const gastoTotal = todosDoCliente.reduce((s, p) => s + (p.valor || 0), 0)
+  const casosAnteriores = tickets.filter(t2 =>
+    t2.id !== t.id && (t2.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1')
+    && !['spam', 'lixeira'].includes(t2.status)
+    && emailsCitados.has(t2.de.trim().toLowerCase()))
+  const nReembolsos = casosAnteriores.filter(t2 => t2.categoria === 'reembolso').length
+  const nTrocas = casosAnteriores.filter(t2 => t2.categoria === 'troca').length
 
   return (
     <aside style={{ width: 280, flexShrink: 0 }}>
+      {(todosDoCliente.length > 0 || casosAnteriores.length > 0) && (
+        <div className="card mb-12" style={{ padding: '12px 16px' }}>
+          <div className="row gap-8 mb-8">
+            <Users size={14} color="var(--purple)" />
+            <b style={{ fontSize: 13 }}>Ficha do cliente</b>
+          </div>
+          <div style={{ display: 'grid', gap: 4, fontSize: 12.5, lineHeight: 1.5 }}>
+            <div>Pedidos na loja: <b>{todosDoCliente.length}</b>{gastoTotal > 0 && <> · gastou <b>{fmtMoeda(gastoTotal)}</b></>}</div>
+            <div>Conversas anteriores: <b>{casosAnteriores.length}</b> — reembolso <b>{nReembolsos}</b>, troca <b>{nTrocas}</b></div>
+          </div>
+          {nReembolsos >= 2 && (
+            <span className="tag tag-reembolso" style={{ marginTop: 8, display: 'inline-block' }}>
+              atenção: reembolsos recorrentes
+            </span>
+          )}
+          {nReembolsos === 1 && t.categoria === 'reembolso' && (
+            <span className="tag tag-amber" style={{ marginTop: 8, display: 'inline-block' }}>
+              já teve 1 caso de reembolso antes
+            </span>
+          )}
+        </div>
+      )}
       <div className="card" style={{ padding: '14px 16px' }}>
         <div className="row gap-8 mb-12">
           <Package size={15} color="var(--purple)" />
