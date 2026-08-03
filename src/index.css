@@ -150,20 +150,21 @@
   --ring: rgba(166, 135, 214, 0.18);
 }
 
-/* Cereja — rosé vinho */
-:root[data-paleta="cereja"] {
-  --bg: #faf6f7; --panel-soft: #fcf9fa; --hover: #f5edef; --code-bg: #faf6f7;
-  --border: #efe3e6; --border-soft: #f5edef;
-  --purple: #b8425f; --purple-soft: #faeaee; --purple-border: #f0c8d2;
-  --grad: linear-gradient(92deg, #b8425f 0%, #c6536f 100%);
-  --ring: rgba(184, 66, 95, 0.15);
+/* Amoled — preto puro no escuro, com ciano vibrante de destaque.
+   No modo claro vira um branco limpo com o mesmo ciano. */
+:root[data-paleta="amoled"] {
+  --bg: #ffffff; --panel-soft: #fafafa; --hover: #f2f2f2; --code-bg: #f6f6f6;
+  --border: #e8e8e8; --border-soft: #f0f0f0;
+  --purple: #0c8680; --purple-soft: #dcf5f3; --purple-border: #b5e7e4;
+  --grad: linear-gradient(92deg, #0c847f 0%, #0e938d 100%);
+  --ring: rgba(12, 134, 128, 0.15);
 }
-:root[data-theme="dark"][data-paleta="cereja"] {
-  --bg: #1e1719; --panel: #251c1f; --panel-soft: #2a2024; --hover: #33272c; --code-bg: #2a2024;
-  --border: #3c2e34; --border-soft: #332a2f;
-  --purple: #d87b93; --purple-soft: #3a2430; --purple-border: #5c374a;
-  --grad: linear-gradient(92deg, #a63e58 0%, #b84e69 100%);
-  --ring: rgba(216, 123, 147, 0.18);
+:root[data-theme="dark"][data-paleta="amoled"] {
+  --bg: #000000; --panel: #0a0a0a; --panel-soft: #101010; --hover: #1a1a1a; --code-bg: #101010;
+  --border: #232323; --border-soft: #191919;
+  --purple: #2dd4bf; --purple-soft: #0e2a28; --purple-border: #1b4a47;
+  --grad: linear-gradient(92deg, #0b7f7b 0%, #0e8f8a 100%);
+  --ring: rgba(45, 212, 191, 0.22);
 }
 
 html, body, #root { height: 100%; }

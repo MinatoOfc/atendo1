@@ -1007,11 +1007,11 @@ export default function Configuracoes() {
           { id: 'floresta', nome: 'Floresta', cor: '#2e7d54' },
           { id: 'sol', nome: 'Pôr do sol', cor: '#b85427' },
           { id: 'lavanda', nome: 'Lavanda', cor: '#7d5bb0' },
-          { id: 'cereja', nome: 'Cereja', cor: '#b8425f' },
+          { id: 'amoled', nome: 'Amoled', cor: 'linear-gradient(135deg, #000 50%, #2dd4bf 50%)' },
         ] as const).map(p => (
           <button key={p.id} className={'chip' + (s.prefs.paleta === p.id ? ' active-purple' : '')}
             onClick={() => s.setPref({ paleta: p.id })}>
-            <span style={{ width: 11, height: 11, borderRadius: '50%', background: p.cor, display: 'inline-block', flexShrink: 0 }} />
+            <span style={{ width: 11, height: 11, borderRadius: '50%', background: p.cor, display: 'inline-block', flexShrink: 0, border: '1px solid var(--border)' }} />
             {p.nome}
           </button>
         ))}

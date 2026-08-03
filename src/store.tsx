@@ -126,8 +126,8 @@ export interface Loja {
 export interface Usuario { id: string; nome: string; email: string }
 
 /** Preferências deste dispositivo (ficam no navegador, não no servidor). */
-export type Paleta = 'notion' | 'oceano' | 'floresta' | 'sol' | 'lavanda' | 'cereja'
-const paletasValidas: readonly Paleta[] = ['notion', 'oceano', 'floresta', 'sol', 'lavanda', 'cereja']
+export type Paleta = 'notion' | 'oceano' | 'floresta' | 'sol' | 'lavanda' | 'amoled'
+const paletasValidas: readonly Paleta[] = ['notion', 'oceano', 'floresta', 'sol', 'lavanda', 'amoled']
 
 export interface Prefs {
   tema: 'claro' | 'escuro'
@@ -303,6 +303,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [prefs, setPrefs] = useState<Prefs>(() => {
     try {
       const p: Prefs = { ...prefsPadrao, ...JSON.parse(localStorage.getItem('atendo-prefs') ?? '{}') }
+      if ((p.paleta as string) === 'cereja') p.paleta = 'amoled' // a paleta Cereja virou Amoled
       // valor desconhecido salvo no navegador (ex.: versão futura) cai no padrão
       if (!paletasValidas.includes(p.paleta)) p.paleta = 'notion'
       return p
