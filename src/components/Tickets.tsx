@@ -50,10 +50,6 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
       {tagStatus && t.status === 'humano' && <span className="tag tag-amber">para você</span>}
       {/* caso em atendimento humano que já teve resposta enviada (segue aberto com você) */}
       {t.status === 'humano' && t.resposta && <span className="tag tag-green">respondido</span>}
-      {/* está esperando decisão há dias — sobe a prioridade visual */}
-      {t.status === 'humano' && Date.now() - new Date(t.data).getTime() >= 2 * 86400_000 && (
-        <span className="tag tag-reembolso">esperando há {Math.floor((Date.now() - new Date(t.data).getTime()) / 86400_000)}d</span>
-      )}
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}
