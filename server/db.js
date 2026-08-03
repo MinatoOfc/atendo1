@@ -56,7 +56,42 @@ export async function iniciarDb() {
       chave TEXT PRIMARY KEY,
       valor TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS anexos (
+      id TEXT PRIMARY KEY,
+      ws TEXT NOT NULL,
+      tipo TEXT,
+      nome TEXT,
+      dados BYTEA NOT NULL,
+      criado_em TIMESTAMPTZ DEFAULT now()
+    );
   `)
+}
+
+/* ---------------- Anexos (imagens dos e-mails dos clientes) ---------------- */
+
+const dirAnexos = ws => path.join(DATA_DIR, 'anexos', ws)
+
+export async function salvarAnexo(ws, { id, tipo, nome, dados }) {
+  if (usandoPostgres) {
+    await pool.query(
+      'INSERT INTO anexos (id, ws, tipo, nome, dados) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING',
+      [id, ws, tipo, nome, dados])
+    return
+  }
+  fs.mkdirSync(dirAnexos(ws), { recursive: true })
+  fs.writeFileSync(path.join(dirAnexos(ws), id + '.json'),
+    JSON.stringify({ tipo, nome, dados: dados.toString('base64') }))
+}
+
+export async function lerAnexo(ws, id) {
+  if (!/^[a-z0-9-]+$/i.test(String(id))) return null // id fora do padrão: nem tenta (evita path traversal)
+  if (usandoPostgres) {
+    const r = await pool.query('SELECT tipo, nome, dados FROM anexos WHERE id=$1 AND ws=$2', [id, ws])
+    const a = r.rows[0]
+    return a ? { tipo: a.tipo, nome: a.nome, dados: a.dados } : null
+  }
+  const raw = lerJson(path.join(dirAnexos(ws), id + '.json'), null)
+  return raw ? { tipo: raw.tipo, nome: raw.nome, dados: Buffer.from(raw.dados, 'base64') } : null
 }
 
 /* ---------------- Segredo do app (cookies + criptografia) ---------------- */

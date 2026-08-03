@@ -4,8 +4,23 @@ import {
   Package, ExternalLink, PenSquare, ClipboardList, X, Plus,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
-import type { Ticket } from '../store'
+import type { Ticket, AnexoImagem } from '../store'
 import { MiniFoto, Modal } from './Shared'
+
+/* Fotos que o cliente anexou ao e-mail: miniaturas clicáveis (abre em nova aba) */
+function ImagensAnexadas({ anexos }: { anexos?: AnexoImagem[] }) {
+  if (!anexos?.length) return null
+  return (
+    <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+      {anexos.map(a => (
+        <a key={a.id} href={`/api/anexos/${a.id}`} target="_blank" rel="noreferrer" title={a.nome}>
+          <img src={`/api/anexos/${a.id}`} alt={a.nome}
+            style={{ maxWidth: 150, maxHeight: 150, borderRadius: 8, border: '1px solid var(--border)', display: 'block', objectFit: 'cover' }} />
+        </a>
+      ))}
+    </div>
+  )
+}
 
 export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Ticket) => void; tagStatus?: boolean }) {
   const { lojasVisiveis, lojaAtiva, prefs, pedidos } = useStore()
@@ -420,6 +435,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             <span>{new Date(m.data).toLocaleString('pt-BR')}</span>
           </div>
           <div className="body">{verTraducao && m.traducao ? m.traducao : m.corpo}</div>
+          <ImagensAnexadas anexos={m.anexos} />
         </div>
       ))}
 
@@ -434,6 +450,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             <span>{new Date(t.data).toLocaleString('pt-BR')}</span>
           </div>
           <div className="body">{verTraducao && t.traducao ? t.traducao : t.corpo}</div>
+          <ImagensAnexadas anexos={t.anexos} />
         </div>
       )}
 

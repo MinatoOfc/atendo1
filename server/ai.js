@@ -276,6 +276,10 @@ export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
     `Assunto: ${ticket.assunto}`,
     ``,
     String(ticket.corpo ?? '').slice(0, 4000),
+    ...(ticket.anexos?.length ? [
+      ``,
+      `(O cliente anexou ${ticket.anexos.length} imagem${ticket.anexos.length > 1 ? 'ns' : ''} a este e-mail — você não consegue vê-las. Se a decisão depender do conteúdo das fotos, escale para humano; não invente o que há nelas.)`,
+    ] : []),
     ``,
     pedidosCliente.length
       ? `Pedidos deste cliente na Shopify (localizados pelo e-mail do remetente ou por e-mail/número de pedido citado na conversa), do mais recente ao mais antigo:\n`

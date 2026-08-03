@@ -395,7 +395,7 @@ function aplicarResultado(estado, t, r) {
   }
 }
 
-async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId }, lojaId = 'loja1') {
+async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, anexos }, lojaId = 'loja1') {
   const base = {
     id: uid(), nome, de, assunto, corpo, lojaId,
     data: data || new Date().toISOString(),
@@ -403,6 +403,7 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId }
     categoria: classificarLocal(assunto + ' ' + corpo),
     idioma: detectarIdiomaLocal(assunto + ' ' + corpo),
     status: 'inbox',
+    ...(anexos?.length ? { anexos } : {}),
   }
   if (messageId) estado.emailsProcessados.push(messageId)
 
@@ -454,12 +455,28 @@ export function acharConversa(estado, de, assunto, lojaId, corpo = '') {
 const textoDaConversa = t =>
   [t.assunto, t.corpo, ...(t.historico ?? []).slice(-6).map(m => m.corpo)].join(' ')
 
+/** Grava os bytes das imagens no armazenamento e devolve só as referências
+ *  {id, nome, tipo} que ficam no ticket. */
+async function guardarAnexos(wsId, anexos) {
+  const meta = []
+  for (const a of anexos ?? []) {
+    try {
+      const id = crypto.randomUUID()
+      await db.salvarAnexo(wsId, { id, tipo: a.tipo, nome: a.nome, dados: a.dados })
+      meta.push({ id, nome: a.nome, tipo: a.tipo })
+    } catch (err) {
+      console.error(`[anexos ${wsId}] falha ao salvar imagem:`, err.message)
+    }
+  }
+  return meta
+}
+
 /** O mais novo absorve o mais antigo: mensagens viram histórico ordenado, custo soma. */
 function fundirTickets(estado, x, y) {
   const [novo, velho] = (x.data || '') >= (y.data || '') ? [x, y] : [y, x]
   const doVelho = [
     ...(velho.historico ?? []),
-    ...(velho.corpo ? [{ autor: 'cliente', corpo: velho.corpo, data: velho.data, traducao: velho.traducao }] : []),
+    ...(velho.corpo ? [{ autor: 'cliente', corpo: velho.corpo, data: velho.data, traducao: velho.traducao, anexos: velho.anexos }] : []),
     ...(velho.resposta ? [{ autor: 'atendo', corpo: velho.resposta, data: velho.respondidoEm || velho.data }] : []),
   ]
   novo.historico = [...doVelho, ...(novo.historico ?? [])]
@@ -510,13 +527,14 @@ export function fundirConversasDuplicadas(estado) {
   return mudou
 }
 
-async function anexarNaConversa(estado, t, { corpo, data, messageId }) {
+async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }) {
   if (messageId) estado.emailsProcessados.push(messageId)
 
   t.historico = t.historico || []
-  if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao })
+  if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao, anexos: t.anexos })
   if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data, traducao: t.respostaTraducao })
 
+  t.anexos = anexos?.length ? anexos : undefined
   t.corpo = corpo
   t.data = data || new Date().toISOString()
   t.lido = false
@@ -581,6 +599,8 @@ async function sincronizar(wsId) {
         if (!conta.configurado) continue
         const emails = await conta.buscarNovos(estado.emailsProcessados)
         for (const e of emails) {
+          // imagens anexadas: bytes vão para o armazenamento; no ticket fica só a referência
+          e.anexos = await guardarAnexos(wsId, e.anexos)
           const conversa = acharConversa(estado, e.de, e.assunto, conta.id, e.corpo)
           if (conversa) {
             await anexarNaConversa(estado, conversa, e)
@@ -635,9 +655,10 @@ async function enviarResposta(wsId, ticket, texto) {
   if (ticket.resposta) {
     ticket.historico = ticket.historico || []
     if (ticket.corpo) {
-      ticket.historico.push({ autor: 'cliente', corpo: ticket.corpo, data: ticket.data, traducao: ticket.traducao })
+      ticket.historico.push({ autor: 'cliente', corpo: ticket.corpo, data: ticket.data, traducao: ticket.traducao, anexos: ticket.anexos })
       ticket.corpo = ''
       ticket.traducao = undefined
+      ticket.anexos = undefined
     }
     ticket.historico.push({ autor: 'atendo', corpo: ticket.resposta, data: ticket.respondidoEm || ticket.data, traducao: ticket.respostaTraducao })
     ticket.respostaTraducao = undefined
@@ -886,6 +907,20 @@ ${blocos || '<p class="vazio">Nenhum caso marcado ainda.</p>'}
 })
 
 /* ---------------- Rotas ---------------- */
+
+// Imagem anexada por um cliente (só do próprio workspace)
+app.get('/api/anexos/:id', async (req, res) => {
+  try {
+    const a = await db.lerAnexo(req.wsId, req.params.id)
+    if (!a) return res.status(404).end()
+    res.setHeader('Content-Type', a.tipo || 'application/octet-stream')
+    res.setHeader('Cache-Control', 'private, max-age=86400')
+    res.send(a.dados)
+  } catch (err) {
+    console.error('[anexos]', err.message)
+    res.status(500).end()
+  }
+})
 
 app.get('/api/state', (req, res) => ok(req, res))
 

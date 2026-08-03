@@ -2,6 +2,15 @@ import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import nodemailer from 'nodemailer'
 
+/** Imagens anexadas ao e-mail (fotos de pacote danificado etc.): só image/*,
+ *  até 5 por mensagem e 4MB cada — o resto é ignorado sem erro. */
+export function extrairImagens(parsed) {
+  return (parsed.attachments ?? [])
+    .filter(a => /^image\//i.test(a.contentType || '') && a.content?.length && a.content.length <= 4 * 1024 * 1024)
+    .slice(0, 5)
+    .map(a => ({ tipo: a.contentType, nome: a.filename || 'imagem', dados: a.content }))
+}
+
 const presets = {
   gmail: { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com' },
   outlook: { imap: 'outlook.office365.com', smtp: 'smtp-mail.outlook.com' },
@@ -278,6 +287,7 @@ export function criarConta(id, cfg, sufixo = '') {
           assunto: parsed.subject || '(sem assunto)',
           corpo: (parsed.text || '').trim().slice(0, 8000),
           data: (parsed.date || new Date()).toISOString(),
+          anexos: extrairImagens(parsed),
         })
         await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true }).catch(() => {})
       }
@@ -318,6 +328,8 @@ export function criarConta(id, cfg, sufixo = '') {
         if (parsed.headers?.get?.(HEADER_AUTO)) continue
         const remetente = parsed.from?.value?.[0]
         if (!remetente?.address) continue
+        // sem anexos de propósito: importar milhares de e-mails antigos com
+        // imagens estouraria o armazenamento — só o sync ao vivo guarda fotos
         todos.push({
           messageId: idMsg,
           nome: remetente.name || remetente.address.split('@')[0],

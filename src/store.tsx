@@ -6,6 +6,8 @@ import type { ReactNode } from 'react'
 export type Categoria = 'rastreio' | 'reembolso' | 'troca' | 'produto' | 'entrega' | 'outro'
 export type StatusTicket = 'inbox' | 'aprovacao' | 'humano' | 'enviado' | 'spam' | 'lixeira'
 
+export interface AnexoImagem { id: string; nome: string; tipo: string }
+
 export interface Ticket {
   id: string
   nome: string
@@ -29,7 +31,9 @@ export interface Ticket {
   erroEnvio?: string
   tentativasEnvio?: number
   lojaId?: string
-  historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string; traducao?: string }[]
+  historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string; traducao?: string; anexos?: AnexoImagem[] }[]
+  /** imagens anexadas à mensagem atual do cliente (referências; bytes ficam no servidor) */
+  anexos?: AnexoImagem[]
   resumoSituacao?: string
   resolucao?: string
   relatorioDia?: string
