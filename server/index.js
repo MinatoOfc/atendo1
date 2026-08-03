@@ -1372,6 +1372,20 @@ app.post('/api/tickets/:id/relatorio-linha', (req, res) => {
   salvar(req.wsId); ok(req, res)
 })
 
+// Move todos os casos marcados de um dia do relatório para outro dia —
+// atendeu depois da meia-noite e o relatório "quebrou" em dois? Junta de volta.
+app.post('/api/relatorio-mover', (req, res) => {
+  const de = String(req.body?.de || '')
+  const para = String(req.body?.para || '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(para) || de === para) {
+    return res.status(400).json({ erro: 'Datas inválidas.', state: visao(req.wsId) })
+  }
+  for (const t of req.estado.tickets) {
+    if (t.relatorioDia === de) t.relatorioDia = para
+  }
+  salvar(req.wsId); ok(req, res)
+})
+
 // Lista de opções pré-definidas do relatório manual (configurável pelo lojista)
 app.post('/api/relatorio-opcoes', (req, res) => {
   const opcoes = Array.isArray(req.body?.opcoes)

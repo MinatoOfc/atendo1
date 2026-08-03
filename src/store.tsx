@@ -268,6 +268,8 @@ interface Store extends ServerState {
   salvarOpcoesRelatorio: (opcoes: string[]) => void
   configurarRelatorioLink: (acao: 'criar' | 'revogar' | 'mostrar-hoje', valor?: boolean) => void
   editarLinhaRelatorio: (id: string, linha: string) => void
+  /** move todos os casos marcados do dia `de` para o dia `para` (AAAA-MM-DD) */
+  moverRelatorio: (de: string, para: string) => void
   aprovarEnviar: (id: string, texto: string, manterAberto?: boolean) => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
@@ -509,6 +511,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     salvarOpcoesRelatorio: opcoes => api('/relatorio-opcoes', 'POST', { opcoes }).then(aplicar),
     configurarRelatorioLink: (acao, valor) => api('/relatorio-link', 'POST', { acao, valor }).then(aplicar),
     editarLinhaRelatorio: (id, linha) => api(`/tickets/${id}/relatorio-linha`, 'POST', { linha }).then(aplicar),
+    moverRelatorio: (de, para) => api('/relatorio-mover', 'POST', { de, para }).then(aplicar),
 
     editarRascunho: (id, texto) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, rascunho: texto } : t)) }))

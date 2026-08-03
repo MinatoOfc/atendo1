@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil } from 'lucide-react'
+import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil, CornerUpLeft } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
 import type { ResumoDiario, Ticket } from '../store'
 import { EmptyState } from '../components/Shared'
@@ -8,6 +8,10 @@ const formatarDia = (dia: string) => {
   const texto = new Date(dia + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
   return texto[0].toUpperCase() + texto.slice(1)
 }
+
+// dia anterior no formato AAAA-MM-DD (meio-dia evita surpresa de fuso)
+const diaAnterior = (dia: string) => new Date(new Date(dia + 'T12:00:00').getTime() - 86400_000).toISOString().slice(0, 10)
+const ddmm = (dia: string) => `${dia.slice(8, 10)}/${dia.slice(5, 7)}`
 
 export default function Resumos() {
   const s = useStore()
@@ -124,9 +128,20 @@ export default function Resumos() {
             <span className="muted-sm">{manuaisHoje.length} caso{manuaisHoje.length !== 1 ? 's' : ''}</span>
           </div>
           {manuaisHoje.length > 0 && s.hojeChave && (
-            <button className="btn btn-sm" onClick={() => copiarManual(s.hojeChave!)}>
-              {copiado === `manual-${s.hojeChave}` ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar relatório</>}
-            </button>
+            <div className="row gap-8">
+              <button className="btn btn-sm"
+                title="Atendeu depois da meia-noite? Junta os casos de hoje no relatório de ontem"
+                onClick={() => {
+                  if (window.confirm(`Mover os ${manuaisHoje.length} casos de hoje para o relatório de ${ddmm(diaAnterior(s.hojeChave!))}?`)) {
+                    s.moverRelatorio(s.hojeChave!, diaAnterior(s.hojeChave!))
+                  }
+                }}>
+                <CornerUpLeft size={13} /> Mover para ontem
+              </button>
+              <button className="btn btn-sm" onClick={() => copiarManual(s.hojeChave!)}>
+                {copiado === `manual-${s.hojeChave}` ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar relatório</>}
+              </button>
+            </div>
           )}
         </div>
         {manuaisHoje.length === 0 ? (
@@ -256,12 +271,22 @@ export default function Resumos() {
                     </button>
                   )}
                   {manuaisDe(r.dia).length > 0 && (
-                    <button className="btn btn-sm" onClick={() => copiarManual(r.dia)}
-                      title={`Copiar só os casos marcados à mão neste dia · ${manuaisDe(r.dia).filter(t => t.relatorioProcessado).length} de ${manuaisDe(r.dia).length} processados pelo dono`}>
-                      {copiado === `manual-${r.dia}` ? <><Check size={13} /> Copiado</> : (
-                        <><ClipboardList size={13} /> Manual ({manuaisDe(r.dia).filter(t => t.relatorioProcessado).length}/{manuaisDe(r.dia).length} ✓)</>
-                      )}
-                    </button>
+                    <>
+                      <button className="btn btn-sm" onClick={() => copiarManual(r.dia)}
+                        title={`Copiar só os casos marcados à mão neste dia · ${manuaisDe(r.dia).filter(t => t.relatorioProcessado).length} de ${manuaisDe(r.dia).length} processados pelo dono`}>
+                        {copiado === `manual-${r.dia}` ? <><Check size={13} /> Copiado</> : (
+                          <><ClipboardList size={13} /> Manual ({manuaisDe(r.dia).filter(t => t.relatorioProcessado).length}/{manuaisDe(r.dia).length} ✓)</>
+                        )}
+                      </button>
+                      <button className="btn btn-sm" title={`Mover os casos manuais deste dia para ${ddmm(diaAnterior(r.dia))} (virada de meia-noite)`}
+                        onClick={() => {
+                          if (window.confirm(`Mover os ${manuaisDe(r.dia).length} casos de ${ddmm(r.dia)} para o relatório de ${ddmm(diaAnterior(r.dia))}?`)) {
+                            s.moverRelatorio(r.dia, diaAnterior(r.dia))
+                          }
+                        }}>
+                        <CornerUpLeft size={13} /> {ddmm(diaAnterior(r.dia))}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
