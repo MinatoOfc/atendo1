@@ -48,6 +48,8 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
       {nomeLojaDona && <span className="tag tag-purple">{nomeLojaDona}</span>}
       {tagStatus && t.status === 'enviado' && <span className="tag tag-green">respondido</span>}
       {tagStatus && t.status === 'humano' && <span className="tag tag-amber">para você</span>}
+      {/* caso em atendimento humano que já teve resposta enviada (segue aberto com você) */}
+      {t.status === 'humano' && t.resposta && <span className="tag tag-green">respondido</span>}
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}

@@ -485,42 +485,56 @@ function fundirTickets(estado, x, y) {
   estado.tickets = estado.tickets.filter(t => t.id !== velho.id)
 }
 
+// nome comparável: minúsculas, sem acentos, espaços normalizados
+const nomePessoa = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
+
 /**
- * Junta conversas que nasceram separadas mas são a mesma coisa: mesmo cliente e
- * mesma loja, com assunto equivalente OU o mesmo pedido citado. Roda a cada
- * sincronização — cobre inclusive tickets criados antes desta regra existir.
+ * Junta conversas que nasceram separadas mas são a mesma coisa.
+ * - Mesmo remetente e mesma loja: junta com assunto equivalente OU mesmo pedido citado.
+ * - Remetentes DIFERENTES (a pessoa usou dois e-mails): junta só com o mesmo
+ *   pedido citado E evidência de que é a mesma pessoa — um e-mail citado no
+ *   texto do outro, ou o mesmo nome completo. Sem isso, não junta (uma
+ *   transportadora citando o mesmo pedido NÃO entra na conversa do cliente).
+ * Roda a cada sincronização — cobre inclusive tickets antigos.
  */
 export function fundirConversasDuplicadas(estado) {
   let mudou = false
-  const grupos = new Map()
-  for (const t of estado.tickets) {
-    if (['spam', 'lixeira'].includes(t.status)) continue
-    const chave = `${t.lojaId ?? 'loja1'}|${t.de.toLowerCase()}`
-    grupos.set(chave, [...(grupos.get(chave) ?? []), t])
-  }
-  for (const [, grupo] of grupos) {
-    if (grupo.length < 2) continue
-    let denovo = true
-    while (denovo) {
-      denovo = false
-      const atuais = grupo.filter(t => estado.tickets.includes(t))
-      externo:
-      for (let i = 0; i < atuais.length; i++) {
-        for (let j = i + 1; j < atuais.length; j++) {
-          const a = atuais[i], b = atuais[j]
-          let mesma = normalizarAssunto(a.assunto) === normalizarAssunto(b.assunto)
-          if (!mesma) {
-            const nb = numerosDePedido(textoDaConversa(b))
-            for (const n of numerosDePedido(textoDaConversa(a))) {
-              if (nb.has(n)) { mesma = true; break }
-            }
-          }
-          if (!mesma) continue
-          fundirTickets(estado, a, b)
-          mudou = true
-          denovo = true
-          break externo
+  let denovo = true
+  while (denovo) {
+    denovo = false
+    const ts = estado.tickets.filter(t => !['spam', 'lixeira'].includes(t.status))
+    const info = ts.map(t => {
+      const texto = textoDaConversa(t)
+      return {
+        t,
+        loja: t.lojaId ?? 'loja1',
+        de: t.de.toLowerCase(),
+        assunto: normalizarAssunto(t.assunto),
+        numeros: numerosDePedido(texto),
+        emails: emailsCitados(texto),
+        nome: nomePessoa(t.nome),
+      }
+    })
+    externo:
+    for (let i = 0; i < info.length; i++) {
+      for (let j = i + 1; j < info.length; j++) {
+        const a = info[i], b = info[j]
+        if (a.loja !== b.loja) continue
+        let numeroComum = false
+        for (const n of a.numeros) if (b.numeros.has(n)) { numeroComum = true; break }
+        let mesma = false
+        if (a.de === b.de) {
+          mesma = a.assunto === b.assunto || numeroComum
+        } else if (numeroComum) {
+          // dois e-mails, mesmo pedido: precisa de prova de mesma pessoa
+          mesma = a.emails.has(b.de) || b.emails.has(a.de)
+            || (!!a.nome && a.nome.includes(' ') && a.nome === b.nome)
         }
+        if (!mesma) continue
+        fundirTickets(estado, a.t, b.t)
+        mudou = true
+        denovo = true
+        break externo
       }
     }
   }
