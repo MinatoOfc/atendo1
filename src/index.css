@@ -80,9 +80,11 @@
 [data-theme="dark"] .tag-amber { background: #372f1e; color: #ca9849; }
 
 /* ---------- Paletas de cor (Configurações → Aparência) ----------
-   Cada paleta troca a cor de destaque e dá um leve tom aos fundos, nos dois
-   modos. Regra de precedência: o bloco claro (:root[data-paleta]) ganharia do
-   modo escuro base, então o bloco escuro de CADA paleta redefine as mesmas
+   No claro, cada paleta troca a cor de destaque e dá um leve tom aos fundos.
+   No escuro, todas as paletas (menos a Padrão) são AMOLED: fundo preto puro,
+   painéis quase-pretos e a cor de destaque realçada para saltar no preto.
+   Regra de precedência: o bloco claro (:root[data-paleta]) ganharia do modo
+   escuro base, então o bloco escuro de CADA paleta redefine as mesmas
    variáveis que o claro define — os dois conjuntos precisam andar juntos. */
 
 /* Oceano — verde-água profundo */
@@ -94,11 +96,11 @@
   --ring: rgba(14, 135, 133, 0.15);
 }
 :root[data-theme="dark"][data-paleta="oceano"] {
-  --bg: #151c1c; --panel: #1b2323; --panel-soft: #1f2828; --hover: #273131; --code-bg: #1f2828;
-  --border: #2e3a3a; --border-soft: #263030;
-  --purple: #4fb3ae; --purple-soft: #16343a; --purple-border: #245257;
-  --grad: linear-gradient(92deg, #14807e 0%, #1a9391 100%);
-  --ring: rgba(79, 179, 174, 0.18);
+  --bg: #000000; --panel: #0a0a0a; --panel-soft: #101010; --hover: #1a1a1a; --code-bg: #101010;
+  --border: #232323; --border-soft: #191919;
+  --purple: #45c4e0; --purple-soft: #0d2a33; --purple-border: #1b4a57;
+  --grad: linear-gradient(92deg, #0f7f96 0%, #128ea6 100%);
+  --ring: rgba(69, 196, 224, 0.22);
 }
 
 /* Floresta — verde folha */
@@ -110,11 +112,11 @@
   --ring: rgba(46, 125, 84, 0.15);
 }
 :root[data-theme="dark"][data-paleta="floresta"] {
-  --bg: #171d18; --panel: #1d241e; --panel-soft: #212922; --hover: #293229; --code-bg: #212922;
-  --border: #303b31; --border-soft: #28322a;
-  --purple: #5aab7f; --purple-soft: #1c3527; --purple-border: #2c5440;
-  --grad: linear-gradient(92deg, #2c7a52 0%, #338a5c 100%);
-  --ring: rgba(90, 171, 127, 0.18);
+  --bg: #000000; --panel: #0a0a0a; --panel-soft: #101010; --hover: #1a1a1a; --code-bg: #101010;
+  --border: #232323; --border-soft: #191919;
+  --purple: #4ade80; --purple-soft: #0c2a18; --purple-border: #1b4a2e;
+  --grad: linear-gradient(92deg, #1d7a48 0%, #238a52 100%);
+  --ring: rgba(74, 222, 128, 0.22);
 }
 
 /* Pôr do sol — terracota (tom avermelhado de propósito: não confundir com a
@@ -127,11 +129,11 @@
   --ring: rgba(184, 84, 39, 0.16);
 }
 :root[data-theme="dark"][data-paleta="sol"] {
-  --bg: #1e1915; --panel: #241e19; --panel-soft: #29221c; --hover: #322a22; --code-bg: #29221c;
-  --border: #3b322a; --border-soft: #332b23;
-  --purple: #dd8a5c; --purple-soft: #3f2a20; --purple-border: #5f3f2c;
-  --grad: linear-gradient(92deg, #a54d22 0%, #bb5c2e 100%);
-  --ring: rgba(221, 138, 92, 0.18);
+  --bg: #000000; --panel: #0a0a0a; --panel-soft: #101010; --hover: #1a1a1a; --code-bg: #101010;
+  --border: #232323; --border-soft: #191919;
+  --purple: #f88a5a; --purple-soft: #331d12; --purple-border: #5c3520;
+  --grad: linear-gradient(92deg, #b4501f 0%, #c65c28 100%);
+  --ring: rgba(248, 138, 90, 0.22);
 }
 
 /* Lavanda — roxo suave */
@@ -143,11 +145,11 @@
   --ring: rgba(125, 91, 176, 0.15);
 }
 :root[data-theme="dark"][data-paleta="lavanda"] {
-  --bg: #1a181e; --panel: #201d25; --panel-soft: #24202a; --hover: #2c2833; --code-bg: #24202a;
-  --border: #342f3d; --border-soft: #2b2733;
-  --purple: #a687d6; --purple-soft: #2f2743; --purple-border: #4a3d68;
+  --bg: #000000; --panel: #0a0a0a; --panel-soft: #101010; --hover: #1a1a1a; --code-bg: #101010;
+  --border: #232323; --border-soft: #191919;
+  --purple: #b794f4; --purple-soft: #241833; --purple-border: #443060;
   --grad: linear-gradient(92deg, #74549f 0%, #8262b0 100%);
-  --ring: rgba(166, 135, 214, 0.18);
+  --ring: rgba(183, 148, 244, 0.22);
 }
 
 /* Amoled — preto puro no escuro, com ciano vibrante de destaque.
