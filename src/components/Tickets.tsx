@@ -49,7 +49,7 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
       {tagStatus && t.status === 'enviado' && <span className="tag tag-green">respondido</span>}
       {tagStatus && t.status === 'humano' && <span className="tag tag-amber">para você</span>}
       {/* caso em atendimento humano que já teve resposta enviada (segue aberto com você) */}
-      {t.status === 'humano' && t.resposta && <span className="tag tag-green">respondido</span>}
+      {t.status === 'humano' && (t.resposta || t.marcadoRespondido) && <span className="tag tag-green">respondido</span>}
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}
@@ -272,7 +272,7 @@ const rotuloStatus: Record<string, string> = {
 }
 
 export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, marcarRespondido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
@@ -308,7 +308,13 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   const iaJaFez = respostasEnviadas > 0
     ? `${respostasEnviadas} resposta${respostasEnviadas > 1 ? 's' : ''} enviada${respostasEnviadas > 1 ? 's' : ''}`
     : t.rascunho ? 'Rascunho pronto, aguardando envio' : 'Ainda sem resposta'
-  const statusTexto = t.status === 'aprovacao' && t.enviaEm ? 'Envio automático agendado' : (rotuloStatus[t.status] ?? t.status)
+  // a última palavra foi nossa: resposta atual enviada ou marcação manual
+  const jaRespondida = !!(t.resposta || t.marcadoRespondido)
+  const statusTexto = t.status === 'aprovacao' && t.enviaEm
+    ? 'Envio automático agendado'
+    : t.status === 'humano' && jaRespondida
+      ? 'Respondida — aguardando sua decisão para fechar'
+      : (rotuloStatus[t.status] ?? t.status)
 
   const alternarTraducao = async () => {
     const faltaTraduzir = (t.corpo && !t.traducao)
@@ -390,6 +396,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         )}
         {t.enviaEm && !t.iaPausada && <CountdownPill ate={t.enviaEm} />}
         {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
+        {t.status === 'humano' && jaRespondida && <span className="tag tag-green">respondida</span>}
       </div>
 
       {/* Resumo da conversa */}
@@ -397,6 +404,13 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
           <b style={{ fontSize: 13.5 }}>Resumo da conversa</b>
           <div className="row gap-8">
+            {t.status === 'humano' && !t.resposta && (
+              <button className={'btn btn-sm' + (t.marcadoRespondido ? ' btn-primary' : '')}
+                title={t.marcadoRespondido ? 'Desmarcar "respondida"' : 'A resposta já saiu por outro caminho? Marca a conversa como respondida (sem enviar nada)'}
+                onClick={() => marcarRespondido(t.id, !t.marcadoRespondido)}>
+                <CheckCheck size={13} /> {t.marcadoRespondido ? 'Respondida ✓' : 'Marcar respondida'}
+              </button>
+            )}
             <button className={'btn btn-sm' + (t.relatorioDia ? ' btn-primary' : '')}
               title={t.relatorioDia ? 'Trocar o texto ou remover do relatório' : 'Marcar este caso para o relatório manual de hoje (página Resumo diário)'}
               onClick={() => setModalRelatorio(true)}>

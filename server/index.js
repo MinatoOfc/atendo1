@@ -1498,6 +1498,14 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
   }
 })
 
+// Marca à mão que a conversa já foi respondida (sem enviar nada nem fechar) —
+// para quando a resposta saiu por outro caminho e a lista não mostra
+app.post('/api/tickets/:id/respondido', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  t.marcadoRespondido = !!req.body?.marcar || undefined
+  salvar(req.wsId); ok(req, res)
+})
+
 app.post('/api/tickets/:id/pausar-ia', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   t.iaPausada = !!req.body.pausar

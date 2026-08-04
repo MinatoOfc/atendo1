@@ -42,6 +42,8 @@ export interface Ticket {
   relatorioLinha?: string
   /** quando o dono marcou este caso como processado no link do relatório (ISO) */
   relatorioProcessado?: string
+  /** marcado à mão como "já respondida" (resposta saiu por outro caminho) */
+  marcadoRespondido?: boolean
   custoIA?: number
   iaPausada?: boolean
   traducao?: string
@@ -270,6 +272,7 @@ interface Store extends ServerState {
   editarLinhaRelatorio: (id: string, linha: string) => void
   /** move todos os casos marcados do dia `de` para o dia `para` (AAAA-MM-DD) */
   moverRelatorio: (de: string, para: string) => void
+  marcarRespondido: (id: string, marcar: boolean) => void
   aprovarEnviar: (id: string, texto: string, manterAberto?: boolean) => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
@@ -512,6 +515,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     configurarRelatorioLink: (acao, valor) => api('/relatorio-link', 'POST', { acao, valor }).then(aplicar),
     editarLinhaRelatorio: (id, linha) => api(`/tickets/${id}/relatorio-linha`, 'POST', { linha }).then(aplicar),
     moverRelatorio: (de, para) => api('/relatorio-mover', 'POST', { de, para }).then(aplicar),
+    marcarRespondido: (id, marcar) => api(`/tickets/${id}/respondido`, 'POST', { marcar }).then(aplicar),
 
     editarRascunho: (id, texto) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, rascunho: texto } : t)) }))
