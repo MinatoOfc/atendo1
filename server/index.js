@@ -553,6 +553,7 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }) {
   t.data = data || new Date().toISOString()
   t.lido = false
   t.resposta = undefined
+  t.marcadoRespondido = undefined // cliente falou de novo: a conversa volta a ser pendente
   t.respostaTraducao = undefined
   t.respondidoEm = undefined
   t.enviaEm = undefined

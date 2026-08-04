@@ -48,8 +48,12 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
       {nomeLojaDona && <span className="tag tag-purple">{nomeLojaDona}</span>}
       {tagStatus && t.status === 'enviado' && <span className="tag tag-green">respondido</span>}
       {tagStatus && t.status === 'humano' && <span className="tag tag-amber">para você</span>}
-      {/* caso em atendimento humano que já teve resposta enviada (segue aberto com você) */}
-      {t.status === 'humano' && (t.resposta || t.marcadoRespondido) && <span className="tag tag-green">respondido</span>}
+      {/* caso em atendimento humano cuja ÚLTIMA palavra foi nossa: resposta enviada
+          DEPOIS da última mensagem do cliente, ou marcação manual. Resposta antiga
+          com mensagem nova do cliente por cima NÃO conta como respondido. */}
+      {t.status === 'humano' && (t.marcadoRespondido
+        || (t.resposta && (!t.respondidoEm || !t.data || t.respondidoEm >= t.data)))
+        && <span className="tag tag-green">respondido</span>}
       {t.enviaEm && <CountdownPill ate={t.enviaEm} />}
       {t.historico && t.historico.length > 0 && <span className="tag tag-outro">conversa</span>}
       {(t.custoIA ?? 0) > 0 && <span className="tag tag-outro" title="Custo de IA desta conversa">US$ {t.custoIA!.toFixed(4)}</span>}
@@ -308,8 +312,10 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   const iaJaFez = respostasEnviadas > 0
     ? `${respostasEnviadas} resposta${respostasEnviadas > 1 ? 's' : ''} enviada${respostasEnviadas > 1 ? 's' : ''}`
     : t.rascunho ? 'Rascunho pronto, aguardando envio' : 'Ainda sem resposta'
-  // a última palavra foi nossa: resposta atual enviada ou marcação manual
-  const jaRespondida = !!(t.resposta || t.marcadoRespondido)
+  // a última palavra foi nossa: resposta enviada DEPOIS da última mensagem do
+  // cliente, ou marcação manual — resposta antiga com mensagem nova não conta
+  const jaRespondida = !!(t.marcadoRespondido
+    || (t.resposta && (!t.respondidoEm || !t.data || t.respondidoEm >= t.data)))
   const statusTexto = t.status === 'aprovacao' && t.enviaEm
     ? 'Envio automático agendado'
     : t.status === 'humano' && jaRespondida
