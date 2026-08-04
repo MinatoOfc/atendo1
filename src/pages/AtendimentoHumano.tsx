@@ -6,13 +6,8 @@ import { EmptyState, TipCard } from '../components/Shared'
 export default function AtendimentoHumano() {
   const { casosHumanos } = useStore()
 
-  // fila por urgência: reembolso na frente; dentro do grupo, o mais antigo primeiro
-  const fila = [...casosHumanos].sort((a, b) => {
-    const ra = a.categoria === 'reembolso' ? 0 : 1
-    const rb = b.categoria === 'reembolso' ? 0 : 1
-    if (ra !== rb) return ra - rb
-    return (a.data || '').localeCompare(b.data || '')
-  })
+  // do mais recente para o mais antigo, como o resto do app
+  const fila = [...casosHumanos].sort((a, b) => (b.data || '').localeCompare(a.data || ''))
 
   return (
     <>
