@@ -7,6 +7,13 @@ import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket, AnexoImagem } from '../store'
 import { MiniFoto, Modal } from './Shared'
 
+/* Quem escreveu a resposta: a IA ou você (manual) */
+function TagOrigem({ origem }: { origem?: 'ia' | 'manual' }) {
+  if (origem === 'ia') return <span className="tag tag-purple" style={{ marginLeft: 8 }}><Sparkles size={10} style={{ marginRight: 3, verticalAlign: -1 }} />IA</span>
+  if (origem === 'manual') return <span className="tag tag-outro" style={{ marginLeft: 8 }}>manual</span>
+  return null
+}
+
 /* Fotos que o cliente anexou ao e-mail: miniaturas clicáveis (abre em nova aba) */
 function ImagensAnexadas({ anexos }: { anexos?: AnexoImagem[] }) {
   if (!anexos?.length) return null
@@ -484,6 +491,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             <span>
               {m.autor === 'atendo' ? <Send size={12} style={{ marginRight: 6 }} /> : null}
               <b style={{ color: 'var(--text)' }}>{m.autor === 'atendo' ? 'Você respondeu' : t.nome}</b>
+              {m.autor === 'atendo' && <TagOrigem origem={m.origem} />}
               {verTraducao && m.traducao ? <span className="tag tag-outro" style={{ marginLeft: 8 }}>traduzido</span> : null}
             </span>
             <span>{new Date(m.data).toLocaleString('pt-BR')}</span>
@@ -513,6 +521,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           <div className="head">
             <span>
               <Send size={12} style={{ marginRight: 6 }} /><b style={{ color: 'var(--text)' }}>Você respondeu</b>
+              <TagOrigem origem={t.respostaOrigem} />
               {verTraducao && t.respostaTraducao ? <span className="tag tag-outro" style={{ marginLeft: 8 }}>traduzido</span> : null}
             </span>
             <span>{t.respondidoEm && new Date(t.respondidoEm).toLocaleString('pt-BR')}</span>
@@ -575,12 +584,12 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
             {t.status === 'humano' && (
               <button className="btn" title="Envia a mensagem ao cliente, mas a conversa continua em atendimento humano até você aprovar"
-                onClick={() => aprovarEnviar(t.id, texto, true)}>
+                onClick={() => aprovarEnviar(t.id, texto, true, 'ia')}>
                 <Send size={14} /> Enviar (continua comigo)
               </button>
             )}
             <button className="btn btn-primary" title="Envia a mensagem e fecha o caso"
-              onClick={() => { aprovarEnviar(t.id, texto); onBack() }}>
+              onClick={() => { aprovarEnviar(t.id, texto, false, 'ia'); onBack() }}>
               <Check size={14} /> Aprovar e enviar
             </button>
             <button className="btn" title={t.resposta ? 'Fecha o caso sem enviar mais nada' : 'Fecha o caso sem enviar nada — ele sai daqui e fica como respondido'}
@@ -612,13 +621,13 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             {t.status === 'humano' && (
               <button className="btn" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
                 title="Envia a mensagem ao cliente, mas a conversa continua em atendimento humano até você aprovar"
-                onClick={() => { aprovarEnviar(t.id, manual.trim(), true); setManual(''); setTraducaoManual(null) }}>
+                onClick={() => { aprovarEnviar(t.id, manual.trim(), true, 'manual'); setManual(''); setTraducaoManual(null) }}>
                 <Send size={14} /> Enviar (continua comigo)
               </button>
             )}
             <button className="btn btn-primary" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
               title="Envia a mensagem e fecha o caso"
-              onClick={() => { aprovarEnviar(t.id, manual.trim()); onBack() }}>
+              onClick={() => { aprovarEnviar(t.id, manual.trim(), false, 'manual'); onBack() }}>
               <Send size={14} /> {t.status === 'humano' ? 'Aprovar e enviar' : 'Enviar resposta'}
             </button>
             <button className="btn" title={t.resposta ? 'Fecha o caso sem enviar mais nada' : 'Fecha o caso sem enviar nada — ele sai daqui e fica como respondido'}
@@ -646,7 +655,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
             {barraIAManual}
             <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
               <button className="btn btn-primary" disabled={!manual.trim()} style={!manual.trim() ? { opacity: 0.5 } : undefined}
-                onClick={() => { aprovarEnviar(t.id, manual.trim()); setManual(''); setNovaResposta(false) }}>
+                onClick={() => { aprovarEnviar(t.id, manual.trim(), false, 'manual'); setManual(''); setNovaResposta(false) }}>
                 <Send size={14} /> Enviar
               </button>
               <button className="btn" onClick={() => setNovaResposta(false)}>Cancelar</button>

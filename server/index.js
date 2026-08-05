@@ -477,7 +477,7 @@ function fundirTickets(estado, x, y) {
   const doVelho = [
     ...(velho.historico ?? []),
     ...(velho.corpo ? [{ autor: 'cliente', corpo: velho.corpo, data: velho.data, traducao: velho.traducao, anexos: velho.anexos }] : []),
-    ...(velho.resposta ? [{ autor: 'atendo', corpo: velho.resposta, data: velho.respondidoEm || velho.data }] : []),
+    ...(velho.resposta ? [{ autor: 'atendo', corpo: velho.resposta, data: velho.respondidoEm || velho.data, origem: velho.respostaOrigem }] : []),
   ]
   novo.historico = [...doVelho, ...(novo.historico ?? [])]
     .sort((a, b) => (a.data || '').localeCompare(b.data || ''))
@@ -546,13 +546,14 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }) {
 
   t.historico = t.historico || []
   if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao, anexos: t.anexos })
-  if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data, traducao: t.respostaTraducao })
+  if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data, traducao: t.respostaTraducao, origem: t.respostaOrigem })
 
   t.anexos = anexos?.length ? anexos : undefined
   t.corpo = corpo
   t.data = data || new Date().toISOString()
   t.lido = false
   t.resposta = undefined
+  t.respostaOrigem = undefined
   t.marcadoRespondido = undefined // cliente falou de novo: a conversa volta a ser pendente
   t.respostaTraducao = undefined
   t.respondidoEm = undefined
@@ -657,7 +658,7 @@ async function sincronizar(wsId) {
 
 /* ---------------- Envio ---------------- */
 
-async function enviarResposta(wsId, ticket, texto) {
+async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   const conta = contaDaLoja(wsId, ticket.lojaId ?? 'loja1')
   const contas = contasDe(wsId)
   const canal = conta?.configurado || envioPorApi ? conta : contas.find(c => c.configurado)
@@ -675,11 +676,12 @@ async function enviarResposta(wsId, ticket, texto) {
       ticket.traducao = undefined
       ticket.anexos = undefined
     }
-    ticket.historico.push({ autor: 'atendo', corpo: ticket.resposta, data: ticket.respondidoEm || ticket.data, traducao: ticket.respostaTraducao })
+    ticket.historico.push({ autor: 'atendo', corpo: ticket.resposta, data: ticket.respondidoEm || ticket.data, traducao: ticket.respostaTraducao, origem: ticket.respostaOrigem })
     ticket.respostaTraducao = undefined
   }
   ticket.status = 'enviado'
   ticket.resposta = texto
+  ticket.respostaOrigem = origem // quem escreveu: 'ia' ou 'manual'
   ticket.rascunho = texto
   ticket.rascunhoTraducao = undefined
   ticket.respondidoEm = new Date().toISOString()
@@ -699,7 +701,7 @@ setInterval(async () => {
     for (const t of vencidos) {
       enviando.add(t.id)
       try {
-        await enviarResposta(wsId, t, t.rascunho || '')
+        await enviarResposta(wsId, t, t.rascunho || '', 'ia')
         t.erroEnvio = undefined
         t.tentativasEnvio = undefined
       } catch (err) {
@@ -1482,7 +1484,11 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
   try {
     const motivo = t.motivoEscalada
     const motivoTrad = t.motivoTraducao
-    await enviarResposta(req.wsId, t, String(req.body.texto ?? t.rascunho ?? ''))
+    // origem vem do frontend (caixa da IA ou caixa manual); sem ela, deduz pelo rascunho
+    const origem = req.body.origem === 'ia' || req.body.origem === 'manual'
+      ? req.body.origem
+      : (t.geradoPorIA && String(req.body.texto ?? '') === (t.rascunho ?? '') ? 'ia' : 'manual')
+    await enviarResposta(req.wsId, t, String(req.body.texto ?? t.rascunho ?? ''), origem)
     // "Enviar e manter comigo": a mensagem sai, mas a conversa continua em
     // atendimento humano até o lojista aprovar (fechar) de verdade
     if (req.body.manterAberto) {
@@ -1569,7 +1575,7 @@ app.post('/api/compose', async (req, res) => {
       id: uid(), nome: para.split('@')[0], de: para, assunto, corpo: '', lojaId,
       data: new Date().toISOString(), lido: true, origem: 'cliente',
       categoria: 'outro', idioma: 'pt', status: 'enviado',
-      resposta: corpo || '', respondidoEm: new Date().toISOString(),
+      resposta: corpo || '', respostaOrigem: 'manual', respondidoEm: new Date().toISOString(),
     })
     salvar(req.wsId); ok(req, res)
   } catch (err) {

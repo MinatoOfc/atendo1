@@ -31,7 +31,9 @@ export interface Ticket {
   erroEnvio?: string
   tentativasEnvio?: number
   lojaId?: string
-  historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string; traducao?: string; anexos?: AnexoImagem[] }[]
+  historico?: { autor: 'cliente' | 'atendo'; corpo: string; data: string; traducao?: string; anexos?: AnexoImagem[]; origem?: 'ia' | 'manual' }[]
+  /** quem escreveu a resposta atual: a IA ou você */
+  respostaOrigem?: 'ia' | 'manual'
   /** imagens anexadas à mensagem atual do cliente (referências; bytes ficam no servidor) */
   anexos?: AnexoImagem[]
   resumoSituacao?: string
@@ -273,7 +275,7 @@ interface Store extends ServerState {
   /** move todos os casos marcados do dia `de` para o dia `para` (AAAA-MM-DD) */
   moverRelatorio: (de: string, para: string) => void
   marcarRespondido: (id: string, marcar: boolean) => void
-  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean) => void
+  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual') => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
   restaurar: (id: string) => void
@@ -523,15 +525,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       debounces.current[id] = window.setTimeout(() => { api(`/tickets/${id}/rascunho`, 'POST', { texto }) }, 800)
     },
 
-    aprovarEnviar: (id, texto, manterAberto) => {
+    aprovarEnviar: (id, texto, manterAberto, origem) => {
       clearTimeout(debounces.current[id])
       setState(s => ({
         ...s,
         tickets: s.tickets.map(t => (t.id === id
-          ? { ...t, status: manterAberto ? t.status : 'enviado', resposta: texto, respondidoEm: new Date().toISOString(), enviaEm: undefined }
+          ? { ...t, status: manterAberto ? t.status : 'enviado', resposta: texto, respostaOrigem: origem, respondidoEm: new Date().toISOString(), enviaEm: undefined }
           : t)),
       }))
-      api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto }).then(r => {
+      api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto, origem }).then(r => {
         if (r.erro) alert(r.erro)
         aplicar(r)
       })
