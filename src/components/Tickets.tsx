@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft, Check, CheckCheck, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
-  Package, ExternalLink, PenSquare, ClipboardList, X, Plus,
+  Package, ExternalLink, PenSquare, ClipboardList, X, Plus, ChevronUp, ChevronDown,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket, AnexoImagem } from '../store'
@@ -679,6 +679,20 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
 
     <PainelPedidos t={t} />
     {modalRelatorio && <ModalRelatorio t={t} onClose={() => setModalRelatorio(false)} />}
+
+    {/* atalhos de rolagem para conversas longas: topo e fim */}
+    <div style={{ position: 'fixed', right: 26, bottom: 84, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 40 }}>
+      <button className="btn" title="Ir para o topo da conversa"
+        style={{ padding: 9, borderRadius: '50%', boxShadow: 'var(--shadow)' }}
+        onClick={() => document.querySelector<HTMLElement>('.content')?.scrollTo({ top: 0, behavior: 'smooth' })}>
+        <ChevronUp size={16} />
+      </button>
+      <button className="btn" title="Ir para o fim da conversa"
+        style={{ padding: 9, borderRadius: '50%', boxShadow: 'var(--shadow)' }}
+        onClick={() => { const c = document.querySelector<HTMLElement>('.content'); c?.scrollTo({ top: c.scrollHeight, behavior: 'smooth' }) }}>
+        <ChevronDown size={16} />
+      </button>
+    </div>
     </div>
   )
 }
