@@ -678,10 +678,10 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
     </div>
 
     <PainelPedidos t={t} />
-    {modalRelatorio && <ModalRelatorio t={t} onClose={() => setModalRelatorio(false)} />}
 
-    {/* atalhos de rolagem para conversas longas: topo e fim */}
-    <div style={{ position: 'fixed', right: 26, bottom: 84, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 40 }}>
+    {/* atalhos de rolagem para conversas longas: coluna sticky colada à direita
+        do conteúdo — acompanha a rolagem sempre na mesma altura da janela */}
+    <div style={{ position: 'sticky', top: '58vh', alignSelf: 'flex-start', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
       <button className="btn" title="Ir para o topo da conversa"
         style={{ padding: 9, borderRadius: '50%', boxShadow: 'var(--shadow)' }}
         onClick={() => document.querySelector<HTMLElement>('.content')?.scrollTo({ top: 0, behavior: 'smooth' })}>
@@ -693,6 +693,8 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         <ChevronDown size={16} />
       </button>
     </div>
+
+    {modalRelatorio && <ModalRelatorio t={t} onClose={() => setModalRelatorio(false)} />}
     </div>
   )
 }
