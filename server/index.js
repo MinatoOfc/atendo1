@@ -1465,6 +1465,10 @@ app.post('/api/tickets/:id/traduzir-rascunho', async (req, res) => {
     if (r.erro) return res.status(400).json({ erro: r.erro, state: visao(req.wsId) })
     t.rascunhoTraducao = r.textos[0]
     t.rascunhoTraduzidoDe = t.rascunho
+    if (r.custoIA) { // fallback pelo Gemini quando o Google recusa
+      t.custoIA = Math.round(((t.custoIA || 0) + r.custoIA) * 1e6) / 1e6
+      registrarGasto(req.estado, t.lojaId, r.custoIA)
+    }
     salvar(req.wsId)
   }
   ok(req, res)
@@ -1537,6 +1541,10 @@ app.post('/api/tickets/:id/traduzir', async (req, res) => {
   const r = await traduzirGratis(alvos.map(a => a.corpo))
   if (r.erro) return res.status(400).json({ erro: r.erro, state: visao(req.wsId) })
   r.textos.forEach((texto, i) => alvos[i].aplicar(texto))
+  if (r.custoIA) { // fallback pelo Gemini quando o Google recusa
+    t.custoIA = Math.round(((t.custoIA || 0) + r.custoIA) * 1e6) / 1e6
+    registrarGasto(req.estado, t.lojaId, r.custoIA)
+  }
   salvar(req.wsId); ok(req, res)
 })
 
