@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeftRight, Check, Pencil, RotateCcw, X } from 'lucide-react'
+import { ArrowLeftRight, Check, Pencil, RotateCcw, Send, X } from 'lucide-react'
 import { useStore } from '../store'
 import { EmptyState } from '../components/Shared'
 
@@ -11,6 +11,8 @@ import { EmptyState } from '../components/Shared'
 export default function Trocas() {
   const s = useStore()
   const [editando, setEditando] = useState<{ id: string; texto: string } | null>(null)
+  // caixa de mensagem da troca: responde ao cliente dali mesmo
+  const [respondendo, setRespondendo] = useState<{ id: string; texto: string } | null>(null)
 
   const lojaFiltro = s.lojaAtiva !== 'todas' ? s.lojaAtiva : null
   const nomeLoja = (id?: string) => s.lojas.find(l => l.id === (id ?? 'loja1'))?.nome ?? 'Loja'
@@ -50,6 +52,10 @@ export default function Trocas() {
           </div>
         </div>
         <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+          <button className={'btn btn-sm' + (respondendo?.id === t.id ? ' btn-primary' : '')} title="Responder ao cliente daqui mesmo"
+            onClick={() => setRespondendo(respondendo?.id === t.id ? null : { id: t.id, texto: '' })}>
+            <Send size={13} /> Responder
+          </button>
           {t.status === 'pendente' ? (
             <button className="btn btn-sm btn-primary" title="Despachei a troca — marcar como enviada"
               onClick={() => s.atualizarTroca(t.id, { status: 'enviada' })}>
@@ -67,6 +73,23 @@ export default function Trocas() {
             onClick={() => { if (window.confirm('Remover esta troca do caderno?')) s.removerTroca(t.id) }}><X size={13} /></button>
         </div>
       </div>
+      {respondendo?.id === t.id && (
+        <div style={{ marginTop: 10 }}>
+          <textarea value={respondendo.texto} autoFocus
+            onChange={e => setRespondendo({ id: t.id, texto: e.target.value })}
+            placeholder={`Escreva a mensagem para ${t.nome}…`}
+            style={{ width: '100%', minHeight: 90, border: '1px solid var(--border)', borderRadius: 8, padding: '9px 12px', fontSize: 13, lineHeight: 1.5, background: 'var(--panel)', resize: 'vertical', outline: 'none' }} />
+          <div className="row gap-8" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-sm btn-primary" disabled={!respondendo.texto.trim()}
+              style={!respondendo.texto.trim() ? { opacity: 0.5 } : undefined}
+              onClick={() => { s.aprovarEnviar(t.ticketId, respondendo.texto.trim(), false, 'manual'); setRespondendo(null) }}>
+              <Send size={13} /> Enviar
+            </button>
+            <button className="btn btn-sm" onClick={() => setRespondendo(null)}>Cancelar</button>
+            <span className="muted-sm">vai por e-mail para {t.de} e fecha o caso na caixa</span>
+          </div>
+        </div>
+      )}
     </div>
   )
 

@@ -30,7 +30,7 @@ function ImagensAnexadas({ anexos }: { anexos?: AnexoImagem[] }) {
 }
 
 export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Ticket) => void; tagStatus?: boolean }) {
-  const { lojasVisiveis, lojaAtiva, prefs, pedidos } = useStore()
+  const { lojasVisiveis, lojaAtiva, prefs, pedidos, moverPara } = useStore()
   const nomeLojaDona = lojaAtiva === 'todas' && lojasVisiveis.length > 1
     ? lojasVisiveis.find(l => l.id === (t.lojaId ?? 'loja1'))?.nome
     : null
@@ -70,6 +70,14 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
         </span>
       )}
       <span className={`tag tag-${t.categoria}`}>{nomeCategoria[t.categoria]}</span>
+      {/* atalho: manda a conversa para o atendimento humano sem abrir */}
+      {!['humano', 'spam', 'lixeira'].includes(t.status) && (
+        <span className="btn btn-sm" role="button" title="Mover para atendimento humano"
+          style={{ padding: '3px 8px' }}
+          onClick={e => { e.stopPropagation(); moverPara(t.id, 'humano', 'Movido por você da caixa') }}>
+          <Users size={13} />
+        </span>
+      )}
       <span className="when">{tempoRelativo(t.data)}</span>
     </button>
   )
