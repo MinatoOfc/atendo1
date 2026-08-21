@@ -57,7 +57,7 @@ export default function CaixaEntrada() {
         <button className={'chip' + (origem === 'shopify' ? ' active-purple' : '')} onClick={() => setOrigem('shopify')}>Shopify</button>
         <button className={'chip' + (origem === 'todos' ? ' active-purple' : '')} onClick={() => setOrigem('todos')}>Todos</button>
       </div>
-      <div className="row gap-8">
+      <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
         <button className={'chip' + (leitura === 'todos' ? ' active' : '')} onClick={() => setLeitura('todos')}>Todos</button>
         <button className={'chip' + (leitura === 'nao' ? ' active' : '')} onClick={() => setLeitura('nao')}>Não lidos</button>
         <button className={'chip' + (leitura === 'lidos' ? ' active' : '')} onClick={() => setLeitura('lidos')}>Lidos</button>

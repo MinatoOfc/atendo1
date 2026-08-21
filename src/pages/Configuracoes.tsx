@@ -1055,8 +1055,8 @@ export default function Configuracoes() {
   }
 
   return (
-    <div style={{ display: 'flex', gap: 28, alignItems: 'flex-start', maxWidth: 1060, margin: '0 auto' }}>
-      <nav style={{ width: 200, flexShrink: 0, position: 'sticky', top: 0 }}>
+    <div className="config-wrap" style={{ display: 'flex', gap: 28, alignItems: 'flex-start', maxWidth: 1060, margin: '0 auto' }}>
+      <nav className="config-nav" style={{ width: 200, flexShrink: 0, position: 'sticky', top: 0 }}>
         {MENU.map((grupo, gi) => (
           <div key={gi}>
             {grupo.grupo && <div className="sidebar-label">{grupo.grupo}</div>}

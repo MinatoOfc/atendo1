@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   Home, Inbox, Send, CheckSquare, Users, BookOpen, Shield, Trash2,
   Package, Truck, Tag, TrendingUp, HelpCircle, MessageSquare, Settings,
-  PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone, Moon, Sun, Store, Plus, Contact, CalendarDays,
+  PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone, Moon, Sun, Store, Plus, Contact, CalendarDays, Menu,
 } from 'lucide-react'
 import { useStore } from '../store'
 import ComposeModal from './ComposeModal'
@@ -70,6 +70,9 @@ export default function Layout() {
   const [compor, setCompor] = useState(false)
   const [girando, setGirando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
+  // gaveta do menu no celular — fecha sozinha ao navegar
+  const [menuAberto, setMenuAberto] = useState(false)
+  useEffect(() => { setMenuAberto(false) }, [loc.pathname])
   const { prefs, setPref } = useStore()
   const tema = prefs.tema
 
@@ -87,19 +90,22 @@ export default function Layout() {
   }
 
   const item = (to: string, icon: React.ReactNode, label: string, extra?: React.ReactNode) => (
-    <NavLink to={to} className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} end={to === '/'}>
+    // onClick cobre o toque na rota JÁ ativa (pathname não muda e o useEffect não fecharia a gaveta)
+    <NavLink to={to} className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')} end={to === '/'}
+      onClick={() => setMenuAberto(false)}>
       {icon}<span>{label}</span>{extra}
     </NavLink>
   )
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {menuAberto && <div className="backdrop-menu" onClick={() => setMenuAberto(false)} />}
+      <aside className={'sidebar' + (menuAberto ? ' aberta' : '')}>
         <SeletorLoja />
 
         <div className="sidebar-label">Atendimento</div>
         {item('/', <Home />, 'Início')}
-        <button className="btn-new-email" onClick={() => setCompor(true)}>
+        <button className="btn-new-email" onClick={() => { setCompor(true); setMenuAberto(false) }}>
           <PenSquare size={15} /> Novo email
         </button>
         {item('/caixa', <Inbox />, 'Caixa de Entrada', naoLidos > 0 && <span className="badge-count">{naoLidos}</span>)}
@@ -135,22 +141,25 @@ export default function Layout() {
 
       <div className="main">
         <header className="topbar">
+          <button className="menu-btn icon-btn" onClick={() => setMenuAberto(true)} title="Abrir menu">
+            <Menu size={20} />
+          </button>
           <div className="topbar-title">{titulos[loc.pathname] ?? 'atendo'}</div>
           <div className="topbar-logo">atendo</div>
           <div className="topbar-right">
             <button className="icon-btn" onClick={onSync} title="Sincronizar e-mails">
               <RefreshCw style={girando ? { animation: 'spin 0.9s linear infinite' } : undefined} />
-              <span>Sincronizar</span>
+              <span className="so-desktop">Sincronizar</span>
             </button>
             <button className="icon-btn" onClick={() => setPref({ tema: tema === 'escuro' ? 'claro' : 'escuro' })} title={tema === 'escuro' ? 'Modo claro' : 'Modo escuro'}>
               {tema === 'escuro' ? <Sun /> : <Moon />}
             </button>
-            <button className="icon-btn"><Globe /> PT <ChevronDown size={12} /></button>
-            <button className="icon-btn"><Bell /></button>
+            <button className="icon-btn so-desktop"><Globe /> PT <ChevronDown size={12} /></button>
+            <button className="icon-btn so-desktop"><Bell /></button>
             <div className="row gap-8">
               <div className="avatar-sm">{(usuario?.nome?.[0] ?? 'A').toUpperCase()}</div>
-              <span style={{ fontWeight: 600 }}>{usuario?.nome ?? ''}</span>
-              <ChevronDown size={13} color="var(--text-3)" />
+              <span className="so-desktop" style={{ fontWeight: 600 }}>{usuario?.nome ?? ''}</span>
+              <ChevronDown className="so-desktop" size={13} color="var(--text-3)" />
             </div>
           </div>
         </header>

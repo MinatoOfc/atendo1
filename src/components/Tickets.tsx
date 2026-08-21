@@ -41,7 +41,7 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
     .filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1') && p.email && p.email.trim().toLowerCase() === emailCliente)
     .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''))
   return (
-    <button className="ticket-row" onClick={() => onOpen(t)}
+    <button className="ticket-row linha-caixa" onClick={() => onOpen(t)}
       style={compacto ? { padding: '7px 16px' } : undefined}>
       <span className={'dot' + (t.lido ? ' read' : '')} />
       <span className="from">
@@ -133,7 +133,7 @@ function PainelPedidos({ t }: { t: Ticket }) {
   const nTrocas = casosAnteriores.filter(t2 => t2.categoria === 'troca').length
 
   return (
-    <aside style={{ width: 280, flexShrink: 0 }}>
+    <aside className="painel-pedidos" style={{ width: 280, flexShrink: 0 }}>
       {(todosDoCliente.length > 0 || casosAnteriores.length > 0) && (
         <div className="card mb-12" style={{ padding: '12px 16px' }}>
           <div className="row gap-8 mb-8">
@@ -394,8 +394,8 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   )
 
   return (
-    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', maxWidth: 1180, margin: '0 auto' }}>
-    <div style={{ flex: 1, minWidth: 0 }}>
+    <div className="detail-wrap" style={{ display: 'flex', gap: 20, alignItems: 'flex-start', maxWidth: 1180, margin: '0 auto' }}>
+    <div style={{ flex: 1, minWidth: 0, width: '100%' }}>
       <button className="btn btn-sm mb-16" onClick={onBack}><ArrowLeft size={14} /> Voltar</button>
 
       <div className="row gap-10 mb-12" style={{ flexWrap: 'wrap' }}>
@@ -665,7 +665,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
       )}
 
       {(t.status === 'spam' || t.status === 'lixeira') && (
-        <div className="row gap-8">
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
           <button className="btn" onClick={() => { restaurar(t.id); onBack() }}><RotateCcw size={14} /> Restaurar</button>
           {t.status === 'lixeira' && (
             <button className="btn btn-danger" onClick={() => { excluirDefinitivo(t.id); onBack() }}><Trash2 size={14} /> Excluir definitivamente</button>
@@ -681,7 +681,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
 
     {/* atalhos de rolagem para conversas longas: coluna sticky colada à direita
         do conteúdo — acompanha a rolagem sempre na mesma altura da janela */}
-    <div style={{ position: 'sticky', top: '58vh', alignSelf: 'flex-start', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+    <div className="botoes-rolagem" style={{ position: 'sticky', top: '58vh', alignSelf: 'flex-start', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
       <button className="btn" title="Ir para o topo da conversa"
         style={{ padding: 9, borderRadius: '50%', boxShadow: 'var(--shadow)' }}
         onClick={() => document.querySelector<HTMLElement>('.content')?.scrollTo({ top: 0, behavior: 'smooth' })}>

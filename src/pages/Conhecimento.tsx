@@ -36,7 +36,7 @@ export default function Conhecimento() {
             O que o atendo sabe sobre a sua loja — políticas, prazos e FAQs que ele usa nas respostas. ({ativos} ativo{ativos !== 1 ? 's' : ''})
           </p>
         </div>
-        <div className="row gap-8">
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
           <span className="chip">PT</span>
           <button className="btn"><Lightbulb size={14} /> Sugerir do histórico</button>
           <button className="btn"><Download size={14} /> Importar</button>
@@ -155,7 +155,7 @@ export default function Conhecimento() {
           <b style={{ fontSize: 15 }}>Perguntas frequentes</b>
           <span className="muted-sm">{s.faqs.length}</span>
         </div>
-        <div className="row gap-8">
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
           <button className="btn" onClick={s.instalarBiblioteca}><Library size={14} /> Biblioteca e-commerce</button>
           <button className="btn" onClick={() => { s.preencherPoliticas(); s.instalarBiblioteca() }}><Sparkles size={14} /> Preencher com atendo</button>
           <button className="btn"><Search size={14} /> Buscar nos e-mails</button>

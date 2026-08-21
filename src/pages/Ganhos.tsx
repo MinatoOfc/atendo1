@@ -48,7 +48,7 @@ export default function Ganhos() {
     <div className="content-narrow">
       <h1 className="h2 mb-8">Ganhos</h1>
       <p className="muted mb-20">Números calculados a partir dos pedidos sincronizados. Conecte Meta Ads (em breve) para incluir o custo de anúncios.</p>
-      <div className="grid-2 mb-16" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+      <div className="grid-2 mb-16" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
         {cards.map(c => (
           <div key={c.label} className={c.destaque ? 'card-purple' : 'card'} style={{ padding: 16 }}>
             <div className="muted-sm mb-8">{c.label}</div>
