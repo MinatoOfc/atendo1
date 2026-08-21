@@ -27,10 +27,11 @@ const SCHEMA_GEMINI = {
     resposta: { type: 'STRING', description: 'Resposta completa ao cliente; vazia se spam=true' },
     confianca: { type: 'NUMBER' },
     escalar_humano: { type: 'BOOLEAN' },
+    aprova_reembolso: { type: 'BOOLEAN', description: 'true só quando o próximo passo é aprovar/confirmar um reembolso (cliente já escolheu ou exige); oferecer opções é false' },
     motivo: { type: 'STRING', description: 'Sempre em português; vazio se nada a sinalizar' },
     spam: { type: 'BOOLEAN' },
   },
-  required: ['situacao', 'resolucao', 'categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'motivo', 'spam'],
+  required: ['situacao', 'resolucao', 'categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'aprova_reembolso', 'motivo', 'spam'],
 }
 
 /**
