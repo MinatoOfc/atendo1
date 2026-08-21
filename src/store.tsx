@@ -8,12 +8,6 @@ export type StatusTicket = 'inbox' | 'aprovacao' | 'humano' | 'enviado' | 'spam'
 
 export interface AnexoImagem { id: string; nome: string; tipo: string }
 
-/** Troca aceita pelo cliente — pendente até o lojista despachar */
-export interface Troca {
-  id: string; ticketId: string; nome: string; de: string; lojaId?: string
-  detalhes: string; status: 'pendente' | 'enviada'; criadoEm: string; enviadaEm?: string
-}
-
 export interface Ticket {
   id: string
   nome: string
@@ -189,8 +183,6 @@ interface ServerState {
   geminiDisponivel?: boolean
   gastosIA?: Record<string, Record<string, number>>
   opcoesRelatorio?: string[]
-  /** caderno de trocas aceitas (o que falta despachar) */
-  trocas?: Troca[]
   /** caminho do link público do relatório manual (ex.: /r/ws-x/token) ou null */
   relatorioLink?: string | null
   /** false = o dia de hoje só aparece no link depois da meia-noite */
@@ -283,9 +275,6 @@ interface Store extends ServerState {
   /** move todos os casos marcados do dia `de` para o dia `para` (AAAA-MM-DD) */
   moverRelatorio: (de: string, para: string) => void
   marcarRespondido: (id: string, marcar: boolean) => void
-  registrarTroca: (ticketId: string, detalhes?: string) => void
-  atualizarTroca: (id: string, patch: { status?: 'pendente' | 'enviada'; detalhes?: string }) => void
-  removerTroca: (id: string) => void
   aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual') => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
@@ -529,9 +518,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     editarLinhaRelatorio: (id, linha) => api(`/tickets/${id}/relatorio-linha`, 'POST', { linha }).then(aplicar),
     moverRelatorio: (de, para) => api('/relatorio-mover', 'POST', { de, para }).then(aplicar),
     marcarRespondido: (id, marcar) => api(`/tickets/${id}/respondido`, 'POST', { marcar }).then(aplicar),
-    registrarTroca: (ticketId, detalhes) => api('/trocas', 'POST', { ticketId, detalhes }).then(aplicar),
-    atualizarTroca: (id, patch) => api(`/trocas/${id}`, 'POST', patch).then(aplicar),
-    removerTroca: id => api(`/trocas/${id}`, 'DELETE').then(aplicar),
 
     editarRascunho: (id, texto) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, rascunho: texto } : t)) }))

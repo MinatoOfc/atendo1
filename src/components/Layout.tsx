@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   Home, Inbox, Send, CheckSquare, Users, BookOpen, Shield, Trash2,
   Package, Truck, Tag, TrendingUp, HelpCircle, MessageSquare, Settings,
-  PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone, Moon, Sun, Store, Plus, Contact, CalendarDays, Menu, ArrowLeftRight,
+  PenSquare, RefreshCw, Globe, Bell, ChevronDown, Facebook, Megaphone, Moon, Sun, Store, Plus, Contact, CalendarDays, Menu,
 } from 'lucide-react'
 import { useStore } from '../store'
 import ComposeModal from './ComposeModal'
@@ -11,7 +11,7 @@ import ComposeModal from './ComposeModal'
 const titulos: Record<string, string> = {
   '/': 'Início', '/caixa': 'Caixa de Entrada', '/enviados': 'Enviados', '/clientes': 'Clientes', '/resumos': 'Resumo diário',
   '/aprovacoes': 'Aprovações', '/humano': 'Atendimento humano', '/conhecimento': 'Conhecimento',
-  '/spam': 'Spam', '/lixeira': 'Lixeira', '/pedidos': 'Pedidos', '/trocas': 'Trocas', '/prazos': 'Prazos de entrega',
+  '/spam': 'Spam', '/lixeira': 'Lixeira', '/pedidos': 'Pedidos', '/prazos': 'Prazos de entrega',
   '/produtos': 'Produtos', '/ganhos': 'Ganhos', '/configuracoes': 'Configurações',
 }
 
@@ -65,9 +65,7 @@ function SeletorLoja() {
 }
 
 export default function Layout() {
-  const { naoLidos, aguardandoAprovacao, casosHumanos, sincronizar, usuario, trocas, lojaAtiva } = useStore()
-  const trocasPendentes = (trocas ?? []).filter(t =>
-    t.status === 'pendente' && (lojaAtiva === 'todas' || (t.lojaId ?? 'loja1') === lojaAtiva)).length
+  const { naoLidos, aguardandoAprovacao, casosHumanos, sincronizar, usuario } = useStore()
   const loc = useLocation()
   const [compor, setCompor] = useState(false)
   const [girando, setGirando] = useState(false)
@@ -122,7 +120,6 @@ export default function Layout() {
 
         <div className="sidebar-label">Loja</div>
         {item('/pedidos', <Package />, 'Pedidos')}
-        {item('/trocas', <ArrowLeftRight />, 'Trocas', trocasPendentes > 0 && <span className="badge-count">{trocasPendentes}</span>)}
         {item('/prazos', <Truck />, 'Prazos de entrega')}
         {item('/produtos', <Tag />, 'Produtos')}
 
