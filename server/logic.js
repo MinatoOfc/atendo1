@@ -86,8 +86,32 @@ export function gerarRascunhoLocal(ticket, politicas, faqs, pedidos, assinatura,
  * sem gastar nenhum token. Regras só para casos inequívocos — cliente real
  * nunca escreve de um remetente no-reply nem manda link de descadastro.
  */
+/**
+ * Só o texto que o PRÓPRIO remetente escreveu: remove linhas citadas (">"),
+ * cabeçalhos de citação/encaminhamento e afins. Sem isso, o rodapé do e-mail
+ * da loja ("Abmelden"/"unsubscribe") citado numa RESPOSTA de cliente real
+ * condenava a resposta como spam.
+ */
+export function textoProprio(corpo) {
+  return String(corpo || '')
+    .split('\n')
+    .filter(l => {
+      const linha = l.trim()
+      if (/^>/.test(linha)) return false // linha citada
+      // "Am 12.08. schrieb X:", "On Mon, X wrote:", "Em 12/08, X escreveu:"…
+      if (/^(am|on|le|el|il|op|em)\s/i.test(linha) && /(schrieb|wrote|écrit|escreveu|escribió|scritto|schreef)/i.test(linha)) return false
+      if (/(schrieb am|wrote:|escreveu:)\s*$/i.test(linha)) return false
+      // cabeçalhos de mensagem encaminhada/citada
+      if (/^(von|from|de|to|para|an|gesendet|sent|enviado|betreff|subject|assunto|cc|datum|date|data):\s/i.test(linha)) return false
+      if (/^-{2,}.*(original|urspr|forward|weitergeleitet|encaminhad)/i.test(linha)) return false
+      return true
+    })
+    .join('\n')
+}
+
 export function pareceSpam(assunto, corpo, de) {
-  const t = (assunto + ' ' + corpo).toLowerCase()
+  // heurísticas de texto avaliam apenas o que o remetente escreveu de fato
+  const t = (assunto + ' ' + textoProprio(corpo)).toLowerCase()
   const remetente = String(de || '').toLowerCase()
   // remetentes automáticos e de plataformas: nunca são clientes
   if (/^(no-?reply|noreply|nao-?responda|newsletter|news|mailer-daemon|notifications?|notificac|updates?|marketing|promo)@/.test(remetente)) return true

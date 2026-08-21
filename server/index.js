@@ -395,6 +395,34 @@ function aplicarResultado(estado, t, r) {
   }
 }
 
+/** Cliente identificado: o remetente tem pedido na loja (pelo e-mail) ou o
+ *  texto cita um número de pedido que existe — nunca pode cair no spam. */
+function clienteComPedido(estado, de, lojaId, texto) {
+  const email = String(de || '').trim().toLowerCase()
+  const numeros = numerosDePedido(texto)
+  return (estado.pedidos ?? []).some(p =>
+    (p.lojaId ?? 'loja1') === (lojaId ?? 'loja1')
+    && ((p.email && p.email.trim().toLowerCase() === email)
+      || (numeros.size > 0 && p.numero && numeros.has(String(p.numero).replace(/\D/g, '')))))
+}
+
+/**
+ * Resgata do spam conversas de clientes identificados (marcadas errado por
+ * regra antiga ou pela IA). Roda a cada sincronização; respeita o spam que o
+ * LOJISTA marcou à mão (spamManual).
+ */
+function resgatarSpamComPedido(estado) {
+  let resgatados = 0
+  for (const t of estado.tickets) {
+    if (t.status !== 'spam' || t.spamManual) continue
+    if (!clienteComPedido(estado, t.de, t.lojaId, textoDaConversa(t))) continue
+    t.status = 'inbox'
+    t.lido = false
+    resgatados++
+  }
+  return resgatados
+}
+
 async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, anexos }, lojaId = 'loja1') {
   const base = {
     id: uid(), nome, de, assunto, corpo, lojaId,
@@ -407,15 +435,25 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
   }
   if (messageId) estado.emailsProcessados.push(messageId)
 
-  if (pareceSpam(assunto, corpo, de)) {
+  // cliente com pedido na loja NUNCA cai no spam (nem local, nem pela IA)
+  const identificado = clienteComPedido(estado, de, lojaId, `${assunto} ${corpo}`)
+
+  if (!identificado && pareceSpam(assunto, corpo, de)) {
     base.status = 'spam'
     return base
   }
 
   const r = await processarEmail(estado, base)
-  if (r.spam) {
+  if (r.spam && !identificado) {
     base.status = 'spam'
     registrarGasto(estado, base.lojaId, r.custo)
+    return base
+  }
+  if (r.spam) {
+    // a IA marcou spam (resposta vazia), mas o cliente tem pedido: vai para o lojista
+    registrarGasto(estado, base.lojaId, r.custo)
+    base.status = 'humano'
+    base.motivoEscalada = 'A IA marcou como spam, mas o cliente tem pedido na loja — confira'
     return base
   }
   aplicarResultado(estado, base, r)
@@ -562,7 +600,7 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }) {
   t.tentativasEnvio = undefined
   t.traducao = undefined
 
-  if (pareceSpam(t.assunto, corpo, t.de)) {
+  if (!clienteComPedido(estado, t.de, t.lojaId, textoDaConversa(t)) && pareceSpam(t.assunto, corpo, t.de)) {
     // a conversa se revelou spam (ex.: abriu como cliente e virou oferta comercial)
     t.status = 'spam'
     t.enviaEm = undefined
@@ -649,8 +687,10 @@ async function sincronizar(wsId) {
 
     // junta conversas duplicadas do mesmo cliente/pedido (inclusive antigas)
     const fundiu = fundirConversasDuplicadas(estado)
-    if (novos > 0 || fundiu) salvar(wsId)
-    return novos
+    // devolve ao lojista clientes identificados que caíram no spam por engano
+    const resgatados = resgatarSpamComPedido(estado)
+    if (novos > 0 || fundiu || resgatados > 0) salvar(wsId)
+    return novos + resgatados
   } finally {
     sincronizando.delete(wsId)
   }
@@ -1031,7 +1071,7 @@ async function importarHistorico(wsId, lojaId, prog) {
     // automática para e-mail antigo. Tudo chega como lido.
     estado.emailsProcessados.push(e.messageId)
     const texto = `${e.assunto} ${e.corpo}`
-    if (pareceSpam(e.assunto, e.corpo, e.de)) {
+    if (!clienteComPedido(estado, e.de, lojaId, texto) && pareceSpam(e.assunto, e.corpo, e.de)) {
       estado.tickets.push({
         id: uid(), nome: e.nome, de: e.de, assunto: e.assunto, corpo: e.corpo, lojaId,
         data: e.data, lido: true, origem: 'cliente',
@@ -1554,6 +1594,8 @@ app.post('/api/tickets/:id/mover', (req, res) => {
   if (!destinos.includes(req.body.status)) return res.status(400).json({ erro: 'status inválido', state: visao(req.wsId) })
   t.statusAnterior = t.status
   t.status = req.body.status
+  // spam marcado à mão pelo lojista não é resgatado pelo automático
+  if (req.body.status === 'spam') t.spamManual = true
   if (req.body.motivo) t.motivoEscalada = req.body.motivo
   t.enviaEm = undefined
   salvar(req.wsId); ok(req, res)
@@ -1562,6 +1604,7 @@ app.post('/api/tickets/:id/mover', (req, res) => {
 app.post('/api/tickets/:id/restaurar', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   t.status = t.statusAnterior && t.statusAnterior !== 'lixeira' ? t.statusAnterior : 'inbox'
+  t.spamManual = undefined // restaurou: volta a valer a classificação automática
   salvar(req.wsId); ok(req, res)
 })
 
