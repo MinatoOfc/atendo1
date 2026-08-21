@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft, Check, CheckCheck, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
-  Package, ExternalLink, PenSquare, ClipboardList, X, Plus, ChevronUp, ChevronDown,
+  Package, ExternalLink, PenSquare, ClipboardList, X, Plus, ChevronUp, ChevronDown, ArrowLeftRight,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket, AnexoImagem } from '../store'
@@ -283,7 +283,9 @@ const rotuloStatus: Record<string, string> = {
 }
 
 export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, marcarRespondido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, marcarRespondido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, registrarTroca, trocas, config, lojas } = useStore()
+  // esta conversa já tem troca registrada no caderno?
+  const trocaRegistrada = (trocas ?? []).some(x => x.ticketId === t.id)
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
@@ -417,6 +419,14 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
         <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
           <b style={{ fontSize: 13.5 }}>Resumo da conversa</b>
           <div className="row gap-8">
+            {(t.categoria === 'troca' || trocaRegistrada) && (
+              <button className={'btn btn-sm' + (trocaRegistrada ? ' btn-primary' : '')}
+                title={trocaRegistrada ? 'Troca já registrada no caderno (aba Trocas)' : 'Registrar esta troca no caderno para despachar (aba Trocas)'}
+                disabled={trocaRegistrada}
+                onClick={() => registrarTroca(t.id)}>
+                <ArrowLeftRight size={13} /> {trocaRegistrada ? 'Troca registrada ✓' : 'Registrar troca'}
+              </button>
+            )}
             {t.status === 'humano' && !t.resposta && (
               <button className={'btn btn-sm' + (t.marcadoRespondido ? ' btn-primary' : '')}
                 title={t.marcadoRespondido ? 'Desmarcar "respondida"' : 'A resposta já saiu por outro caminho? Marca a conversa como respondida (sem enviar nada)'}

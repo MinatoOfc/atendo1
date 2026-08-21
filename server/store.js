@@ -44,6 +44,8 @@ export const estadoInicial = {
   // Opções pré-definidas para a linha do relatório manual ("PEDIDO N - texto");
   // o lojista adiciona e remove as suas no popup de "Adicionar ao relatório"
   opcoesRelatorio: ['REEMBOLSO 100%', 'REEMBOLSO 60%', 'REENVIO DO PEDIDO', 'TROCA DE TAMANHO'],
+  // Caderno de trocas aceitas: o que precisa ser despachado, por conversa
+  trocas: [],
   pedidos: [],
   produtos: [],
   config: { ...configPadrao },

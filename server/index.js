@@ -200,6 +200,7 @@ function visao(wsId) {
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
     gastosIA: estado.gastosIA ?? {},
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
+    trocas: estado.trocas ?? [],
     relatorioLink: estado.tokenRelatorio ? `/r/${wsId}/${estado.tokenRelatorio}` : null,
     linkMostraHoje: estado.linkMostraHoje !== false,
     hojeChave: diaLocal(Date.now()),
@@ -355,6 +356,21 @@ function registrarGasto(estado, lojaId, valor) {
   doDia[chave] = Math.round(((doDia[chave] || 0) + valor) * 1e6) / 1e6
 }
 
+/** Registra (ou atualiza) uma troca aceita no caderno de Trocas — uma entrada
+ *  pendente por conversa; o lojista marca "enviada" quando despachar. */
+function registrarTroca(estado, t, detalhes) {
+  estado.trocas ??= []
+  const existente = estado.trocas.find(x => x.ticketId === t.id && x.status === 'pendente')
+  if (existente) {
+    existente.detalhes = detalhes
+    return
+  }
+  estado.trocas.unshift({
+    id: uid(), ticketId: t.id, nome: t.nome, de: t.de, lojaId: t.lojaId ?? 'loja1',
+    detalhes, status: 'pendente', criadoEm: new Date().toISOString(),
+  })
+}
+
 function aplicarResultado(estado, t, r) {
   t.categoria = r.categoria
   t.idioma = r.idioma
@@ -370,15 +386,19 @@ function aplicarResultado(estado, t, r) {
   const minima = estado.config.confiancaMinima ?? 0.55
   const sensivel = estado.config.escalarSensiveis !== false && r.escalarHumano
   const incerto = r.confianca < minima
-  // Regra fixa do código, não da IA: APROVAR reembolso espera decisão humana.
-  // O fluxo de devolução (perguntar motivo, oferecer troca/60/100%) roda no
-  // automático — só a confirmação do reembolso trava aqui.
+  // Regra fixa do código, não da IA: APROVAR reembolso e CONFIRMAR troca
+  // esperam decisão humana. O resto do fluxo de devolução (perguntar motivo,
+  // oferecer troca/60/100%) roda no automático.
   const reembolso = r.aprovaReembolso === true
+  const troca = r.confirmaTroca === true
   // Resposta vazia nunca pode cair no envio automático — vira caso humano
   const semResposta = !String(r.resposta || '').trim()
 
+  // troca aceita entra no caderno de Trocas para o lojista despachar
+  if (troca) registrarTroca(estado, t, r.situacao || r.resolucao || t.assunto)
+
   t.motivoTraducao = undefined // motivo muda junto com o resultado — tradução antiga não vale
-  if (sensivel || incerto || reembolso || semResposta) {
+  if (sensivel || incerto || reembolso || troca || semResposta) {
     t.status = 'humano'
     // Caso escalado é do lojista: sem mensagem pré-gerada — ele escreve na
     // conversa ou pede à IA na hora ("Gerar com IA"), sem gastar tokens à toa
@@ -386,7 +406,9 @@ function aplicarResultado(estado, t, r) {
     t.rascunhoTraducao = undefined
     t.motivoEscalada = reembolso
       ? (r.motivo || 'Cliente escolheu reembolso — aprovação é sua')
-      : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
+      : troca
+        ? (r.motivo || 'Cliente aceitou a troca — confirme e despache')
+        : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
   } else {
     t.status = 'aprovacao'
     t.motivoEscalada = undefined
@@ -1427,6 +1449,31 @@ app.post('/api/relatorio-mover', (req, res) => {
   for (const t of req.estado.tickets) {
     if (t.relatorioDia === de) t.relatorioDia = para
   }
+  salvar(req.wsId); ok(req, res)
+})
+
+/* ---- Caderno de trocas ---- */
+
+// Registra uma troca à mão a partir da conversa aberta
+app.post('/api/trocas', (req, res) => {
+  const t = req.estado.tickets.find(x => x.id === req.body?.ticketId)
+  if (!t) return res.status(404).json({ erro: 'conversa não encontrada', state: visao(req.wsId) })
+  registrarTroca(req.estado, t, String(req.body?.detalhes || '').trim() || t.resumoSituacao || t.assunto)
+  salvar(req.wsId); ok(req, res)
+})
+
+// Atualiza uma troca: marcar enviada/pendente ou editar os detalhes
+app.post('/api/trocas/:id', (req, res) => {
+  const tr = (req.estado.trocas ?? []).find(x => x.id === req.params.id)
+  if (!tr) return res.status(404).json({ erro: 'troca não encontrada', state: visao(req.wsId) })
+  if (req.body?.status === 'enviada') { tr.status = 'enviada'; tr.enviadaEm = new Date().toISOString() }
+  if (req.body?.status === 'pendente') { tr.status = 'pendente'; tr.enviadaEm = undefined }
+  if (typeof req.body?.detalhes === 'string' && req.body.detalhes.trim()) tr.detalhes = req.body.detalhes.trim()
+  salvar(req.wsId); ok(req, res)
+})
+
+app.delete('/api/trocas/:id', (req, res) => {
+  req.estado.trocas = (req.estado.trocas ?? []).filter(x => x.id !== req.params.id)
   salvar(req.wsId); ok(req, res)
 })
 

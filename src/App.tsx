@@ -13,6 +13,7 @@ import Conhecimento from './pages/Conhecimento'
 import Spam from './pages/Spam'
 import Lixeira from './pages/Lixeira'
 import Pedidos from './pages/Pedidos'
+import Trocas from './pages/Trocas'
 import Prazos from './pages/Prazos'
 import Produtos from './pages/Produtos'
 import Ganhos from './pages/Ganhos'
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="/spam" element={<Spam />} />
         <Route path="/lixeira" element={<Lixeira />} />
         <Route path="/pedidos" element={<Pedidos />} />
+        <Route path="/trocas" element={<Trocas />} />
         <Route path="/prazos" element={<Prazos />} />
         <Route path="/produtos" element={<Produtos />} />
         {/* rota antiga da UGC, agora substituída por Produtos */}

@@ -28,10 +28,11 @@ const SCHEMA_GEMINI = {
     confianca: { type: 'NUMBER' },
     escalar_humano: { type: 'BOOLEAN' },
     aprova_reembolso: { type: 'BOOLEAN', description: 'true só quando o próximo passo é aprovar/confirmar um reembolso (cliente já escolheu ou exige); oferecer opções é false' },
+    confirma_troca: { type: 'BOOLEAN', description: 'true só quando o cliente já aceitou a troca (informou tamanho/cor); oferecer a troca é false' },
     motivo: { type: 'STRING', description: 'Sempre em português; vazio se nada a sinalizar' },
     spam: { type: 'BOOLEAN' },
   },
-  required: ['situacao', 'resolucao', 'categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'aprova_reembolso', 'motivo', 'spam'],
+  required: ['situacao', 'resolucao', 'categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'aprova_reembolso', 'confirma_troca', 'motivo', 'spam'],
 }
 
 /**
