@@ -1611,6 +1611,8 @@ app.post('/api/tickets/:id/traduzir', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   // conversa inteira: mensagens do cliente E as respostas da loja
   const alvos = []
+  // o assunto também entra na tradução (título da conversa)
+  if (t.assunto && !t.assuntoTraducao) alvos.push({ corpo: t.assunto, aplicar: tx => { t.assuntoTraducao = tx } })
   for (const m of t.historico ?? []) {
     if (m.corpo && !m.traducao) alvos.push({ corpo: m.corpo, aplicar: tx => { m.traducao = tx } })
   }

@@ -339,6 +339,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
 
   const alternarTraducao = async () => {
     const faltaTraduzir = (t.corpo && !t.traducao)
+      || (t.assunto && !t.assuntoTraducao)
       || (t.resposta && !t.respostaTraducao)
       || (t.resumoSituacao && !t.situacaoTraducao)
       || (t.motivoEscalada && !t.motivoTraducao)
@@ -407,7 +408,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
       <button className="btn btn-sm mb-16" onClick={onBack}><ArrowLeft size={14} /> Voltar</button>
 
       <div className="row gap-10 mb-12" style={{ flexWrap: 'wrap' }}>
-        <h1 className="h2">{t.assunto}</h1>
+        <h1 className="h2">{verTraducao && t.assuntoTraducao ? t.assuntoTraducao : t.assunto}</h1>
         <span className={`tag tag-${t.categoria}`}>{nomeCategoria[t.categoria]}</span>
         <span className="tag tag-outro">{nomeIdioma[t.idioma] ?? t.idioma}</span>
         {t.confianca !== undefined && (

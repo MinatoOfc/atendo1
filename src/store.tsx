@@ -49,6 +49,7 @@ export interface Ticket {
   custoIA?: number
   iaPausada?: boolean
   traducao?: string
+  assuntoTraducao?: string
   respostaTraducao?: string
   rascunhoTraducao?: string
   situacaoTraducao?: string
