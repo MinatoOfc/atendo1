@@ -34,9 +34,34 @@ app.use(express.json({ limit: '1mb' }))
 let segredo = null
 const workspaces = new Map() // id → estado
 
+/* Gravação com coalescência: várias mudanças em ~1,5s viram UMA escrita no
+   Postgres. O estado é um JSONB grande regravado inteiro — sem isso, cada
+   clique/sync gerava WAL enorme (foi o que encheu o disco em produção). */
+const salvarPendentes = new Map() // wsId → timer
+
 const salvar = wsId => {
+  if (salvarPendentes.has(wsId)) return
+  salvarPendentes.set(wsId, setTimeout(() => gravarAgora(wsId), 1500))
+}
+
+function gravarAgora(wsId) {
+  const timer = salvarPendentes.get(wsId)
+  if (timer) clearTimeout(timer)
+  salvarPendentes.delete(wsId)
   const estado = workspaces.get(wsId)
-  if (estado) db.salvarWorkspace(wsId, estado).catch(err => console.error('[db] salvar falhou:', err.message))
+  if (!estado) return Promise.resolve()
+  return db.salvarWorkspace(wsId, estado).catch(err => console.error('[db] salvar falhou:', err.message))
+}
+
+// deploy/restart (SIGTERM): descarrega as gravações pendentes antes de morrer
+for (const sinal of ['SIGTERM', 'SIGINT']) {
+  process.on(sinal, async () => {
+    try {
+      await Promise.all([...salvarPendentes.keys()].map(id => gravarAgora(id)))
+    } finally {
+      process.exit(0)
+    }
+  })
 }
 
 async function carregarWorkspaces() {
