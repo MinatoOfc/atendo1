@@ -196,6 +196,18 @@ export function montarSystem(state, ticket) {
     `- Tom: cordial, direto, humano. Sem parecer robô. Termine com a assinatura abaixo, mantendo as quebras de linha exatamente como estão:`,
     loja?.assinatura || state.config.assinatura,
     ``,
+    ...(() => {
+      // aprendizado de estilo: as últimas respostas REAIS do lojista nesta loja
+      const exemplos = ((state.estiloExemplos ?? {})[loja?.id ?? 'loja1'] ?? []).slice(-3)
+      if (!exemplos.length) return []
+      return [
+        `Exemplos REAIS de como o lojista desta loja responde — imite o ESTILO (tom, tamanho, estrutura, jeito de oferecer), NUNCA copie o conteúdo nem os dados de outro cliente:`,
+        ...exemplos.map((e, i) => e.de
+          ? `- Exemplo ${i + 1} (a IA escreveu e o lojista corrigiu — aprenda com a diferença):\n  IA escreveu: "${String(e.de).slice(0, 400)}"\n  Lojista mandou: "${String(e.para).slice(0, 400)}"`
+          : `- Exemplo ${i + 1} (escrita pelo lojista):\n  "${String(e.para).slice(0, 400)}"`),
+        ``,
+      ]
+    })(),
     ...(comportamentos.length ? [
       `Comportamentos definidos pelo lojista — quando a conversa se encaixar em uma destas situações, siga a instrução correspondente à risca. Elas têm prioridade sobre o tom e o fluxo padrão (mas nunca sobre as regras invioláveis acima):`,
       comportamentos.map(c => `- Situação: ${c.situacao}\n  Como agir: ${c.instrucao}`).join('\n'),

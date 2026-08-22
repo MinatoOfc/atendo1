@@ -381,6 +381,8 @@ function aplicarResultado(estado, t, r) {
   t.motivoTraducao = undefined // motivo muda junto com o resultado — tradução antiga não vale
   if (sensivel || incerto || reembolso || troca || semResposta) {
     t.status = 'humano'
+    // marca o tipo de decisão: ao responder, o caso entra sozinho no relatório
+    t.decisaoPendente = reembolso ? 'reembolso' : troca ? 'troca' : undefined
     // Caso escalado é do lojista: sem mensagem pré-gerada — ele escreve na
     // conversa ou pede à IA na hora ("Gerar com IA"), sem gastar tokens à toa
     t.rascunho = undefined
@@ -392,6 +394,7 @@ function aplicarResultado(estado, t, r) {
         : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
   } else {
     t.status = 'aprovacao'
+    t.decisaoPendente = undefined
     t.motivoEscalada = undefined
     if (estado.config.automacaoAtiva) {
       t.enviaEm = Date.now() + Math.max(0, estado.config.atrasoMinutos) * 60_000
@@ -1454,6 +1457,7 @@ app.post('/api/tickets/:id/resolver', (req, res) => {
   t.tentativasEnvio = undefined
   t.motivoEscalada = undefined
   t.resolucao = t.resolucao || (t.resposta ? 'Resolvido' : 'Resolvido sem resposta por e-mail')
+  t.decisaoPendente = undefined // fechou sem conceder nada: não entra sozinho no relatório
   salvar(req.wsId); ok(req, res)
 })
 
@@ -1532,6 +1536,10 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
   try {
     const motivo = t.motivoEscalada
     const motivoTrad = t.motivoTraducao
+    // fotografado ANTES do envio (enviarResposta sobrescreve o rascunho)
+    const tinhaRascunho = t.rascunho !== undefined
+    const rascunhoIA = tinhaRascunho && t.geradoPorIA ? t.rascunho : null
+    const decisao = t.decisaoPendente
     // origem vem do frontend (caixa da IA ou caixa manual); sem ela, deduz pelo rascunho
     const origem = req.body.origem === 'ia' || req.body.origem === 'manual'
       ? req.body.origem
@@ -1546,6 +1554,35 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
       t.rascunho = undefined
       t.rascunhoTraducao = undefined
     }
+
+    // Aprendizado de estilo: guarda como o lojista REALMENTE respondeu — a IA
+    // imita nos próximos rascunhos desta loja. Aprende só com texto do lojista:
+    // rascunho da IA editado por ele, ou resposta manual do zero.
+    const textoEnviado = String(req.body.texto ?? '').trim()
+    if (textoEnviado.length >= 60) {
+      const par = rascunhoIA
+        ? (textoEnviado !== rascunhoIA.trim() ? { de: rascunhoIA, para: textoEnviado } : null)
+        : (!tinhaRascunho ? { para: textoEnviado } : null)
+      if (par) {
+        req.estado.estiloExemplos ??= {}
+        const lista = (req.estado.estiloExemplos[t.lojaId ?? 'loja1'] ??= [])
+        lista.push({ ...par, em: new Date().toISOString() })
+        if (lista.length > 5) lista.splice(0, lista.length - 5)
+      }
+    }
+
+    // Decisão de reembolso/troca respondida: o caso entra sozinho no relatório
+    // manual do dia com o texto certo (dá para trocar/remover no Resumo diário)
+    if (decisao && !t.relatorioDia) {
+      t.relatorioDia = diaLocal(Date.now())
+      t.relatorioTexto = decisao === 'troca'
+        ? 'TROCA DE TAMANHO'
+        : /100\s*%/.test(textoEnviado) ? 'REEMBOLSO 100%'
+          : /60\s*%/.test(textoEnviado) ? 'REEMBOLSO 60%'
+            : 'REEMBOLSO'
+    }
+    if (decisao) t.decisaoPendente = undefined
+
     salvar(req.wsId); ok(req, res)
   } catch (err) {
     console.error('[enviar]', err)
