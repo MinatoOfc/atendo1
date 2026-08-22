@@ -83,6 +83,23 @@ export async function salvarAnexo(ws, { id, tipo, nome, dados }) {
     JSON.stringify({ tipo, nome, dados: dados.toString('base64') }))
 }
 
+/** Apaga do armazenamento todo anexo do workspace que NÃO está na lista de
+ *  ids em uso (órfãos de spam, conversas apagadas ou fotos expiradas). */
+export async function limparAnexos(ws, idsEmUso) {
+  if (usandoPostgres) {
+    const r = await pool.query('DELETE FROM anexos WHERE ws=$1 AND NOT (id = ANY($2::text[]))', [ws, idsEmUso])
+    return r.rowCount
+  }
+  const dir = dirAnexos(ws)
+  if (!fs.existsSync(dir)) return 0
+  const uso = new Set(idsEmUso)
+  let n = 0
+  for (const f of fs.readdirSync(dir)) {
+    if (!uso.has(f.replace(/\.json$/, ''))) { fs.unlinkSync(path.join(dir, f)); n++ }
+  }
+  return n
+}
+
 export async function lerAnexo(ws, id) {
   if (!/^[a-z0-9-]+$/i.test(String(id))) return null // id fora do padrão: nem tenta (evita path traversal)
   if (usandoPostgres) {

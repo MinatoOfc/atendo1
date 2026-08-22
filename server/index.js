@@ -430,7 +430,7 @@ function resgatarSpamComPedido(estado) {
   return resgatados
 }
 
-async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, anexos }, lojaId = 'loja1') {
+async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, anexos }, lojaId = 'loja1', wsId = null) {
   const base = {
     id: uid(), nome, de, assunto, corpo, lojaId,
     data: data || new Date().toISOString(),
@@ -438,7 +438,6 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
     categoria: classificarLocal(assunto + ' ' + corpo),
     idioma: detectarIdiomaLocal(assunto + ' ' + corpo),
     status: 'inbox',
-    ...(anexos?.length ? { anexos } : {}),
   }
   if (messageId) estado.emailsProcessados.push(messageId)
 
@@ -447,12 +446,16 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
 
   if (!identificado && pareceSpam(assunto, corpo, de)) {
     base.status = 'spam'
-    return base
+    return base // spam local: as imagens nem chegam ao banco
   }
+
+  // e-mail passou no filtro local: guarda as imagens (a faxina limpa órfãs)
+  if (wsId && anexos?.length) base.anexos = await guardarAnexos(wsId, anexos)
 
   const r = await processarEmail(estado, base)
   if (r.spam && !identificado) {
     base.status = 'spam'
+    base.anexos = undefined // sem referência, a faxina apaga os bytes
     registrarGasto(estado, base.lojaId, r.custo)
     return base
   }
@@ -586,14 +589,18 @@ export function fundirConversasDuplicadas(estado) {
   return mudou
 }
 
-async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }) {
+async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }, wsId = null) {
   if (messageId) estado.emailsProcessados.push(messageId)
+
+  // decide o spam ANTES de guardar imagem: mensagem que vira spam não salva bytes
+  const viraSpam = !clienteComPedido(estado, t.de, t.lojaId, `${textoDaConversa(t)} ${corpo}`)
+    && pareceSpam(t.assunto, corpo, t.de)
 
   t.historico = t.historico || []
   if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao, anexos: t.anexos })
   if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data, traducao: t.respostaTraducao, origem: t.respostaOrigem })
 
-  t.anexos = anexos?.length ? anexos : undefined
+  t.anexos = !viraSpam && wsId && anexos?.length ? await guardarAnexos(wsId, anexos) : undefined
   t.corpo = corpo
   t.data = data || new Date().toISOString()
   t.lido = false
@@ -607,7 +614,7 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }) {
   t.tentativasEnvio = undefined
   t.traducao = undefined
 
-  if (!clienteComPedido(estado, t.de, t.lojaId, textoDaConversa(t)) && pareceSpam(t.assunto, corpo, t.de)) {
+  if (viraSpam) {
     // a conversa se revelou spam (ex.: abriu como cliente e virou oferta comercial)
     t.status = 'spam'
     t.enviaEm = undefined
@@ -660,13 +667,12 @@ async function sincronizar(wsId) {
         if (!conta.configurado) continue
         const emails = await conta.buscarNovos(estado.emailsProcessados)
         for (const e of emails) {
-          // imagens anexadas: bytes vão para o armazenamento; no ticket fica só a referência
-          e.anexos = await guardarAnexos(wsId, e.anexos)
+          // as imagens (bytes crus) só são guardadas se o e-mail não for spam
           const conversa = acharConversa(estado, e.de, e.assunto, conta.id, e.corpo)
           if (conversa) {
-            await anexarNaConversa(estado, conversa, e)
+            await anexarNaConversa(estado, conversa, e, wsId)
           } else {
-            estado.tickets.unshift(await criarTicket(estado, e, conta.id))
+            estado.tickets.unshift(await criarTicket(estado, e, conta.id, wsId))
           }
           novos++
         }
@@ -848,6 +854,38 @@ function atualizarResumos(wsId) {
     salvar(wsId)
   }
 }
+
+/* ---- Faxina de anexos: espaço no Postgres é caro ---- */
+
+// Fotos com mais de N dias saem da conversa e do banco; órfãs (spam, conversas
+// apagadas, fusões) também. Roda a cada 6h e logo depois de subir.
+const DIAS_ANEXOS = Number(process.env.ATENDO_ANEXOS_DIAS ?? 60)
+
+async function faxinaAnexos() {
+  for (const [wsId, estado] of workspaces) {
+    try {
+      const corte = Date.now() - DIAS_ANEXOS * 864e5
+      const emUso = []
+      let mudou = false
+      const varrer = (obj, dataRef) => {
+        if (!obj.anexos?.length) return
+        if (new Date(dataRef || 0).getTime() < corte) { obj.anexos = undefined; mudou = true }
+        else emUso.push(...obj.anexos.map(a => a.id))
+      }
+      for (const t of estado.tickets) {
+        varrer(t, t.data)
+        for (const m of t.historico ?? []) varrer(m, m.data)
+      }
+      const removidos = await db.limparAnexos(wsId, emUso)
+      if (mudou) salvar(wsId)
+      if (removidos > 0) console.log(`[anexos ${wsId}] faxina removeu ${removidos} imagem(ns)`)
+    } catch (err) {
+      console.error(`[anexos ${wsId}] faxina falhou:`, err.message)
+    }
+  }
+}
+setInterval(faxinaAnexos, 6 * 3600_000)
+setTimeout(faxinaAnexos, 90_000)
 
 // Checagem periódica: logo depois da meia-noite (no fuso do lojista) o dia anterior é fechado
 setInterval(() => {

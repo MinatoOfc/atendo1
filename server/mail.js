@@ -3,11 +3,12 @@ import { simpleParser } from 'mailparser'
 import nodemailer from 'nodemailer'
 
 /** Imagens anexadas ao e-mail (fotos de pacote danificado etc.): só image/*,
- *  até 5 por mensagem e 4MB cada — o resto é ignorado sem erro. */
+ *  até 3 por mensagem e 2MB cada — limites apertados de propósito: os bytes
+ *  vão para o Postgres e espaço lá é caro. */
 export function extrairImagens(parsed) {
   return (parsed.attachments ?? [])
-    .filter(a => /^image\//i.test(a.contentType || '') && a.content?.length && a.content.length <= 4 * 1024 * 1024)
-    .slice(0, 5)
+    .filter(a => /^image\//i.test(a.contentType || '') && a.content?.length && a.content.length <= 2 * 1024 * 1024)
+    .slice(0, 3)
     .map(a => ({ tipo: a.contentType, nome: a.filename || 'imagem', dados: a.content }))
 }
 
