@@ -184,11 +184,16 @@ function PainelPedidos({ t }: { t: Ticket }) {
                   {statusPedido[p.status]?.rotulo ?? p.status}
                 </span>
               </div>
-              {p.email && p.email.trim().toLowerCase() !== emailCliente && (
-                <div className="muted-sm" style={{ marginTop: -4, marginBottom: 8, overflowWrap: 'anywhere' }}>
-                  comprado com {p.email}
-                </div>
-              )}
+              {/* quem comprou: nome e e-mail direto no pedido */}
+              <div style={{ marginTop: -4, marginBottom: 8, fontSize: 12.5, lineHeight: 1.45 }}>
+                {p.cliente && <div><b>{p.cliente}</b></div>}
+                {p.email && (
+                  <div className="muted-sm" style={{ overflowWrap: 'anywhere' }}>
+                    {p.email}
+                    {p.email.trim().toLowerCase() !== emailCliente && ' (diferente do remetente)'}
+                  </div>
+                )}
+              </div>
               {(p.itens?.length ?? 0) > 0 && (
                 <div style={{ display: 'grid', gap: 4, marginBottom: 8 }}>
                   {p.itens!.map((i, idx) => (
@@ -217,6 +222,13 @@ function PainelPedidos({ t }: { t: Ticket }) {
                   </span>
                 )}
                 {p.transportadora && <span>{p.transportadora}</span>}
+                {p.rastreio && p.rastreio !== '—' && (
+                  <a className="btn btn-sm" href={`https://t.17track.net/pt#nums=${encodeURIComponent(p.rastreio)}`}
+                    target="_blank" rel="noreferrer" title="Ver o rastreio no 17TRACK"
+                    style={{ justifySelf: 'start', marginTop: 3 }}>
+                    <ExternalLink size={12} /> Ver no 17TRACK
+                  </a>
+                )}
               </div>
             </div>
           ))
