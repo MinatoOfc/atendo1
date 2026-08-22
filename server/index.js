@@ -44,13 +44,24 @@ const salvar = wsId => {
   salvarPendentes.set(wsId, setTimeout(() => gravarAgora(wsId), 1500))
 }
 
+// Falha de gravação NUNCA pode ser silenciosa: o disco cheio em produção fez o
+// lojista trabalhar horas sem persistir nada. Registra o erro (vai para a visao
+// e vira banner vermelho no app) e retenta sozinho a cada 30s.
+let erroBanco = null // string | null
+
 function gravarAgora(wsId) {
   const timer = salvarPendentes.get(wsId)
   if (timer) clearTimeout(timer)
   salvarPendentes.delete(wsId)
   const estado = workspaces.get(wsId)
   if (!estado) return Promise.resolve()
-  return db.salvarWorkspace(wsId, estado).catch(err => console.error('[db] salvar falhou:', err.message))
+  return db.salvarWorkspace(wsId, estado)
+    .then(() => { erroBanco = null })
+    .catch(err => {
+      erroBanco = err.message
+      console.error('[db] salvar falhou:', err.message)
+      setTimeout(() => salvar(wsId), 30_000) // retenta até conseguir
+    })
 }
 
 // deploy/restart (SIGTERM): descarrega as gravações pendentes antes de morrer
@@ -227,6 +238,7 @@ function visao(wsId) {
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
     relatorioLink: estado.tokenRelatorio ? `/r/${wsId}/${estado.tokenRelatorio}` : null,
     linkMostraHoje: estado.linkMostraHoje !== false,
+    bancoErro: erroBanco,
     hojeChave: diaLocal(Date.now()),
     pedidos: estado.pedidos,
     produtos: estado.produtos ?? [],

@@ -188,6 +188,8 @@ interface ServerState {
   relatorioLink?: string | null
   /** false = o dia de hoje só aparece no link depois da meia-noite */
   linkMostraHoje?: boolean
+  /** mensagem de erro quando o banco NÃO está gravando (banner vermelho) */
+  bancoErro?: string | null
   hojeChave?: string
   faqs: Faq[]
   pedidos: Pedido[]

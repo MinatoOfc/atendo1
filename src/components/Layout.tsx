@@ -65,7 +65,7 @@ function SeletorLoja() {
 }
 
 export default function Layout() {
-  const { naoLidos, aguardandoAprovacao, casosHumanos, sincronizar, usuario } = useStore()
+  const { naoLidos, aguardandoAprovacao, casosHumanos, sincronizar, usuario, bancoErro } = useStore()
   const loc = useLocation()
   const [compor, setCompor] = useState(false)
   const [girando, setGirando] = useState(false)
@@ -99,6 +99,16 @@ export default function Layout() {
 
   return (
     <div className="shell">
+      {/* o banco parou de gravar: avisa ALTO — trabalhar assim perde dados */}
+      {bancoErro && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 90,
+          background: 'var(--red)', color: '#fff', padding: '9px 16px',
+          fontSize: 13, fontWeight: 700, textAlign: 'center',
+        }}>
+          ⚠️ O banco de dados NÃO está gravando — o que você fizer agora pode ser perdido! Verifique o Postgres no Railway (espaço em disco). Detalhe: {bancoErro}
+        </div>
+      )}
       {menuAberto && <div className="backdrop-menu" onClick={() => setMenuAberto(false)} />}
       <aside className={'sidebar' + (menuAberto ? ' aberta' : '')}>
         <SeletorLoja />
