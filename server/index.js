@@ -1575,8 +1575,10 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     // manual do dia com o texto certo (dá para trocar/remover no Resumo diário)
     if (decisao && !t.relatorioDia) {
       t.relatorioDia = diaLocal(Date.now())
+      // troca sai com os detalhes que a IA anotou (ex.: TROCA DE 3 POLOS POR XXL)
+      const detalheTroca = String(t.resolucao || t.resumoSituacao || '').trim()
       t.relatorioTexto = decisao === 'troca'
-        ? 'TROCA DE TAMANHO'
+        ? (detalheTroca ? detalheTroca.toUpperCase().slice(0, 90) : 'TROCA DE TAMANHO')
         : /100\s*%/.test(textoEnviado) ? 'REEMBOLSO 100%'
           : /60\s*%/.test(textoEnviado) ? 'REEMBOLSO 60%'
             : 'REEMBOLSO'
