@@ -415,9 +415,31 @@ function aplicarResultado(estado, t, r) {
   const troca = r.confirmaTroca === true
   // Resposta vazia nunca pode cair no envio automático — vira caso humano
   const semResposta = !String(r.resposta || '').trim()
+  // Resposta igual à última que a loja já mandou também não: repetir a mesma
+  // mensagem para um cliente que insistiu é ignorá-lo — vira caso humano
+  const normalizar = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const ultimaDaLoja = [...(t.historico ?? [])].reverse().find(m => m.autor === 'atendo')
+  const repetida = !semResposta && !!ultimaDaLoja && normalizar(r.resposta) === normalizar(ultimaDaLoja.corpo)
 
   t.motivoTraducao = undefined // motivo muda junto com o resultado — tradução antiga não vale
-  if (sensivel || incerto || reembolso || troca || semResposta) {
+
+  // Mensagem sem nada a responder (agradecimento, "tudo certo"): encerra a
+  // conversa como resolvida — nada para um humano fazer, nada a enviar.
+  // As travas de decisão (reembolso/troca/sensível) sempre ganham do encerrar.
+  if (r.encerrar === true && !sensivel && !reembolso && !troca && !incerto) {
+    t.status = 'enviado'
+    t.lido = true
+    t.decisaoPendente = undefined
+    t.rascunho = undefined
+    t.rascunhoTraducao = undefined
+    t.enviaEm = undefined
+    t.motivoEscalada = undefined
+    t.respondidoEm = new Date().toISOString()
+    t.resolucao = r.resolucao || t.resolucao || 'Encerrada — cliente confirmou que está tudo certo'
+    return
+  }
+
+  if (sensivel || incerto || reembolso || troca || semResposta || repetida) {
     t.status = 'humano'
     // marca o tipo de decisão: ao responder, o caso entra sozinho no relatório
     t.decisaoPendente = reembolso ? 'reembolso' : troca ? 'troca' : undefined
@@ -429,7 +451,9 @@ function aplicarResultado(estado, t, r) {
       ? (r.motivo || 'Cliente escolheu reembolso — aprovação é sua')
       : troca
         ? (r.motivo || 'Cliente aceitou a troca — confirme e despache')
-        : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
+        : repetida
+          ? 'A IA ia repetir a resposta anterior — o cliente insistiu e continua sem solução'
+          : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
   } else {
     t.status = 'aprovacao'
     t.decisaoPendente = undefined
