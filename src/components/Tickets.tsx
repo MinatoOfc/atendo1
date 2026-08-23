@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft, Check, CheckCheck, Users, Shield, Trash2, RotateCcw, Clock, Sparkles, Send, AlertTriangle, Languages,
-  Package, ExternalLink, PenSquare, ClipboardList, X, Plus, ChevronUp, ChevronDown,
+  Package, ExternalLink, PenSquare, ClipboardList, X, Plus, ChevronUp, ChevronDown, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket, AnexoImagem } from '../store'
@@ -330,7 +330,10 @@ const rotuloStatus: Record<string, string> = {
   lixeira: 'Na lixeira',
 }
 
-export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
+/** Navegação entre casos sem voltar à lista: posição, anterior e próximo */
+export interface NavCasos { pos: number; total: number; anterior?: () => void; proximo?: () => void }
+
+export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void; nav?: NavCasos }) {
   const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, marcarRespondido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
@@ -360,6 +363,22 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   const [traduzindo, setTraduzindo] = useState(false)
 
   useEffect(() => { if (!t.lido) marcarLido(t.id) }, [t.id])
+
+  // trocou de caso: volta ao topo da conversa
+  useEffect(() => { document.querySelector<HTMLElement>('.content')?.scrollTo({ top: 0 }) }, [t.id])
+
+  // setas do teclado navegam entre os casos (fora de campos de texto)
+  useEffect(() => {
+    if (!nav) return
+    const aoTeclar = (e: KeyboardEvent) => {
+      const alvo = e.target as HTMLElement | null
+      if (alvo && (alvo.tagName === 'INPUT' || alvo.tagName === 'TEXTAREA' || alvo.tagName === 'SELECT' || alvo.isContentEditable)) return
+      if (e.key === 'ArrowRight' && nav.proximo) nav.proximo()
+      if (e.key === 'ArrowLeft' && nav.anterior) nav.anterior()
+    }
+    window.addEventListener('keydown', aoTeclar)
+    return () => window.removeEventListener('keydown', aoTeclar)
+  }, [nav])
 
   const emFluxo = t.status === 'inbox' || t.status === 'aprovacao' || t.status === 'humano'
 
@@ -456,7 +475,22 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
   return (
     <div className="detail-wrap" style={{ display: 'flex', gap: 20, alignItems: 'flex-start', maxWidth: 1180, margin: '0 auto' }}>
     <div style={{ flex: 1, minWidth: 0, width: '100%' }}>
-      <button className="btn btn-sm mb-16" onClick={onBack}><ArrowLeft size={14} /> Voltar</button>
+      <div className="row spread mb-16" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <button className="btn btn-sm" onClick={onBack}><ArrowLeft size={14} /> Voltar</button>
+        {nav && nav.total > 1 && (
+          <div className="row gap-8">
+            <span className="muted-sm">{nav.pos} de {nav.total}</span>
+            <button className="btn btn-sm" disabled={!nav.anterior} style={!nav.anterior ? { opacity: 0.45 } : undefined}
+              title="Caso anterior (seta ←)" onClick={() => nav.anterior?.()}>
+              <ChevronLeft size={14} /> Anterior
+            </button>
+            <button className="btn btn-sm" disabled={!nav.proximo} style={!nav.proximo ? { opacity: 0.45 } : undefined}
+              title="Próximo caso (seta →)" onClick={() => nav.proximo?.()}>
+              Próximo <ChevronRight size={14} />
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="row gap-10 mb-12" style={{ flexWrap: 'wrap' }}>
         <h1 className="h2">{verTraducao && t.assuntoTraducao ? t.assuntoTraducao : t.assunto}</h1>
@@ -763,7 +797,18 @@ export function TicketListPage({ tickets, empty, header, tagStatus }: {
   const [aberto, setAberto] = useState<string | null>(null)
   const atual = tickets.find(t => t.id === aberto)
 
-  if (atual) return <TicketDetail t={atual} onBack={() => setAberto(null)} />
+  if (atual) {
+    const idx = tickets.findIndex(t => t.id === aberto)
+    return (
+      <TicketDetail t={atual} onBack={() => setAberto(null)}
+        nav={{
+          pos: idx + 1,
+          total: tickets.length,
+          anterior: idx > 0 ? () => setAberto(tickets[idx - 1].id) : undefined,
+          proximo: idx >= 0 && idx < tickets.length - 1 ? () => setAberto(tickets[idx + 1].id) : undefined,
+        }} />
+    )
+  }
 
   return (
     <div>
