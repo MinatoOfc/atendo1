@@ -44,6 +44,13 @@ export const estadoInicial = {
   // Opções pré-definidas para a linha do relatório manual ("PEDIDO N - texto");
   // o lojista adiciona e remove as suas no popup de "Adicionar ao relatório"
   opcoesRelatorio: ['REEMBOLSO 100%', 'REEMBOLSO 60%', 'REENVIO DO PEDIDO', 'TROCA DE TAMANHO'],
+  // Instruções salvas para o "Gerar com IA" — 1 clique em vez de digitar sempre
+  opcoesInstrucao: [
+    'Aprove o reembolso de 100% e confirme ao cliente',
+    'Aprove o reembolso de 60% — o cliente fica com o produto',
+    'Confirme a troca e avise que a peça nova será despachada',
+    'Peça fotos do produto e da embalagem',
+  ],
   // Exemplos de estilo por loja: como o lojista realmente responde
   // ({ lojaId: [{de?, para, em}] }) — a IA imita nos próximos rascunhos
   estiloExemplos: {},

@@ -184,6 +184,8 @@ interface ServerState {
   geminiDisponivel?: boolean
   gastosIA?: Record<string, Record<string, number>>
   opcoesRelatorio?: string[]
+  /** instruções salvas do "Gerar com IA" (1 clique em vez de digitar) */
+  opcoesInstrucao?: string[]
   /** caminho do link público do relatório manual (ex.: /r/ws-x/token) ou null */
   relatorioLink?: string | null
   /** false = o dia de hoje só aparece no link depois da meia-noite */
@@ -273,6 +275,7 @@ interface Store extends ServerState {
   marcarResolvido: (id: string) => void
   alternarRelatorio: (id: string, adicionar: boolean, texto?: string) => void
   salvarOpcoesRelatorio: (opcoes: string[]) => void
+  salvarOpcoesInstrucao: (opcoes: string[]) => void
   configurarRelatorioLink: (acao: 'criar' | 'revogar' | 'mostrar-hoje', valor?: boolean) => void
   editarLinhaRelatorio: (id: string, linha: string) => void
   /** move todos os casos marcados do dia `de` para o dia `para` (AAAA-MM-DD) */
@@ -517,6 +520,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
     alternarRelatorio: (id, adicionar, texto) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar, texto }).then(aplicar),
     salvarOpcoesRelatorio: opcoes => api('/relatorio-opcoes', 'POST', { opcoes }).then(aplicar),
+    salvarOpcoesInstrucao: opcoes => api('/instrucao-opcoes', 'POST', { opcoes }).then(aplicar),
     configurarRelatorioLink: (acao, valor) => api('/relatorio-link', 'POST', { acao, valor }).then(aplicar),
     editarLinhaRelatorio: (id, linha) => api(`/tickets/${id}/relatorio-linha`, 'POST', { linha }).then(aplicar),
     moverRelatorio: (de, para) => api('/relatorio-mover', 'POST', { de, para }).then(aplicar),

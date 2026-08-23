@@ -7,6 +7,34 @@ import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
 import type { Ticket, AnexoImagem } from '../store'
 import { MiniFoto, Modal } from './Shared'
 
+/* Instruções salvas do "Gerar com IA": 1 clique gera; dá para salvar a atual e remover as que não usa */
+function OpcoesInstrucao({ atual, onUsar }: { atual: string; onUsar: (texto: string) => void }) {
+  const { opcoesInstrucao = [], salvarOpcoesInstrucao } = useStore()
+  const podeSalvar = atual.trim().length > 2 && !opcoesInstrucao.includes(atual.trim())
+  if (!opcoesInstrucao.length && !podeSalvar) return null
+  return (
+    <div className="row gap-8" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+      {opcoesInstrucao.map(o => (
+        <span key={o} className="chip" role="button" title={`Gerar com: ${o}`}
+          style={{ cursor: 'pointer' }} onClick={() => onUsar(o)}>
+          <Sparkles size={11} /> {o.length > 48 ? o.slice(0, 48) + '…' : o}
+          <span role="button" title="Tirar esta instrução da lista" style={{ marginLeft: 2, color: 'var(--text-3)', display: 'inline-flex' }}
+            onClick={e => { e.stopPropagation(); salvarOpcoesInstrucao(opcoesInstrucao.filter(x => x !== o)) }}>
+            <X size={11} />
+          </span>
+        </span>
+      ))}
+      {podeSalvar && (
+        <span className="chip" role="button" title="Salvar o texto digitado como instrução de 1 clique"
+          style={{ cursor: 'pointer', color: 'var(--purple)' }}
+          onClick={() => salvarOpcoesInstrucao([...opcoesInstrucao, atual.trim()])}>
+          <Plus size={11} /> Salvar instrução
+        </span>
+      )}
+    </div>
+  )
+}
+
 /* Quem escreveu a resposta: a IA ou você (manual) */
 function TagOrigem({ origem }: { origem?: 'ia' | 'manual' }) {
   if (origem === 'ia') return <span className="tag tag-purple" style={{ marginLeft: 8 }}><Sparkles size={10} style={{ marginRight: 3, verticalAlign: -1 }} />IA</span>
@@ -369,9 +397,19 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
 
   // Barra de IA das caixas manuais (Responder manualmente / Nova mensagem):
   // gera o texto direto na caixa, sem virar rascunho nem mudar o status
-  const gerarNaCaixa = async () => {
+  // regenera o rascunho da IA com uma instrução (digitada ou de 1 clique)
+  const regerarRascunhoCom = async (texto: string) => {
+    setGerando(true); setErroGerar(null); setVerTradRascunho(false)
+    const erro = await regenerarRascunho(t.id, texto.trim())
+    setGerando(false)
+    if (erro) setErroGerar(erro)
+    else setInstrucao('')
+  }
+
+  const gerarNaCaixa = async (texto?: string) => {
+    const pedido = (texto ?? instrucao).trim()
     setGerando(true); setErroGerar(null)
-    const r = await gerarTexto(t.id, instrucao.trim())
+    const r = await gerarTexto(t.id, pedido)
     setGerando(false)
     if (r.erro) { setErroGerar(r.erro); return }
     setManual(r.texto ?? '')
@@ -403,13 +441,14 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
           placeholder="Instrução para a IA (ex.: avise que houve erro no endereço)…"
           style={{ flex: 1, minWidth: 220, border: '1px solid var(--purple-border)', borderRadius: 8, padding: '7px 11px', fontSize: 13, outline: 'none', background: 'var(--panel)' }}
           onKeyDown={e => { if (e.key === 'Enter' && !gerando) gerarNaCaixa() }} />
-        <button className="btn btn-sm" disabled={gerando} onClick={gerarNaCaixa}>
+        <button className="btn btn-sm" disabled={gerando} onClick={() => gerarNaCaixa()}>
           <Sparkles size={13} /> {gerando ? 'Gerando…' : 'Gerar com IA'}
         </button>
         <button className="btn btn-sm" disabled={traduzindoRasc || (!manual.trim() && !traducaoManual)} onClick={traduzirCaixa}>
           <Languages size={13} /> {traduzindoRasc ? 'Traduzindo…' : traducaoManual ? 'Ocultar tradução' : 'Ver em português'}
         </button>
       </div>
+      <OpcoesInstrucao atual={instrucao} onUsar={texto => { setInstrucao(texto); gerarNaCaixa(texto) }} />
       {erroGerar && <p className="muted-sm" style={{ color: 'var(--red)', marginTop: 6 }}>{erroGerar}</p>}
     </>
   )
@@ -578,13 +617,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
               style={{ flex: 1, minWidth: 220, border: '1px solid var(--purple-border)', borderRadius: 8, padding: '7px 11px', fontSize: 13, outline: 'none', background: 'var(--panel)' }}
               onKeyDown={e => { if (e.key === 'Enter' && !gerando) (document.getElementById('btn-gerar') as HTMLButtonElement)?.click() }} />
             <button id="btn-gerar" className="btn btn-sm" disabled={gerando}
-              onClick={async () => {
-                setGerando(true); setErroGerar(null); setVerTradRascunho(false)
-                const erro = await regenerarRascunho(t.id, instrucao.trim())
-                setGerando(false)
-                if (erro) setErroGerar(erro)
-                else setInstrucao('')
-              }}>
+              onClick={() => regerarRascunhoCom(instrucao)}>
               <Sparkles size={13} /> {gerando ? 'Gerando…' : 'Gerar nova resposta'}
             </button>
             <button className="btn btn-sm" disabled={traduzindoRasc}
@@ -600,6 +633,7 @@ export function TicketDetail({ t, onBack }: { t: Ticket; onBack: () => void }) {
               <Languages size={13} /> {traduzindoRasc ? 'Traduzindo…' : verTradRascunho ? 'Ocultar tradução' : 'Ver em português'}
             </button>
           </div>
+          <OpcoesInstrucao atual={instrucao} onUsar={texto => { setInstrucao(texto); regerarRascunhoCom(texto) }} />
           {erroGerar && <p className="muted-sm" style={{ color: 'var(--red)', marginTop: 6 }}>{erroGerar}</p>}
 
           <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>

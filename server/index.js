@@ -236,6 +236,7 @@ function visao(wsId) {
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
     gastosIA: estado.gastosIA ?? {},
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
+    opcoesInstrucao: estado.opcoesInstrucao ?? [],
     relatorioLink: estado.tokenRelatorio ? `/r/${wsId}/${estado.tokenRelatorio}` : null,
     linkMostraHoje: estado.linkMostraHoje !== false,
     bancoErro: erroBanco,
@@ -1508,6 +1509,16 @@ app.post('/api/relatorio-mover', (req, res) => {
   for (const t of req.estado.tickets) {
     if (t.relatorioDia === de) t.relatorioDia = para
   }
+  salvar(req.wsId); ok(req, res)
+})
+
+// Instruções salvas do "Gerar com IA" (configurável pelo lojista)
+app.post('/api/instrucao-opcoes', (req, res) => {
+  const opcoes = Array.isArray(req.body?.opcoes)
+    ? [...new Set(req.body.opcoes.map(o => String(o).trim()).filter(Boolean))].slice(0, 50)
+    : null
+  if (!opcoes) return res.status(400).json({ erro: 'opcoes deve ser uma lista de textos', state: visao(req.wsId) })
+  req.estado.opcoesInstrucao = opcoes
   salvar(req.wsId); ok(req, res)
 })
 
