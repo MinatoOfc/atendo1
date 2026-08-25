@@ -48,11 +48,14 @@ export default function Pedidos() {
   const [expandido, setExpandido] = useState<string | null>(null)
   // e-mail direto ao cliente do pedido (ex.: aviso de erro no endereço)
   const [emailPara, setEmailPara] = useState<Pedido | null>(null)
+  // milhares de pedidos numa tabela só travam o navegador — renderiza aos poucos
+  const [limite, setLimite] = useState(100)
 
   const q = normalizar(busca.trim())
   const filtrados = q
-    ? pedidos.filter(p => [p.numero, p.cliente, p.email].some(v => v && normalizar(v).includes(q)))
+    ? pedidos.filter(p => [p.numero, p.cliente, p.email, p.rastreio].some(v => v && normalizar(v).includes(q)))
     : pedidos
+  const visiveis = filtrados.slice(0, limite)
 
   if (!config.shopifyConectada) {
     return (
@@ -84,8 +87,8 @@ export default function Pedidos() {
         </div>
         <div className="search-box">
           <Search size={15} />
-          <input value={busca} onChange={e => setBusca(e.target.value)}
-            placeholder="Buscar por nome, e-mail ou nº do pedido" />
+          <input value={busca} onChange={e => { setBusca(e.target.value); setLimite(100) }}
+            placeholder="Buscar por nome, e-mail, nº do pedido ou rastreio" />
         </div>
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -99,7 +102,7 @@ export default function Pedidos() {
                 Nenhum pedido encontrado para “{busca.trim()}”.
               </td></tr>
             )}
-            {filtrados.map(p => {
+            {visiveis.map(p => {
               const aberto = expandido === p.id
               const nItens = p.itens?.reduce((s, i) => s + i.quantidade, 0) ?? 0
               return (
@@ -148,6 +151,13 @@ export default function Pedidos() {
                 </Fragment>
               )
             })}
+            {filtrados.length > visiveis.length && (
+              <tr><td colSpan={nCols} style={{ textAlign: 'center', padding: '12px 0' }}>
+                <button className="btn btn-sm" onClick={() => setLimite(l => l + 200)}>
+                  Mostrar mais ({visiveis.length} de {filtrados.length})
+                </button>
+              </td></tr>
+            )}
           </tbody>
         </table>
       </div>
