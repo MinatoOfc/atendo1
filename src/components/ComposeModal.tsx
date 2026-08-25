@@ -60,8 +60,14 @@ export default function ComposeModal({ onClose, inicial }: { onClose: () => void
     setTraducao(r.traducao ?? null)
   }
 
+  // clicar fora não fecha (mensagem gerada custou tokens); o ✕ confirma antes
+  const fechar = () => {
+    if (corpo.trim() && !window.confirm('Descartar a mensagem escrita?')) return
+    onClose()
+  }
+
   return (
-    <Modal title="Novo email" onClose={onClose}>
+    <Modal title="Novo email" onClose={fechar} fecharFora={false}>
       {!config.emailConectado && (
         <div className="banner card-soft mb-12" style={{ fontSize: 12.5 }}>
           Nenhuma caixa de e-mail conectada — este envio fica registrado apenas aqui no atendo.
@@ -102,19 +108,19 @@ export default function ComposeModal({ onClose, inicial }: { onClose: () => void
       <div className="field">
         <label>Mensagem</label>
         <textarea value={corpo} onChange={e => { setCorpo(e.target.value); setTraducao(null) }} placeholder="Escreva sua mensagem ou gere com a IA acima…" style={{ minHeight: 160 }} autoFocus={!!inicial?.para} />
-        {corpo.trim() !== '' && (
-          traducao === null ? (
-            <div style={{ marginTop: 6 }}>
-              <button className="btn btn-sm" onClick={verPt} disabled={traduzindo}>
-                <Languages size={13} /> {traduzindo ? 'Traduzindo…' : 'Ver em português'}
-              </button>
-            </div>
-          ) : (
-            <div className="card-soft" style={{ padding: '8px 10px', fontSize: 13, whiteSpace: 'pre-wrap', marginTop: 6 }}>
-              <div className="muted-sm" style={{ marginBottom: 4 }}>Tradução (não é enviada):</div>
-              {traducao}
-            </div>
-          )
+        {traducao === null ? (
+          <div style={{ marginTop: 6 }}>
+            <button className="btn btn-sm" onClick={verPt} disabled={traduzindo || !corpo.trim()}
+              style={!corpo.trim() ? { opacity: 0.5 } : undefined}
+              title={corpo.trim() ? 'Traduz a mensagem para você conferir — a tradução não é enviada' : 'Escreva ou gere a mensagem primeiro'}>
+              <Languages size={13} /> {traduzindo ? 'Traduzindo…' : 'Ver em português'}
+            </button>
+          </div>
+        ) : (
+          <div className="card-soft" style={{ padding: '8px 10px', fontSize: 13, whiteSpace: 'pre-wrap', marginTop: 6 }}>
+            <div className="muted-sm" style={{ marginBottom: 4 }}>Tradução (não é enviada):</div>
+            {traducao}
+          </div>
         )}
       </div>
       <div className="row spread">

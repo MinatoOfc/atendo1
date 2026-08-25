@@ -53,9 +53,9 @@ export function TipCard({ id, title, text, items, action }: {
   )
 }
 
-export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Modal({ title, onClose, children, fecharFora = true }: { title: string; onClose: () => void; children: ReactNode; fecharFora?: boolean }) {
   return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="overlay" onClick={e => fecharFora && e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-head">
           <h2 className="h2">{title}</h2>
