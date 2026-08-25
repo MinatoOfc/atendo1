@@ -15,8 +15,28 @@ const statusPedido: Record<string, { label: string; cls: string }> = {
 // busca sem diferenciar maiúsculas nem acentos (van dijk acha Van Dijk)
 const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
+// idioma do cliente do pedido: o idioma fixo da loja; sem ele, deduz pelo país
+const idiomaPorPais: Record<string, string> = {
+  germany: 'de', deutschland: 'de', alemanha: 'de', austria: 'de', osterreich: 'de', switzerland: 'de', schweiz: 'de', suica: 'de',
+  france: 'fr', franca: 'fr', belgium: 'fr', belgique: 'fr', belgica: 'fr', luxembourg: 'fr', luxemburgo: 'fr',
+  italy: 'it', italia: 'it', spain: 'es', espana: 'es', espanha: 'es', mexico: 'es', argentina: 'es',
+  netherlands: 'nl', nederland: 'nl', holanda: 'nl', 'paises baixos': 'nl',
+  portugal: 'pt', brazil: 'pt', brasil: 'pt',
+}
+const palavraPedido: Record<string, string> = {
+  pt: 'Pedido', de: 'Bestellung', en: 'Order', fr: 'Commande', it: 'Ordine', es: 'Pedido', nl: 'Bestelling',
+}
+
 export default function Pedidos() {
-  const { config, pedidos, conectarShopify, fmtMoeda, produtos } = useStore()
+  const { config, pedidos, conectarShopify, fmtMoeda, produtos, lojas } = useStore()
+  const idiomaDoPedido = (p: Pedido) => {
+    const loja = lojas.find(l => l.id === (p.lojaId ?? 'loja1'))
+    if (loja?.idioma && loja.idioma !== 'auto') return loja.idioma
+    return idiomaPorPais[normalizar(p.pais ?? '')] ?? 'en'
+  }
+  const nomeLoja = (p: Pedido) => lojas.find(l => l.id === (p.lojaId ?? 'loja1'))?.nome
+  const mostraLoja = lojas.length > 1
+  const nCols = mostraLoja ? 8 : 7
   // foto da variante escolhida (a cor comprada); sem ela, a foto principal do produto
   const fotoDe = (i: { produtoId?: string | null; varianteId?: string | null }) => {
     const pr = i.produtoId ? produtos.find(x => x.id === i.produtoId) : null
@@ -71,11 +91,11 @@ export default function Pedidos() {
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="table">
           <thead>
-            <tr><th>Pedido</th><th>Cliente</th><th>País</th><th>Valor</th><th>Status</th><th>Rastreio</th><th>Data</th></tr>
+            <tr><th>Pedido</th><th>Cliente</th>{mostraLoja && <th>Loja</th>}<th>País</th><th>Valor</th><th>Status</th><th>Rastreio</th><th>Data</th></tr>
           </thead>
           <tbody>
             {q !== '' && filtrados.length === 0 && (
-              <tr><td colSpan={7} className="muted-sm" style={{ textAlign: 'center', padding: '26px 0' }}>
+              <tr><td colSpan={nCols} className="muted-sm" style={{ textAlign: 'center', padding: '26px 0' }}>
                 Nenhum pedido encontrado para “{busca.trim()}”.
               </td></tr>
             )}
@@ -91,6 +111,7 @@ export default function Pedidos() {
                       {nItens > 0 && <div className="muted-sm" style={{ fontWeight: 400, marginLeft: 21 }}>{nItens} {nItens === 1 ? 'item' : 'itens'}</div>}
                     </td>
                     <td>{p.cliente}<div className="muted-sm">{p.email}</div></td>
+                    {mostraLoja && <td><span className="tag tag-outro" style={{ whiteSpace: 'nowrap' }}>{nomeLoja(p) ?? '—'}</span></td>}
                     <td>{p.pais}</td>
                     <td>{fmt(p.valor)}</td>
                     <td><span className={`tag ${statusPedido[p.status].cls}`}>{statusPedido[p.status].label}</span></td>
@@ -99,7 +120,7 @@ export default function Pedidos() {
                   </tr>
                   {aberto && (
                     <tr>
-                      <td colSpan={7} style={{ background: 'var(--panel-soft)', padding: '10px 14px 12px 34px' }}>
+                      <td colSpan={nCols} style={{ background: 'var(--panel-soft)', padding: '10px 14px 12px 34px' }}>
                         {p.itens?.length ? (
                           p.itens.map((i, idx) => (
                             <div key={idx} className="row gap-8" style={{ padding: '4px 0', fontSize: 13 }}>
@@ -133,7 +154,12 @@ export default function Pedidos() {
       {emailPara && (
         <ComposeModal
           onClose={() => setEmailPara(null)}
-          inicial={{ para: emailPara.email, assunto: `Pedido ${emailPara.numero}`, lojaId: emailPara.lojaId }}
+          inicial={{
+            para: emailPara.email,
+            assunto: `${palavraPedido[idiomaDoPedido(emailPara)] ?? 'Pedido'} ${emailPara.numero}`,
+            lojaId: emailPara.lojaId,
+            idioma: idiomaDoPedido(emailPara),
+          }}
         />
       )}
     </div>

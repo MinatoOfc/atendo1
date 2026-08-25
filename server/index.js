@@ -1641,6 +1641,37 @@ app.post('/api/traduzir-texto', async (req, res) => {
   res.json({ ok: true, traducao: r.textos[0] })
 })
 
+// E-mail novo (painel Pedidos / Novo email): a IA escreve a mensagem no idioma
+// da loja, com o contexto dos pedidos do destinatário — sem precisar de ticket
+app.post('/api/gerar-email', async (req, res) => {
+  if (!iaConfigurada) {
+    return res.status(400).json({ erro: 'Gerar com IA usa o Claude — configure a ANTHROPIC_API_KEY primeiro.' })
+  }
+  const para = String(req.body.para || '').trim()
+  if (!para) return res.status(400).json({ erro: 'Informe o destinatário primeiro.' })
+  const instrucao = String(req.body.instrucao || '').trim()
+  const idioma = String(req.body.idioma || '').trim().slice(0, 8)
+  const pseudo = {
+    de: para,
+    nome: para.split('@')[0],
+    assunto: String(req.body.assunto || ''),
+    corpo: '(O cliente ainda não escreveu nada — a loja está INICIANDO o contato. Escreva o e-mail pedido na instrução do lojista.)',
+    historico: [],
+    lojaId: req.body.lojaId,
+  }
+  const r = await processarEmailIA(req.estado, pseudo, [
+    'Escreva um NOVO e-mail da loja para este cliente (não é resposta a uma mensagem dele).',
+    idioma ? `Escreva a mensagem no idioma de código ISO "${idioma}".` : '',
+    instrucao || 'Escreva uma atualização cordial sobre o pedido do cliente (status e rastreio, se houver).',
+  ].filter(Boolean).join(' '))
+  if (!r || !r.resposta) {
+    return res.status(400).json({ erro: statusIA.erro || 'A IA não devolveu uma resposta. Tente de novo.' })
+  }
+  registrarGasto(req.estado, pseudo.lojaId, r.custo)
+  salvar(req.wsId)
+  res.json({ ok: true, texto: r.resposta })
+})
+
 app.post('/api/tickets/:id/aprovar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   try {

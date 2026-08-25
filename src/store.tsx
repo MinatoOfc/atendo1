@@ -310,6 +310,7 @@ interface Store extends ServerState {
   regenerarRascunho: (id: string, instrucao: string) => Promise<string | null>
   traduzirRascunho: (id: string) => Promise<string | null>
   gerarTexto: (id: string, instrucao: string) => Promise<{ erro?: string; texto?: string }>
+  gerarEmail: (dados: { lojaId?: string; para: string; assunto?: string; instrucao?: string; idioma?: string }) => Promise<{ erro?: string; texto?: string }>
   traduzirTexto: (texto: string) => Promise<{ erro?: string; traducao?: string }>
 }
 
@@ -629,6 +630,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const r = (await api('/traduzir-texto', 'POST', { texto })) as { erro?: string; traducao?: string }
       if (r.erro) return { erro: r.erro }
       return { traducao: r.traducao }
+    },
+    gerarEmail: async dados => {
+      const r = (await api('/gerar-email', 'POST', dados)) as { erro?: string; texto?: string }
+      if (r.erro) return { erro: r.erro }
+      return { texto: r.texto }
     },
     }
   }, [state, carregado, tipsFechados, lojaAtiva, usuario, autenticando, prefs])
