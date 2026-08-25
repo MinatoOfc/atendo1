@@ -86,13 +86,30 @@ export async function traduzirGratis(mensagens) {
     return { textos }
   } catch (err) {
     // Plano B: o IP do Railway é compartilhado e o limite do Google às vezes
-    // fecha para todos — o Gemini Flash traduz por fração de centavo
+    // fecha para todos — o Gemini Flash traduz por fração de centavo.
+    // Em lotes pequenos: conversa longa numa chamada só estourava o limite de
+    // saída do Gemini e derrubava o fallback inteiro.
     if (geminiConfigurado) {
       try {
-        const r = await traduzirComGemini(mensagens.map(m => String(m).slice(0, 4500)))
-        return { textos: r.textos, custoIA: r.custo }
+        const limpos = mensagens.map(m => String(m).slice(0, 4500))
+        const lotes = []
+        let atual = [], tam = 0
+        for (const tx of limpos) {
+          if (atual.length && (tam + tx.length > 6000 || atual.length >= 10)) { lotes.push(atual); atual = []; tam = 0 }
+          atual.push(tx); tam += tx.length
+        }
+        if (atual.length) lotes.push(atual)
+        const saida = []
+        let custoIA = 0
+        for (const lote of lotes) {
+          const r = await traduzirComGemini(lote)
+          saida.push(...r.textos)
+          custoIA += r.custo
+        }
+        return { textos: saida, custoIA: Math.round(custoIA * 1e6) / 1e6 }
       } catch (err2) {
         console.error('[traducao] fallback Gemini também falhou:', err2.message)
+        return { erro: `A tradução falhou (Google: ${err.message}; Gemini: ${err2.message}). Tente de novo em instantes.` }
       }
     }
     return { erro: `A tradução gratuita falhou (${err.message}). Tente de novo em instantes.` }
