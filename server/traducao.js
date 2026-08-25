@@ -8,8 +8,6 @@
  * espera crescente e troca de host quando o limite bate.
  */
 
-import { geminiConfigurado, traduzirComGemini } from './gemini.js'
-
 const espera = ms => new Promise(r => setTimeout(r, ms))
 
 const HOSTS = ['https://translate.googleapis.com', 'https://translate.google.com']
@@ -32,8 +30,7 @@ async function chamar(host, texto) {
 }
 
 // Depois de um 429 em todas as tentativas, nem tenta o Google por um tempo —
-// o limite do IP compartilhado do Railway pode durar horas, e insistir só
-// atrasa o lojista (o fallback pelo Gemini assume direto)
+// insistir enquanto o IP está bloqueado só prolonga o limite e atrasa a resposta
 let googleBloqueadoAte = 0
 
 async function traduzirTexto(texto) {
@@ -66,9 +63,8 @@ async function traduzirTexto(texto) {
 }
 
 /**
- * Traduz cada mensagem para português. Retorna {textos} ou {erro}; quando o
- * Google gratuito recusa de vez e o Gemini está configurado, cai para ele e
- * devolve também {custoIA} (fração de centavo) para o livro-caixa.
+ * Traduz cada mensagem para português pelo tradutor gratuito. Retorna
+ * {textos} ou {erro} — sem IA paga: escolha do lojista.
  */
 export async function traduzirGratis(mensagens) {
   const textos = []
@@ -85,32 +81,10 @@ export async function traduzirGratis(mensagens) {
     }
     return { textos }
   } catch (err) {
-    // Plano B: o IP do Railway é compartilhado e o limite do Google às vezes
-    // fecha para todos — o Gemini Flash traduz por fração de centavo.
-    // Em lotes pequenos: conversa longa numa chamada só estourava o limite de
-    // saída do Gemini e derrubava o fallback inteiro.
-    if (geminiConfigurado) {
-      try {
-        const limpos = mensagens.map(m => String(m).slice(0, 4500))
-        const lotes = []
-        let atual = [], tam = 0
-        for (const tx of limpos) {
-          if (atual.length && (tam + tx.length > 6000 || atual.length >= 10)) { lotes.push(atual); atual = []; tam = 0 }
-          atual.push(tx); tam += tx.length
-        }
-        if (atual.length) lotes.push(atual)
-        const saida = []
-        let custoIA = 0
-        for (const lote of lotes) {
-          const r = await traduzirComGemini(lote)
-          saida.push(...r.textos)
-          custoIA += r.custo
-        }
-        return { textos: saida, custoIA: Math.round(custoIA * 1e6) / 1e6 }
-      } catch (err2) {
-        console.error('[traducao] fallback Gemini também falhou:', err2.message)
-        return { erro: `A tradução falhou (Google: ${err.message}; Gemini: ${err2.message}). Tente de novo em instantes.` }
-      }
+    // Só o tradutor gratuito, por escolha do lojista. O limite (429) é do IP
+    // compartilhado do Railway e zera sozinho — geralmente em menos de 1 hora.
+    if (err.status === 429) {
+      return { erro: 'O tradutor gratuito atingiu o limite do Google para o IP do servidor. Não dá para resetar — ele libera sozinho (normalmente em menos de 1 hora). Tente de novo mais tarde.' }
     }
     return { erro: `A tradução gratuita falhou (${err.message}). Tente de novo em instantes.` }
   }

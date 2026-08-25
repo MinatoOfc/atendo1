@@ -13,7 +13,6 @@ const MODELO = (process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim()
 // Preço por milhão de tokens (entrada, saída) — para o contador de custo por conversa
 const PRECOS = {
   'gemini-2.5-flash': [0.3, 2.5],
-  'gemini-2.0-flash': [0.1, 0.4],
 }
 
 // Mesmo formato do SCHEMA do Claude, na sintaxe de schema do Gemini
@@ -34,44 +33,6 @@ const SCHEMA_GEMINI = {
     spam: { type: 'BOOLEAN' },
   },
   required: ['situacao', 'resolucao', 'categoria', 'idioma', 'resposta', 'confianca', 'escalar_humano', 'aprova_reembolso', 'confirma_troca', 'encerrar', 'motivo', 'spam'],
-}
-
-/**
- * Tradução de emergência pelo Gemini Flash mais barato — usada só quando o
- * tradutor gratuito do Google recusa (429). Custa fração de centavo.
- * Retorna { textos, custo } ou lança erro.
- */
-export async function traduzirComGemini(textos) {
-  const modelo = 'gemini-2.0-flash'
-  const resp = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${CHAVE}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: 'Traduza cada texto do array para português brasileiro, preservando quebras de linha. Responda APENAS um array JSON de strings, na mesma ordem e com o mesmo tamanho do array recebido. Não traduza códigos de rastreio, URLs nem números de pedido.' }] },
-        contents: [{ role: 'user', parts: [{ text: JSON.stringify(textos) }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
-          maxOutputTokens: 8192,
-        },
-      }),
-    },
-  )
-  if (!resp.ok) {
-    const corpo = await resp.text().catch(() => '')
-    throw new Error(`O Gemini respondeu ${resp.status}: ${corpo.slice(0, 200)}`)
-  }
-  const dados = await resp.json()
-  const texto = (dados.candidates?.[0]?.content?.parts ?? []).map(p => p.text ?? '').join('')
-  const arr = JSON.parse(texto)
-  if (!Array.isArray(arr) || arr.length !== textos.length) throw new Error('O Gemini devolveu um array de tamanho errado.')
-  const uso = dados.usageMetadata ?? {}
-  const [entrada, saida] = PRECOS[modelo]
-  const custo = ((uso.promptTokenCount || 0) * entrada
-    + ((uso.candidatesTokenCount || 0) + (uso.thoughtsTokenCount || 0)) * saida) / 1e6
-  return { textos: arr.map(x => String(x ?? '')), custo }
 }
 
 /** Gera a resposta estruturada pelo Gemini. Retorna { r, custo } ou lança erro. */
