@@ -795,18 +795,21 @@ export function TicketListPage({ tickets, empty, header, tagStatus }: {
   tagStatus?: boolean
 }) {
   const [aberto, setAberto] = useState<string | null>(null)
-  const atual = tickets.find(t => t.id === aberto)
+  const { tickets: todosTickets } = useStore()
+  // a conversa aberta pode sair da lista filtrada (ex.: filtro "Não lidos" e
+  // ela acabou de ser lida) — busca também na lista completa pra não fechar
+  const atual = tickets.find(t => t.id === aberto) ?? todosTickets.find(t => t.id === aberto)
 
   if (atual) {
     const idx = tickets.findIndex(t => t.id === aberto)
     return (
       <TicketDetail t={atual} onBack={() => setAberto(null)}
-        nav={{
+        nav={idx >= 0 ? {
           pos: idx + 1,
           total: tickets.length,
           anterior: idx > 0 ? () => setAberto(tickets[idx - 1].id) : undefined,
-          proximo: idx >= 0 && idx < tickets.length - 1 ? () => setAberto(tickets[idx + 1].id) : undefined,
-        }} />
+          proximo: idx < tickets.length - 1 ? () => setAberto(tickets[idx + 1].id) : undefined,
+        } : undefined} />
     )
   }
 
