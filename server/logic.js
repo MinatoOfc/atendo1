@@ -11,6 +11,39 @@ export function classificarLocal(texto) {
   return 'outro'
 }
 
+// Rede de segurança determinística: frases que CONFIRMAM reembolso,
+// cancelamento ou troca como fato consumado. A IA é proibida de confirmar —
+// se desobedecer, a resposta nunca sai no automático (vai para o lojista).
+// OFERECER opções ("Opção 1 — reembolso de 60%…") não casa com estes padrões:
+// eles exigem verbo de confirmação/execução perto da palavra-chave.
+const PADROES_CONFIRMACAO = {
+  reembolso: [
+    // "confirmo o reembolso", "we confirm your refund", "bestätige die Rückerstattung"…
+    /(confirm|bestätig|conferm|bevestig)\w*[^.!?\n]{0,60}(reembolso|estorno|refund|rückerstattung|erstattung|rimborso|remboursement|terugbetaling|devoluci[oó]n)/i,
+    // "reembolso aprovado/processado/concluído", "refund has been issued", "Rückerstattung wird überwiesen"…
+    /(reembolso|estorno|refund|rückerstattung|erstattung|rimborso|remboursement|terugbetaling|devoluci[oó]n)[^.!?\n]{0,80}(aprovad|confirmad|processad|conclu[íi]d|realizad|efetuad|iniciad|issued|processed|approved|completed|initiated|bestätigt|veranlasst|erstattet|überwiesen|bearbeitet|elaborato|effettuato|confermato|approvato|effectué|traité|confirmé|approuvé|verwerkt|overgemaakt|bevestigd|aprobado|procesado)/i,
+    // "o dinheiro chegará à sua conta", "the money will be credited", "Geld wird überwiesen"…
+    /(dinheiro|valor|money|amount|betrag|geld|montant|importo|bedrag|importe)[^.!?\n]{0,60}(chegar|creditad|estornad|na sua conta|em sua conta|zurückerstattet|überwiesen|gutgeschrieben|refunded|credited|accreditat|rimborsat|remboursé|crédité|teruggestort|bijgeschreven|acreditad|reembolsad)/i,
+    // "o cancelamento está concluído", "cancellation completed", "Stornierung abgeschlossen"…
+    /(cancelamento|cancellation|stornierung|annullamento|annulation|annulering|cancelaci[oó]n)[^.!?\n]{0,60}(conclu[íi]d|complet|realizad|efetuad|abgeschlossen|durchgeführt|effettuat|effectu|voltooid|verwerkt|procesad)/i,
+  ],
+  troca: [
+    // "a troca está confirmada", "exchange confirmed", "Umtausch bestätigt"…
+    /(troca|exchange|umtausch|scambio|[eé]change|omruil|ruil|cambio)[^.!?\n]{0,60}(confirmad|aprovad|conclu[íi]d|confirmed|approved|bestätigt|confermat|approvat|confirmé|approuvé|bevestigd|confirmado|aprobado)/i,
+    // "confirmo a troca", "we confirm the exchange"…
+    /(confirm|bestätig|conferm|bevestig)\w*[^.!?\n]{0,60}(troca|exchange|umtausch|scambio|[eé]change|omruil|cambio)/i,
+  ],
+}
+
+/** Detecta confirmação indevida na resposta gerada. Retorna 'reembolso' | 'troca' | null. */
+export function confirmacaoIndevida(texto) {
+  const t = String(texto || '')
+  if (!t) return null
+  if (PADROES_CONFIRMACAO.reembolso.some(re => re.test(t))) return 'reembolso'
+  if (PADROES_CONFIRMACAO.troca.some(re => re.test(t))) return 'troca'
+  return null
+}
+
 export function detectarIdiomaLocal(texto) {
   const t = texto.toLowerCase()
   if (/\b(the|my|is|where|when|order|please)\b/.test(t) && !/\b(meu|não|pedido)\b/.test(t)) return 'en'

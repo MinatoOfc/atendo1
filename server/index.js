@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url'
 import { carregar, uid, estadoInicial, lojaPadrao } from './store.js'
 import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
-  classificarLocal, detectarIdiomaLocal, pareceSpam,
+  classificarLocal, detectarIdiomaLocal, pareceSpam, confirmacaoIndevida,
 } from './logic.js'
 import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA } from './ai.js'
 import { traduzirGratis } from './traducao.js'
@@ -411,8 +411,12 @@ function aplicarResultado(estado, t, r) {
   // Regra fixa do código, não da IA: APROVAR reembolso e CONFIRMAR troca
   // esperam decisão humana. O resto do fluxo de devolução (perguntar motivo,
   // oferecer troca/60/100%) roda no automático.
-  const reembolso = r.aprovaReembolso === true
-  const troca = r.confirmaTroca === true
+  // Rede de segurança: mesmo que a IA desobedeça e ESCREVA uma confirmação de
+  // reembolso/cancelamento/troca (sem levantar as flags), a mensagem nunca sai
+  // no automático — é tratada como a decisão que ela tentou tomar
+  const confirmouIndevido = confirmacaoIndevida(r.resposta)
+  const reembolso = r.aprovaReembolso === true || confirmouIndevido === 'reembolso'
+  const troca = r.confirmaTroca === true || confirmouIndevido === 'troca'
   // Resposta vazia nunca pode cair no envio automático — vira caso humano
   const semResposta = !String(r.resposta || '').trim()
   // Resposta igual à última que a loja já mandou também não: repetir a mesma
@@ -447,13 +451,15 @@ function aplicarResultado(estado, t, r) {
     // conversa ou pede à IA na hora ("Gerar com IA"), sem gastar tokens à toa
     t.rascunho = undefined
     t.rascunhoTraducao = undefined
-    t.motivoEscalada = reembolso
-      ? (r.motivo || 'Cliente escolheu reembolso — aprovação é sua')
-      : troca
-        ? (r.motivo || 'Cliente aceitou a troca — confirme e despache')
-        : repetida
-          ? 'A IA ia repetir a resposta anterior — o cliente insistiu e continua sem solução'
-          : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
+    t.motivoEscalada = confirmouIndevido
+      ? `A IA escreveu uma confirmação de ${confirmouIndevido} por conta própria — a aprovação é sua`
+      : reembolso
+        ? (r.motivo || 'Cliente escolheu reembolso — aprovação é sua')
+        : troca
+          ? (r.motivo || 'Cliente aceitou a troca — confirme e despache')
+          : repetida
+            ? 'A IA ia repetir a resposta anterior — o cliente insistiu e continua sem solução'
+            : r.motivo || (incerto ? 'Confiança abaixo do mínimo configurado' : 'Caso sensível')
   } else {
     t.status = 'aprovacao'
     t.decisaoPendente = undefined
