@@ -108,6 +108,8 @@ function configDaLoja(estado, indice) {
     delete cfg.passCifrada
     return { cfg: montarConfig(cfg), origem: 'site' }
   }
+  // conta removida pelo lojista no site: as variáveis de ambiente não voltam sozinhas
+  if (loja?.emailEnvIgnorado) return { cfg: montarConfig({}), origem: null }
   const env = lerConfigEnv(indice === 0 ? '' : String(indice + 1))
   if (env.user && env.pass) return { cfg: env, origem: 'env' }
   return { cfg: montarConfig({}), origem: null }
@@ -1272,6 +1274,7 @@ app.post('/api/lojas/:id/email', async (req, res) => {
     smtpPort: cfg.smtpPort,
   }
   loja.ativa = true
+  delete loja.emailEnvIgnorado // conta nova cadastrada: fim do estado "removida"
   cacheContas.delete(req.wsId)
   salvar(req.wsId)
   sincronizar(req.wsId).catch(() => {})
@@ -1282,6 +1285,8 @@ app.delete('/api/lojas/:id/email', (req, res) => {
   const loja = req.estado.lojas.find(l => l.id === req.params.id)
   if (loja) {
     delete loja.emailCfg
+    // vale também para contas vindas das variáveis de ambiente do Railway
+    loja.emailEnvIgnorado = true
     cacheContas.delete(req.wsId)
     salvar(req.wsId)
   }

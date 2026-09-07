@@ -98,7 +98,7 @@ const nomesProvedores: Record<string, string> = {
  * digita endereço e senha, testa e salva. A senha vai cifrada para o servidor
  * e nunca volta para o navegador.
  */
-function FormularioEmail({ lojaId }: { lojaId: string }) {
+function FormularioEmail({ lojaId, onSalvo }: { lojaId: string; onSalvo?: () => void }) {
   const s = useStore()
   const [provider, setProvider] = useState('')
   const [user, setUser] = useState('')
@@ -132,7 +132,7 @@ function FormularioEmail({ lojaId }: { lojaId: string }) {
     try {
       const falha = await s.salvarEmailLoja(lojaId, cfg())
       if (falha) setErro(falha)
-      else { setPass(''); setResultado(null) }
+      else { setPass(''); setResultado(null); onSalvo?.() }
     } finally { setOcupado('') }
   }
 
@@ -428,6 +428,7 @@ export default function Configuracoes() {
   const [testandoIa, setTestandoIa] = useState(false)
   const [testandoShop, setTestandoShop] = useState(false)
   const [lojaShop, setLojaShop] = useState('')
+  const [alterandoEmail, setAlterandoEmail] = useState(false)
   const [confirmaRemocao, setConfirmaRemocao] = useState('')
   const [removendoLoja, setRemovendoLoja] = useState(false)
   const [erroRemocao, setErroRemocao] = useState<string | null>(null)
@@ -435,6 +436,8 @@ export default function Configuracoes() {
   // Configura a loja escolhida na seta do topo da barra lateral
   const lojaSel = s.lojas.find(l => l.id === s.lojaAtiva) ?? s.lojas.find(l => l.id === 'loja1') ?? null
   const lojaId = lojaSel?.id ?? 'loja1'
+  // trocou de loja: fecha o formulário de alteração de e-mail da loja anterior
+  useEffect(() => setAlterandoEmail(false), [lojaId])
   const emailOk = lojaSel ? lojaSel.email.configurado : s.integracoes.email
   const status = lojaSel?.email.status ?? s.integracoes.emailStatus
   const importacao = lojaSel?.email.importacao ?? null
@@ -853,13 +856,26 @@ export default function Configuracoes() {
             <FormularioEmail lojaId={lojaId} />
           </>
         )}
-        {emailOk && lojaSel?.email.origem === 'site' && (
-          <div className="row gap-8" style={{ marginTop: 12 }}>
-            <button className="btn btn-sm" onClick={() => { if (confirm(`Remover a conta de e-mail da loja "${lojaSel?.nome}"?`)) s.removerEmailLoja(lojaId) }}>
-              <Unplug size={13} /> Remover esta conta
-            </button>
-            <span className="muted-sm">Depois de remover, é só preencher o formulário de novo para trocar de caixa.</span>
-          </div>
+        {emailOk && (
+          <>
+            <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+              <button className="btn btn-sm" onClick={() => setAlterandoEmail(a => !a)}>
+                <Mail size={13} /> {alterandoEmail ? 'Cancelar alteração' : 'Alterar e-mail'}
+              </button>
+              <button className="btn btn-sm" onClick={() => { if (confirm(`Remover a conta de e-mail da loja "${lojaSel?.nome}"? Ela para de ler e enviar e-mails até você conectar outra.`)) { s.removerEmailLoja(lojaId); setAlterandoEmail(false) } }}>
+                <Unplug size={13} /> Remover esta conta
+              </button>
+              {!alterandoEmail && <span className="muted-sm">Alterar troca a caixa desta loja sem perder as conversas já importadas.</span>}
+            </div>
+            {alterandoEmail && (
+              <div className="card-soft" style={{ marginTop: 12, padding: '12px 14px' }}>
+                <p className="muted-sm mb-8" style={{ lineHeight: 1.5 }}>
+                  Preencha a conta nova — ao salvar, ela substitui <b>{lojaSel?.email.endereco ?? s.config.emailConectado}</b> nesta loja.
+                </p>
+                <FormularioEmail lojaId={lojaId} onSalvo={() => setAlterandoEmail(false)} />
+              </div>
+            )}
+          </>
         )}
       </Section>
 
