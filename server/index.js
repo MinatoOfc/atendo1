@@ -1723,18 +1723,8 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
       }
     }
 
-    // Decisão de reembolso/troca respondida: o caso entra sozinho no relatório
-    // manual do dia com o texto certo (dá para trocar/remover no Resumo diário)
-    if (decisao && !t.relatorioDia) {
-      t.relatorioDia = diaLocal(Date.now())
-      // troca sai com os detalhes que a IA anotou (ex.: TROCA DE 3 POLOS POR XXL)
-      const detalheTroca = String(t.resolucao || t.resumoSituacao || '').trim()
-      t.relatorioTexto = decisao === 'troca'
-        ? (detalheTroca ? detalheTroca.toUpperCase().slice(0, 90) : 'TROCA DE TAMANHO')
-        : /100\s*%/.test(textoEnviado) ? 'REEMBOLSO 100%'
-          : /60\s*%/.test(textoEnviado) ? 'REEMBOLSO 60%'
-            : 'REEMBOLSO'
-    }
+    // O relatório manual é 100% do lojista: nada entra sozinho — ele usa o
+    // botão "Adicionar ao relatório" quando quiser (pedido dele, 07/09/2026)
     if (decisao) t.decisaoPendente = undefined
 
     salvar(req.wsId); ok(req, res)
