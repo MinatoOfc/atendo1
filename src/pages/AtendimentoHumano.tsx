@@ -1,18 +1,27 @@
+import { useState } from 'react'
 import { ShieldCheck } from 'lucide-react'
-import { useStore } from '../store'
+import { useStore, nomeCategoria } from '../store'
+import type { Categoria } from '../store'
 import { TicketListPage } from '../components/Tickets'
 import { EmptyState, TipCard } from '../components/Shared'
 
 export default function AtendimentoHumano() {
   const { casosHumanos } = useStore()
+  const [cat, setCat] = useState<Categoria | 'todas'>('todas')
 
   // do mais recente para o mais antigo, como o resto do app
   const fila = [...casosHumanos].sort((a, b) => (b.data || '').localeCompare(a.data || ''))
 
+  const porCategoria = new Map<string, number>()
+  for (const t of fila) porCategoria.set(t.categoria, (porCategoria.get(t.categoria) ?? 0) + 1)
+  // o filtro escolhido pode ficar vazio (último caso da categoria resolvido) — volta para "Todos"
+  const catEfetiva = cat !== 'todas' && porCategoria.has(cat) ? cat : 'todas'
+  const filtrada = catEfetiva === 'todas' ? fila : fila.filter(t => t.categoria === catEfetiva)
+
   return (
     <>
       <TicketListPage
-        tickets={fila}
+        tickets={filtrada}
         header={
           <div className="mb-16">
             <h1 className="h2">Atendimento humano</h1>
@@ -24,6 +33,18 @@ export default function AtendimentoHumano() {
               Em <b>Configurações → Automação</b> você escolhe o que cai aqui: reembolsos e casos sensíveis, e respostas
               abaixo da confiança mínima.
             </p>
+            {fila.length > 0 && (
+              <div className="row gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+                <button className={'chip' + (catEfetiva === 'todas' ? ' active' : '')} onClick={() => setCat('todas')}>
+                  Todos ({fila.length})
+                </button>
+                {(Object.keys(nomeCategoria) as Categoria[]).filter(c => porCategoria.has(c)).map(c => (
+                  <button key={c} className={'chip' + (catEfetiva === c ? ' active' : '')} onClick={() => setCat(c)}>
+                    {nomeCategoria[c]} ({porCategoria.get(c)})
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         }
         empty={
