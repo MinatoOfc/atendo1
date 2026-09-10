@@ -21,7 +21,7 @@ const PADROES_CONFIRMACAO = {
     // "confirmo o reembolso", "we confirm your refund", "bestätige die Rückerstattung"…
     /(confirm|bestätig|conferm|bevestig)\w*[^.!?\n]{0,60}(reembolso|estorno|refund|rückerstattung|erstattung|rimborso|remboursement|terugbetaling|devoluci[oó]n)/i,
     // "reembolso aprovado/processado/concluído", "refund has been issued", "Rückerstattung wird überwiesen"…
-    /(reembolso|estorno|refund|rückerstattung|erstattung|rimborso|remboursement|terugbetaling|devoluci[oó]n)[^.!?\n]{0,80}(aprovad|confirmad|processad|conclu[íi]d|realizad|efetuad|iniciad|issued|processed|approved|completed|initiated|bestätigt|veranlasst|erstattet|überwiesen|bearbeitet|elaborato|effettuato|confermato|approvato|effectué|traité|confirmé|approuvé|verwerkt|overgemaakt|bevestigd|aprobado|procesado)/i,
+    /(reembolso|estorno|refund|rückerstattung|erstattung|rimborso|remboursement|terugbetaling|devoluci[oó]n)[^.!?\n]{0,80}(aprovad|confirmad|processad|conclu[íi]d|realizad|efetuad|iniciad|em andamento|em curso|issued|processed|approved|completed|initiated|in progress|underway|bestätigt|veranlasst|erstattet|überwiesen|bearbeitet|in bearbeitung|elaborato|effettuato|confermato|approvato|in corso|effectué|traité|confirmé|approuvé|en cours|verwerkt|overgemaakt|bevestigd|onderweg|aprobado|procesado|en curso)/i,
     // "o dinheiro chegará à sua conta", "the money will be credited", "Geld wird überwiesen"…
     /(dinheiro|valor|money|amount|betrag|geld|montant|importo|bedrag|importe)[^.!?\n]{0,60}(chegar|creditad|estornad|na sua conta|em sua conta|zurückerstattet|überwiesen|gutgeschrieben|refunded|credited|accreditat|rimborsat|remboursé|crédité|teruggestort|bijgeschreven|acreditad|reembolsad)/i,
     // "o cancelamento está concluído", "cancellation completed", "Stornierung abgeschlossen"…
@@ -32,8 +32,20 @@ const PADROES_CONFIRMACAO = {
     /(troca|exchange|umtausch|scambio|[eé]change|omruil|ruil|cambio)[^.!?\n]{0,60}(confirmad|aprovad|conclu[íi]d|confirmed|approved|bestätigt|confermat|approvat|confirmé|approuvé|bevestigd|confirmado|aprobado)/i,
     // "confirmo a troca", "we confirm the exchange"…
     /(confirm|bestätig|conferm|bevestig)\w*[^.!?\n]{0,60}(troca|exchange|umtausch|scambio|[eé]change|omruil|cambio)/i,
+    // "sua troca já está em andamento", "exchange is in progress", "Umtausch ist in Bearbeitung"…
+    /(troca|exchange|umtausch|scambio|[eé]change|omruil)[^.!?\n]{0,80}(em andamento|em curso|j[áa] (?:est[áa]|foi)|iniciad|in bearbeitung|bereits veranlasst|unterwegs|in progress|underway|being processed|in corso|en cours|onderweg|en curso)/i,
   ],
 }
+
+// Promessas de EXECUTAR a troca ("enviaremos as novas peças gratuitamente",
+// "faremos a troca imediatamente"). Diferente da oferta autorizada, que é
+// pergunta ("Podemos enviar o tamanho certo — qual você prefere?"): por isso
+// só condenam fora de frases interrogativas, e só com contexto de reposição.
+const PROMESSA_ENVIO = /(enviaremos|vamos enviar|iremos enviar|mandaremos|vamos mandar|despacharemos|remeteremos|faremos a troca|vamos fazer a troca|realizaremos a troca|providenciaremos|j[áa] demos entrada|we will send|we'll send|we will ship|we'll ship|we are sending|wir senden|wir schicken|wir versenden|senden wir|schicken wir|versenden wir|werden wir[^.!?\n]{0,30}(?:senden|schicken|versenden)|invieremo|spediremo|nous (?:vous )?enverrons|nous (?:vous )?exp[ée]dierons|wij sturen|we sturen|le enviaremos)/i
+const CONTEXTO_REPOSICAO = /(gratuit|sem custo|sem qualquer custo|sem nenhum custo|kostenlos|kostenfrei|free of charge|for free|senza cost|gratis|troca|umtausch|exchange|scambio|[eé]change|ersatz|substitui|replac|nova[s]?\s+(?:camisa|pe[çc]a|polo|artigo|blusa)|neue[nrs]?\s+(?:hemd|polo|artikel|ware|gr[öo]ße)|new\s+(?:shirt|item|polo|size))/i
+
+// divide em frases para separar promessa ("Enviaremos…") de oferta ("…?")
+const emFrases = texto => String(texto).split(/(?<=[.!?…])\s+|\n+/)
 
 /** Detecta confirmação indevida na resposta gerada. Retorna 'reembolso' | 'troca' | null. */
 export function confirmacaoIndevida(texto) {
@@ -41,7 +53,10 @@ export function confirmacaoIndevida(texto) {
   if (!t) return null
   if (PADROES_CONFIRMACAO.reembolso.some(re => re.test(t))) return 'reembolso'
   if (PADROES_CONFIRMACAO.troca.some(re => re.test(t))) return 'troca'
-  return null
+  // promessa de executar a troca, ignorando as frases que são perguntas (ofertas)
+  const prometeu = emFrases(t).some(f =>
+    !f.trim().endsWith('?') && PROMESSA_ENVIO.test(f) && CONTEXTO_REPOSICAO.test(f))
+  return prometeu ? 'troca' : null
 }
 
 export function detectarIdiomaLocal(texto) {
