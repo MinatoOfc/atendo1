@@ -367,7 +367,7 @@ export default function Resumos() {
         })
       )}
       {reembolsos && (
-        <Modal title="Relatório de reembolsos" onClose={() => setReembolsos(null)}>
+        <Modal title="Relatório de reembolsos" onClose={() => setReembolsos(null)} fecharFora={false}>
           {reembolsos.erro ? (
             <p className="muted-sm" style={{ color: 'var(--red)', lineHeight: 1.6 }}>{reembolsos.erro}</p>
           ) : !reembolsos.total ? (
