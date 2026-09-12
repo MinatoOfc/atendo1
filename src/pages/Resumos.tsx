@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil, CornerUpLeft } from 'lucide-react'
+import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil, CornerUpLeft, Wallet } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
-import type { ResumoDiario, Ticket } from '../store'
-import { EmptyState } from '../components/Shared'
+import type { ResumoDiario, Ticket, RelatorioReembolsos } from '../store'
+import { EmptyState, Modal } from '../components/Shared'
 
 const formatarDia = (dia: string) => {
   const texto = new Date(dia + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
@@ -20,6 +20,9 @@ export default function Resumos() {
   const [copiado, setCopiado] = useState<string | null>(null)
   // edição inline da linha do relatório manual (o que o chefe vê no link)
   const [editando, setEditando] = useState<{ id: string; texto: string } | null>(null)
+  // relatório de reembolsos (todas as lojas), gerado sob demanda
+  const [reembolsos, setReembolsos] = useState<RelatorioReembolsos | null>(null)
+  const [gerandoReembolsos, setGerandoReembolsos] = useState(false)
 
   // loja selecionada na seta lateral: mostra só o recorte dela; "todas" = consolidado
   const lojaFiltro = s.lojaAtiva !== 'todas' ? s.lojaAtiva : null
@@ -184,6 +187,29 @@ export default function Resumos() {
         )}
       </div>
 
+      {/* Relatório de reembolsos: todas as lojas, com valor e motivo do cliente */}
+      <div className="card mb-16" style={{ padding: '14px 18px' }}>
+        <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <div className="row gap-8">
+            <Wallet size={15} color="var(--purple)" />
+            <b style={{ fontSize: 14 }}>Relatório de reembolsos</b>
+          </div>
+          <button className="btn btn-sm" disabled={gerandoReembolsos}
+            onClick={async () => {
+              setGerandoReembolsos(true)
+              const r = await s.relatorioReembolsos()
+              setGerandoReembolsos(false)
+              setReembolsos(r)
+            }}>
+            <Wallet size={13} /> {gerandoReembolsos ? 'Lendo as conversas…' : 'Gerar relatório'}
+          </button>
+        </div>
+        <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+          Junta todos os reembolsos que você marcou no relatório manual, de <b>todas as lojas</b>, com o valor pago do
+          pedido e o motivo que o cliente alegou. A IA lê as mensagens do cliente para achar o motivo (custa centavos).
+        </p>
+      </div>
+
       {/* Link público para o chefe acompanhar os relatórios manuais sem login */}
       <div className="card mb-16" style={{ padding: '14px 18px' }}>
         <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
@@ -339,6 +365,52 @@ export default function Resumos() {
             </div>
           )
         })
+      )}
+      {reembolsos && (
+        <Modal title="Relatório de reembolsos" onClose={() => setReembolsos(null)}>
+          {reembolsos.erro ? (
+            <p className="muted-sm" style={{ color: 'var(--red)', lineHeight: 1.6 }}>{reembolsos.erro}</p>
+          ) : !reembolsos.total ? (
+            <p className="muted-sm" style={{ lineHeight: 1.6 }}>
+              Nenhum reembolso no relatório manual ainda. Abra a conversa, clique em "Adicionar ao relatório" e escolha
+              REEMBOLSO 100% ou REEMBOLSO 60% — esses casos passam a aparecer aqui.
+            </p>
+          ) : (
+            <>
+              <div className="row spread mb-12" style={{ flexWrap: 'wrap', gap: 8 }}>
+                <span className="muted-sm">
+                  {reembolsos.total} reembolso{reembolsos.total !== 1 ? 's' : ''} em {reembolsos.grupos?.length} loja{reembolsos.grupos?.length !== 1 ? 's' : ''}
+                  {reembolsos.custoIA ? ` · custo da leitura: US$ ${reembolsos.custoIA.toFixed(4)}` : ''}
+                </span>
+                <button className="btn btn-sm" onClick={() => {
+                  navigator.clipboard.writeText(reembolsos.texto ?? '')
+                  setCopiado('reembolsos')
+                  window.setTimeout(() => setCopiado(x => (x === 'reembolsos' ? null : x)), 2500)
+                }}>
+                  {copiado === 'reembolsos' ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar tudo</>}
+                </button>
+              </div>
+              {reembolsos.aviso && (
+                <div className="banner card-soft mb-12" style={{ fontSize: 12.5 }}>{reembolsos.aviso}</div>
+              )}
+              <div style={{ display: 'grid', gap: 14 }}>
+                {reembolsos.grupos?.map(g => (
+                  <div key={g.lojaId}>
+                    <b style={{ fontSize: 13.5 }}>Loja {g.nome}</b>
+                    <div style={{ marginTop: 6, display: 'grid', gap: 3 }}>
+                      {g.itens.map(item => (
+                        <div key={item.ticketId} style={{ fontSize: 13, lineHeight: 1.5 }}>
+                          <b>{item.numero ? `#${item.numero}` : item.cliente}</b>
+                          <span className="muted-sm"> ({item.valorTexto})</span> — {item.motivo}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Modal>
       )}
     </div>
   )

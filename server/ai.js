@@ -418,3 +418,49 @@ export async function processarEmail(state, ticket) {
   const local = gerarRascunhoLocal(ticket, state.politicas, state.faqs, state.pedidos, assinatura, idiomaFixo)
   return { ...local, spam: false, geradoPorIA: false }
 }
+
+const SCHEMA_MOTIVOS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['motivos'],
+  properties: {
+    motivos: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Um motivo por caso, na MESMA ordem e quantidade dos casos numerados recebidos',
+    },
+  },
+}
+
+/**
+ * Lê as mensagens do CLIENTE de vários casos e extrai, para cada um, o motivo
+ * que ele alegou para pedir reembolso — para o relatório de reembolsos.
+ * Retorna { motivos, custo } ou { erro }.
+ */
+export async function extrairMotivosReembolso(casos) {
+  if (!client) return { erro: 'A leitura dos motivos usa o Claude — configure a ANTHROPIC_API_KEY primeiro.' }
+  try {
+    const conteudo = casos.map((c, i) => `[caso ${i + 1}]\n${String(c).slice(0, 2500)}`).join('\n\n')
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 1500,
+      system: [
+        'Você lê mensagens de clientes de uma loja e extrai, de cada caso, o MOTIVO que o cliente alegou para pedir reembolso ou devolução.',
+        'Devolva um motivo por caso, na mesma ordem e quantidade dos casos recebidos.',
+        'Cada motivo: português brasileiro, frase curta e direta (máximo 60 caracteres), começando com "Cliente".',
+        'Exemplos: "Cliente não gostou da qualidade do material" · "Cliente disse que a peça ficou pequena" · "Cliente não recebeu o pedido" · "Cliente recebeu produto errado" · "Cliente não gostou da cor" · "Cliente desistiu da compra".',
+        'Use APENAS o que o cliente alegou. Nunca invente, nunca use o que a loja ofereceu (60%, 100%, troca) como motivo.',
+        'Se o cliente não disse por que quer o dinheiro de volta (só pediu reembolso/devolução, só escolheu uma das opções oferecidas, ou só respondeu "ok"), devolva exatamente: não informado',
+      ].join('\n'),
+      messages: [{ role: 'user', content: conteudo }],
+      output_config: { format: { type: 'json_schema', schema: SCHEMA_MOTIVOS } },
+    })
+    if (resp.stop_reason === 'refusal') return { erro: 'O Claude recusou ler estas conversas.' }
+    const texto = resp.content.find(b => b.type === 'text')?.text
+    const r = texto ? JSON.parse(texto) : null
+    if (!r?.motivos?.length) return { erro: 'A IA não devolveu os motivos.' }
+    return { motivos: r.motivos.slice(0, casos.length), custo: custoDeUso(resp.usage) }
+  } catch (err) {
+    return { erro: traduzirErro(err) }
+  }
+}

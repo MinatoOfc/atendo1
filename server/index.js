@@ -6,9 +6,9 @@ import { fileURLToPath } from 'url'
 import { carregar, uid, estadoInicial, lojaPadrao } from './store.js'
 import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
-  classificarLocal, detectarIdiomaLocal, pareceSpam, confirmacaoIndevida,
+  classificarLocal, detectarIdiomaLocal, pareceSpam, confirmacaoIndevida, textoProprio,
 } from './logic.js'
-import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA } from './ai.js'
+import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso } from './ai.js'
 import { traduzirGratis } from './traducao.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
@@ -1565,6 +1565,130 @@ app.post('/api/relatorio-opcoes', (req, res) => {
   if (!opcoes) return res.status(400).json({ erro: 'opcoes deve ser uma lista de textos', state: visao(req.wsId) })
   req.estado.opcoesRelatorio = opcoes
   salvar(req.wsId); ok(req, res)
+})
+
+/* ---- Relatório de reembolsos (todas as lojas) ----
+   Junta o que o lojista marcou à mão no relatório manual e cujo texto fala em
+   reembolso, com o valor pago do pedido e o motivo que o CLIENTE alegou —
+   lido das mensagens dele (a IA lê em lotes; sem IA, cai numa regra local). */
+
+const EH_REEMBOLSO = /reembols|estorno|refund|r[üu]ckerstattung|erstattung|rimborso|remboursement|terugbetaling|devoluci[oó]n/i
+const SIMBOLOS_MOEDA = { EUR: '€', BRL: 'R$', USD: 'US$', GBP: '£' }
+
+// só as palavras do cliente (sem a citação do e-mail anterior) — é onde está o motivo
+function textoDoCliente(t) {
+  const partes = [t.assunto, textoProprio(t.corpo)]
+  for (const m of t.historico ?? []) {
+    if (m.autor !== 'atendo') partes.push(textoProprio(m.corpo))
+  }
+  return partes.filter(Boolean).join('\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 2500)
+}
+
+// reserva para quando a IA não estiver disponível — do mais específico ao mais genérico
+const MOTIVOS_LOCAIS = [
+  [/al[ée]rg|allerg/i, 'Cliente teve reação alérgica ao material'],
+  [/n[ãa]o (?:recebi|chegou|foi entregue)|nunca chegou|nicht (?:erhalten|angekommen)|nie angekommen|never (?:arrived|received)|not (?:received|arrived)|non (?:ho )?ricevut|non [èe] (?:mai )?arrivat|mai arrivat|jamais (?:re[çc]u|arriv[ée])|pas re[çc]u|niet ontvangen|nooit aangekomen|no (?:he )?recibid|nunca lleg/i, 'Cliente não recebeu o pedido'],
+  [/danific|defeito|defeituos|defekt|besch[äa]digt|damaged|difett|d[ée]faut|kapot|rasgad|furo|loch|mancha/i, 'Produto chegou com defeito'],
+  [/errad|trocad[oa] o (?:produto|item)|falsch|wrong (?:item|product|size)|sbagliat|erron|verkeerd/i, 'Cliente recebeu o produto errado'],
+  [/tamanho|size|gr[öo]ße|taille|taglia|maat|ficou pequen|ficou grand|muito pequen|muito grand|zu klein|zu gro[ßs]|too small|too (?:big|large)|n[ãa]o serviu|passt nicht|doesn'?t fit/i, 'Cliente disse que o tamanho não serviu'],
+  [/qualidade|material|qualit[äa]t|qualit[ée]|qualit[àa]|kwaliteit|tecido|stoff|fabric/i, 'Cliente não gostou da qualidade do material'],
+  [/demor|atras|sp[äa]t|versp[äa]t|delay|ritardo|retard|te laat/i, 'Cliente reclamou da demora na entrega'],
+  [/n[ãa]o gost|gef[äa]llt (?:mir )?nicht|don'?t like|didn'?t like|non mi piace|n'?aime pas|bevalt (?:me )?niet/i, 'Cliente não gostou do produto'],
+]
+const motivoLocal = texto => MOTIVOS_LOCAIS.find(([re]) => re.test(String(texto || '')))?.[1] ?? null
+
+const valorFormatado = (valor, moeda) => valor == null
+  ? 'valor não encontrado'
+  : `${Number(valor).toFixed(2).replace('.', ',')} ${SIMBOLOS_MOEDA[moeda] ?? moeda ?? ''}`.trim()
+
+app.post('/api/relatorio-reembolsos', async (req, res) => {
+  const estado = req.estado
+  const itens = []
+  for (const t of estado.tickets) {
+    if (!t.relatorioDia) continue
+    // mesma precedência que o lojista vê na linha do relatório
+    const linha = t.relatorioLinha || t.relatorioTexto || t.resolucao || t.resumoSituacao || ''
+    if (!EH_REEMBOLSO.test(linha)) continue
+    const numero = numeroDoTicketRelatorio(estado, t)
+    const so = n => String(n ?? '').replace(/\D/g, '')
+    const pedido = numero
+      ? (estado.pedidos ?? []).find(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1') && so(p.numero) === so(numero))
+      : null
+    itens.push({
+      ticketId: t.id,
+      lojaId: t.lojaId ?? 'loja1',
+      dia: t.relatorioDia,
+      numero: numero ? String(numero).replace('#', '') : null,
+      cliente: t.nome || t.de,
+      valor: pedido ? pedido.valor : null,
+      linha,
+      texto: textoDoCliente(t),
+    })
+  }
+  // por loja e, dentro dela, do mais recente para o mais antigo
+  itens.sort((a, b) => a.lojaId.localeCompare(b.lojaId) || (b.dia || '').localeCompare(a.dia || ''))
+
+  // Motivo alegado pelo cliente: a IA lê as mensagens dele em lotes
+  let custoIA = 0
+  let aviso = null
+  for (let i = 0; i < itens.length; i += 8) {
+    const lote = itens.slice(i, i + 8)
+    const r = await extrairMotivosReembolso(lote.map(x => x.texto || '(o cliente não escreveu nada)'))
+    if (r.erro) { aviso = `Os motivos vieram das palavras-chave das conversas — a IA não respondeu (${r.erro})`; break }
+    custoIA += r.custo || 0
+    // gasto rateado entre as lojas dos casos do lote
+    const porCaso = (r.custo || 0) / lote.length
+    for (const [j, item] of lote.entries()) {
+      registrarGasto(estado, item.lojaId, porCaso)
+      item.iaLeu = true
+      const m = String(r.motivos[j] ?? '').trim()
+      item.motivo = m && !/^n[ãa]o informado\.?$/i.test(m) ? m : null
+    }
+  }
+  if (custoIA) salvar(req.wsId)
+
+  for (const item of itens) {
+    // a regra local só entra quando a IA não leu o caso — se ela leu e disse
+    // que não há motivo, palavra-chave solta não pode inventar um
+    if (!item.motivo && !item.iaLeu) item.motivo = motivoLocal(item.texto)
+    if (!item.motivo) item.motivo = 'Cliente não informou o motivo'
+    delete item.texto
+    delete item.iaLeu
+  }
+
+  const grupos = []
+  for (const item of itens) {
+    const loja = estado.lojas.find(l => l.id === item.lojaId)
+    let g = grupos.find(x => x.lojaId === item.lojaId)
+    if (!g) {
+      g = { lojaId: item.lojaId, nome: loja?.nome ?? item.lojaId, moeda: loja?.moeda ?? 'EUR', itens: [] }
+      grupos.push(g)
+    }
+    item.valorTexto = valorFormatado(item.valor, g.moeda)
+    g.itens.push(item)
+  }
+
+  const hoje = diaLocal(Date.now())
+  const [ano, mes, dia] = hoje.split('-')
+  const linhas = [`RELATÓRIO DE REEMBOLSOS — ${dia}/${mes}/${ano}`,
+    `${itens.length} caso${itens.length === 1 ? '' : 's'} marcado${itens.length === 1 ? '' : 's'} no relatório manual`]
+  for (const g of grupos) {
+    linhas.push('', `Loja ${g.nome}`)
+    for (const item of g.itens) {
+      const quem = item.numero ? `#${item.numero}` : String(item.cliente || '').toUpperCase()
+      linhas.push(`${quem} (${item.valorTexto}) - ${item.motivo}`)
+    }
+  }
+
+  res.json({
+    ok: true,
+    total: itens.length,
+    grupos,
+    aviso,
+    custoIA: Math.round(custoIA * 1e6) / 1e6,
+    texto: linhas.join('\n'),
+    state: visao(req.wsId),
+  })
 })
 
 // Fecha o caso SEM enviar e-mail: sai do atendimento humano/aprovações como resolvido

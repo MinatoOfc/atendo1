@@ -136,6 +136,24 @@ export interface Loja {
   }
 }
 
+/** Relatório de reembolsos: o que o lojista marcou no relatório manual,
+ *  agrupado por loja, com valor do pedido e o motivo alegado pelo cliente. */
+export interface ItemReembolso {
+  ticketId: string; lojaId: string; dia: string
+  numero: string | null; cliente: string
+  valor: number | null; valorTexto: string
+  motivo: string; linha: string
+}
+export interface GrupoReembolso { lojaId: string; nome: string; moeda: string; itens: ItemReembolso[] }
+export interface RelatorioReembolsos {
+  erro?: string
+  total?: number
+  grupos?: GrupoReembolso[]
+  aviso?: string | null
+  custoIA?: number
+  texto?: string
+}
+
 export interface Usuario { id: string; nome: string; email: string }
 
 /** Preferências deste dispositivo (ficam no navegador, não no servidor). */
@@ -311,6 +329,7 @@ interface Store extends ServerState {
   traduzirRascunho: (id: string) => Promise<string | null>
   gerarTexto: (id: string, instrucao: string) => Promise<{ erro?: string; texto?: string }>
   gerarEmail: (dados: { lojaId?: string; para: string; assunto?: string; instrucao?: string; idioma?: string }) => Promise<{ erro?: string; texto?: string }>
+  relatorioReembolsos: () => Promise<RelatorioReembolsos>
   traduzirTexto: (texto: string) => Promise<{ erro?: string; traducao?: string }>
 }
 
@@ -630,6 +649,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const r = (await api('/traduzir-texto', 'POST', { texto })) as { erro?: string; traducao?: string }
       if (r.erro) return { erro: r.erro }
       return { traducao: r.traducao }
+    },
+    relatorioReembolsos: async () => {
+      const r = (await api('/relatorio-reembolsos', 'POST')) as RelatorioReembolsos & { state?: ServerState }
+      if (r.erro) return { erro: r.erro }
+      aplicar(r)
+      return r
     },
     gerarEmail: async dados => {
       const r = (await api('/gerar-email', 'POST', dados)) as { erro?: string; texto?: string }
