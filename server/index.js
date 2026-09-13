@@ -241,6 +241,8 @@ function visao(wsId) {
     opcoesInstrucao: estado.opcoesInstrucao ?? [],
     relatorioLink: estado.tokenRelatorio ? `/r/${wsId}/${estado.tokenRelatorio}` : null,
     linkMostraHoje: estado.linkMostraHoje !== false,
+    reembolsosLink: estado.tokenRelatorio && estado.relatorioReembolsos ? `/r/${wsId}/${estado.tokenRelatorio}/reembolsos` : null,
+    reembolsosEm: estado.relatorioReembolsos?.geradoEm ?? null,
     bancoErro: erroBanco,
     hojeChave: diaLocal(Date.now()),
     pedidos: estado.pedidos,
@@ -1104,6 +1106,71 @@ document.addEventListener('change', function (e) {
   }
 })
 
+/* Página pública do relatório de reembolsos: o mesmo link do chefe, com
+   /reembolsos no fim. Mostra o último relatório gerado (nada é recalculado
+   aqui — quem gera é o lojista, no botão do Resumo diário). */
+app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
+  try {
+    const { wsId, token } = req.params
+    let estado = workspaces.get(wsId)
+    if (!estado) {
+      try {
+        const carregado = await db.carregarWorkspace(wsId)
+        if (carregado) { workspaces.set(wsId, carregado); estado = carregado }
+      } catch { /* cai no 404 abaixo */ }
+    }
+    const a = Buffer.from(String(token || ''))
+    const b = Buffer.from(String(estado?.tokenRelatorio || ''))
+    if (!estado || !b.length || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(404).send('Link inválido ou revogado.')
+    }
+
+    const rel = estado.relatorioReembolsos
+    const quando = rel?.geradoEm
+      ? new Date(rel.geradoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+      : null
+    const blocos = (rel?.grupos ?? []).map(g => {
+      const linhas = g.itens.map(i => {
+        const quem = i.numero ? `#${i.numero}` : String(i.cliente || '').toUpperCase()
+        return `<div class="linha"><b>${escaparHtml(quem)}</b>`
+          + `<span class="valor">${escaparHtml(i.valorTexto)}</span>`
+          + `<span class="motivo">${escaparHtml(i.motivo)}</span></div>`
+      }).join('')
+      return `<section class="grupo"><h2>Loja ${escaparHtml(g.nome)} <span class="cnt">${g.itens.length}</span></h2>${linhas}</section>`
+    }).join('')
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.send(`<!doctype html>
+<html lang="pt-BR"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Relatório de reembolsos</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #101010; color: #d7d7d7; font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; padding: 32px 18px 60px; }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 19px; margin-bottom: 4px; }
+  .sub { color: #8a8a8a; font-size: 12.5px; margin-bottom: 26px; }
+  .grupo { background: #191919; border: 1px solid #2a2a2a; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  .grupo h2 { font-size: 14.5px; margin-bottom: 10px; letter-spacing: 0.02em; display: flex; align-items: center; gap: 8px; }
+  .cnt { background: #262626; color: #9b9b9b; font-size: 11.5px; border-radius: 20px; padding: 1px 8px; font-weight: 400; }
+  .linha { font-size: 13.5px; line-height: 1.7; display: flex; gap: 8px; flex-wrap: wrap; padding: 2px 0; }
+  .linha b { min-width: 62px; }
+  .valor { color: #9b9b9b; min-width: 92px; }
+  .motivo { flex: 1; min-width: 200px; }
+  .vazio { color: #8a8a8a; font-size: 13.5px; }
+</style></head>
+<body><main>
+<h1>Relatório de reembolsos</h1>
+<p class="sub">${quando ? `${rel.total} caso${rel.total === 1 ? '' : 's'} · gerado em ${quando}` : 'Nenhum relatório gerado ainda.'}</p>
+${blocos || '<p class="vazio">Nenhum reembolso marcado no relatório manual.</p>'}
+</main></body></html>`)
+  } catch (err) {
+    console.error('[relatorio-reembolsos-link]', err)
+    res.status(500).send('Erro ao montar a página. Tente de novo.')
+  }
+})
+
 // O dono marca um caso do relatório como processado (mesmo token da página)
 app.post('/r/:wsId/:token/processar', async (req, res) => {
   try {
@@ -1680,10 +1747,24 @@ app.post('/api/relatorio-reembolsos', async (req, res) => {
     }
   }
 
+  // Guarda o resultado e garante o link de acompanhamento — mesmo token do
+  // relatório do chefe: revogar lá revoga aqui também.
+  estado.relatorioReembolsos = {
+    geradoEm: new Date().toISOString(),
+    total: itens.length,
+    grupos: grupos.map(g => ({
+      lojaId: g.lojaId, nome: g.nome, moeda: g.moeda,
+      itens: g.itens.map(i => ({ numero: i.numero, cliente: i.cliente, valorTexto: i.valorTexto, motivo: i.motivo })),
+    })),
+  }
+  estado.tokenRelatorio = estado.tokenRelatorio || crypto.randomBytes(16).toString('hex')
+  salvar(req.wsId)
+
   res.json({
     ok: true,
     total: itens.length,
     grupos,
+    link: `/r/${req.wsId}/${estado.tokenRelatorio}/reembolsos`,
     aviso,
     custoIA: Math.round(custoIA * 1e6) / 1e6,
     texto: linhas.join('\n'),

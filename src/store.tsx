@@ -149,6 +149,8 @@ export interface RelatorioReembolsos {
   erro?: string
   total?: number
   grupos?: GrupoReembolso[]
+  /** link público de acompanhamento deste relatório */
+  link?: string
   aviso?: string | null
   custoIA?: number
   texto?: string
@@ -206,6 +208,10 @@ interface ServerState {
   opcoesInstrucao?: string[]
   /** caminho do link público do relatório manual (ex.: /r/ws-x/token) ou null */
   relatorioLink?: string | null
+  /** link público do último relatório de reembolsos gerado (mesmo token) */
+  reembolsosLink?: string | null
+  /** quando esse relatório foi gerado (ISO) */
+  reembolsosEm?: string | null
   /** false = o dia de hoje só aparece no link depois da meia-noite */
   linkMostraHoje?: boolean
   /** mensagem de erro quando o banco NÃO está gravando (banner vermelho) */

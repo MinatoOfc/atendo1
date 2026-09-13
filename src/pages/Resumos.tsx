@@ -200,6 +200,8 @@ export default function Resumos() {
               const r = await s.relatorioReembolsos()
               setGerandoReembolsos(false)
               setReembolsos(r)
+              // abre o link de acompanhamento assim que o relatório fica pronto
+              if (r.link) window.open(r.link, '_blank', 'noopener')
             }}>
             <Wallet size={13} /> {gerandoReembolsos ? 'Lendo as conversas…' : 'Gerar relatório'}
           </button>
@@ -207,7 +209,31 @@ export default function Resumos() {
         <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
           Junta todos os reembolsos que você marcou no relatório manual, de <b>todas as lojas</b>, com o valor pago do
           pedido e o motivo que o cliente alegou. A IA lê as mensagens do cliente para achar o motivo (custa centavos).
+          Ao gerar, abre um link de acompanhamento — fica salvo e pode ser compartilhado sem login.
         </p>
+        {s.reembolsosLink && (
+          <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+            <input readOnly value={window.location.origin + s.reembolsosLink}
+              onFocus={e => e.currentTarget.select()}
+              style={{ flex: 1, minWidth: 220, border: '1px solid var(--border)', borderRadius: 8, padding: '7px 11px', fontSize: 12.5, background: 'var(--panel-soft)', color: 'var(--text-2)' }} />
+            <button className="btn btn-sm" onClick={() => {
+              navigator.clipboard.writeText(window.location.origin + s.reembolsosLink!)
+              setCopiado('link-reembolsos')
+              window.setTimeout(() => setCopiado(x => (x === 'link-reembolsos' ? null : x)), 2500)
+            }}>
+              {copiado === 'link-reembolsos' ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar link</>}
+            </button>
+            <button className="btn btn-sm" onClick={() => window.open(s.reembolsosLink!, '_blank', 'noopener')}>
+              <Link2 size={13} /> Abrir
+            </button>
+          </div>
+        )}
+        {s.reembolsosEm && (
+          <p className="muted-sm" style={{ marginTop: 6 }}>
+            Último relatório gerado em {new Date(s.reembolsosEm).toLocaleString('pt-BR')} — o link mostra esse resultado
+            até você gerar de novo. Revogar o link de acompanhamento abaixo também derruba este.
+          </p>
+        )}
       </div>
 
       {/* Link público para o chefe acompanhar os relatórios manuais sem login */}
@@ -382,13 +408,24 @@ export default function Resumos() {
                   {reembolsos.total} reembolso{reembolsos.total !== 1 ? 's' : ''} em {reembolsos.grupos?.length} loja{reembolsos.grupos?.length !== 1 ? 's' : ''}
                   {reembolsos.custoIA ? ` · custo da leitura: US$ ${reembolsos.custoIA.toFixed(4)}` : ''}
                 </span>
-                <button className="btn btn-sm" onClick={() => {
-                  navigator.clipboard.writeText(reembolsos.texto ?? '')
-                  setCopiado('reembolsos')
-                  window.setTimeout(() => setCopiado(x => (x === 'reembolsos' ? null : x)), 2500)
-                }}>
-                  {copiado === 'reembolsos' ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar tudo</>}
-                </button>
+                <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+                  {reembolsos.link && (
+                    <button className="btn btn-sm" onClick={() => {
+                      navigator.clipboard.writeText(window.location.origin + reembolsos.link)
+                      setCopiado('link-modal')
+                      window.setTimeout(() => setCopiado(x => (x === 'link-modal' ? null : x)), 2500)
+                    }}>
+                      {copiado === 'link-modal' ? <><Check size={13} /> Link copiado</> : <><Link2 size={13} /> Copiar link</>}
+                    </button>
+                  )}
+                  <button className="btn btn-sm" onClick={() => {
+                    navigator.clipboard.writeText(reembolsos.texto ?? '')
+                    setCopiado('reembolsos')
+                    window.setTimeout(() => setCopiado(x => (x === 'reembolsos' ? null : x)), 2500)
+                  }}>
+                    {copiado === 'reembolsos' ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar tudo</>}
+                  </button>
+                </div>
               </div>
               {reembolsos.aviso && (
                 <div className="banner card-soft mb-12" style={{ fontSize: 12.5 }}>{reembolsos.aviso}</div>
