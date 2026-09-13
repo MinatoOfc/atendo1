@@ -419,6 +419,21 @@ export async function processarEmail(state, ticket) {
   return { ...local, spam: false, geradoPorIA: false }
 }
 
+/** Categorias fixas dos motivos — alimentam os gráficos do relatório. */
+export const CATEGORIAS_REEMBOLSO = {
+  qualidade: 'Qualidade/material ruim',
+  tamanho: 'Tamanho não serviu',
+  defeito: 'Chegou com defeito',
+  nao_recebeu: 'Não recebeu o pedido',
+  atraso: 'Demora na entrega',
+  errado: 'Recebeu produto errado',
+  nao_gostou: 'Não gostou (cor, modelo)',
+  alergia: 'Reação alérgica',
+  arrependimento: 'Desistiu da compra',
+  outro: 'Outro motivo',
+  nao_informado: 'Não informou o motivo',
+}
+
 const SCHEMA_MOTIVOS = {
   type: 'object',
   additionalProperties: false,
@@ -426,8 +441,16 @@ const SCHEMA_MOTIVOS = {
   properties: {
     motivos: {
       type: 'array',
-      items: { type: 'string' },
-      description: 'Um motivo por caso, na MESMA ordem e quantidade dos casos numerados recebidos',
+      description: 'Um item por caso, na MESMA ordem e quantidade dos casos numerados recebidos',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['motivo', 'categoria'],
+        properties: {
+          motivo: { type: 'string', description: 'Frase curta em português começando com "Cliente"; exatamente "não informado" quando ele não disse o motivo' },
+          categoria: { type: 'string', enum: Object.keys(CATEGORIAS_REEMBOLSO), description: 'A gaveta que melhor descreve o motivo; nao_informado quando o cliente não disse' },
+        },
+      },
     },
   },
 }
@@ -450,7 +473,10 @@ export async function extrairMotivosReembolso(casos) {
         'Cada motivo: português brasileiro, frase curta e direta (máximo 60 caracteres), começando com "Cliente".',
         'Exemplos: "Cliente não gostou da qualidade do material" · "Cliente disse que a peça ficou pequena" · "Cliente não recebeu o pedido" · "Cliente recebeu produto errado" · "Cliente não gostou da cor" · "Cliente desistiu da compra".',
         'Use APENAS o que o cliente alegou. Nunca invente, nunca use o que a loja ofereceu (60%, 100%, troca) como motivo.',
-        'Se o cliente não disse por que quer o dinheiro de volta (só pediu reembolso/devolução, só escolheu uma das opções oferecidas, ou só respondeu "ok"), devolva exatamente: não informado',
+        'Se o cliente não disse por que quer o dinheiro de volta (só pediu reembolso/devolução, só escolheu uma das opções oferecidas, ou só respondeu "ok"), o motivo é exatamente: não informado',
+        '',
+        'Classifique também cada caso numa categoria, usando SOMENTE estes códigos:',
+        ...Object.entries(CATEGORIAS_REEMBOLSO).map(([k, v]) => `- ${k}: ${v}`),
       ].join('\n'),
       messages: [{ role: 'user', content: conteudo }],
       output_config: { format: { type: 'json_schema', schema: SCHEMA_MOTIVOS } },
@@ -459,7 +485,11 @@ export async function extrairMotivosReembolso(casos) {
     const texto = resp.content.find(b => b.type === 'text')?.text
     const r = texto ? JSON.parse(texto) : null
     if (!r?.motivos?.length) return { erro: 'A IA não devolveu os motivos.' }
-    return { motivos: r.motivos.slice(0, casos.length), custo: custoDeUso(resp.usage) }
+    const motivos = r.motivos.slice(0, casos.length).map(m => ({
+      motivo: String(m?.motivo ?? '').trim(),
+      categoria: CATEGORIAS_REEMBOLSO[m?.categoria] ? m.categoria : 'outro',
+    }))
+    return { motivos, custo: custoDeUso(resp.usage) }
   } catch (err) {
     return { erro: traduzirErro(err) }
   }

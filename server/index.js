@@ -8,7 +8,7 @@ import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam, confirmacaoIndevida, textoProprio,
 } from './logic.js'
-import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso } from './ai.js'
+import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso, CATEGORIAS_REEMBOLSO } from './ai.js'
 import { traduzirGratis } from './traducao.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
@@ -1107,8 +1107,9 @@ document.addEventListener('change', function (e) {
 })
 
 /* Página pública do relatório de reembolsos: o mesmo link do chefe, com
-   /reembolsos no fim. Mostra o último relatório gerado (nada é recalculado
-   aqui — quem gera é o lojista, no botão do Resumo diário). */
+   /reembolsos no fim. Os motivos são os que a IA já leu (guardados em cada
+   conversa); valores, porcentagens e gráficos são recalculados na hora, então
+   a página nunca mostra número velho — e abrir não custa IA nenhuma. */
 app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
   try {
     const { wsId, token } = req.params
@@ -1125,19 +1126,56 @@ app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
       return res.status(404).send('Link inválido ou revogado.')
     }
 
-    const rel = estado.relatorioReembolsos
-    const quando = rel?.geradoEm
-      ? new Date(rel.geradoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+    const itens = casosDeReembolso(estado)
+    const porId = new Map(estado.tickets.map(t => [t.id, t]))
+    for (const item of itens) {
+      const guardado = porId.get(item.ticketId)?.motivoReembolso
+      item.motivo = guardado?.motivo ?? 'Motivo ainda não lido'
+      item.categoria = guardado
+        ? (guardado.categoria || categoriaDaFrase(guardado.motivo))
+        : 'nao_informado'
+    }
+    const r = resumoDeReembolsos(estado, itens)
+    const dinheiro = v => escaparHtml(valorFormatado(v, r.moeda))
+    const pct = n => (r.total ? Math.round((n / r.total) * 1000) / 10 : 0)
+    const quando = estado.relatorioReembolsos?.geradoEm
+      ? new Date(estado.relatorioReembolsos.geradoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
       : null
-    const blocos = (rel?.grupos ?? []).map(g => {
+
+    const maiorCat = Math.max(1, ...r.porCategoria.map(c => c.quantidade))
+    const barrasMotivo = r.porCategoria.map(c => `
+      <div class="barra">
+        <div class="rot">${escaparHtml(c.rotulo)}</div>
+        <div class="trilho"><div class="preench" style="width:${Math.round((c.quantidade / maiorCat) * 100)}%"></div></div>
+        <div class="num"><b>${c.quantidade}</b> <span>${pct(c.quantidade)}%</span></div>
+        <div class="val">${dinheiro(c.reembolsado)}</div>
+      </div>`).join('')
+
+    const maiorLoja = Math.max(1, ...r.grupos.map(g => g.itens.length))
+    const barrasLoja = r.grupos.map(g => `
+      <div class="barra">
+        <div class="rot">${escaparHtml(g.nome)}</div>
+        <div class="trilho"><div class="preench loja" style="width:${Math.round((g.itens.length / maiorLoja) * 100)}%"></div></div>
+        <div class="num"><b>${g.itens.length}</b> <span>${pct(g.itens.length)}%</span></div>
+        <div class="val">${dinheiro(g.reembolsado)}</div>
+      </div>`).join('')
+
+    const listas = r.grupos.map(g => {
       const linhas = g.itens.map(i => {
         const quem = i.numero ? `#${i.numero}` : String(i.cliente || '').toUpperCase()
         return `<div class="linha"><b>${escaparHtml(quem)}</b>`
-          + `<span class="valor">${escaparHtml(i.valorTexto)}</span>`
+          + `<span class="valor">${escaparHtml(i.valorTexto)}${i.percentual ? ` · ${i.percentual}%` : ''}</span>`
           + `<span class="motivo">${escaparHtml(i.motivo)}</span></div>`
       }).join('')
-      return `<section class="grupo"><h2>Loja ${escaparHtml(g.nome)} <span class="cnt">${g.itens.length}</span></h2>${linhas}</section>`
+      return `<section class="grupo"><h2>Loja ${escaparHtml(g.nome)} <span class="cnt">${g.itens.length}</span>`
+        + `<span class="dinheiro">${dinheiro(g.reembolsado)}</span></h2>${linhas}</section>`
     }).join('')
+
+    const media = r.total ? r.reembolsado / r.total : 0
+    const rodape = [
+      r.semPercentual ? `${r.semPercentual} caso${r.semPercentual === 1 ? '' : 's'} sem a porcentagem escrita na linha do relatório` : '',
+      r.semValor ? `${r.semValor} sem o pedido localizado` : '',
+    ].filter(Boolean).join(' · ')
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(`<!doctype html>
@@ -1148,22 +1186,53 @@ app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #101010; color: #d7d7d7; font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; padding: 32px 18px 60px; }
-  main { max-width: 680px; margin: 0 auto; }
+  main { max-width: 720px; margin: 0 auto; }
   h1 { font-size: 19px; margin-bottom: 4px; }
-  .sub { color: #8a8a8a; font-size: 12.5px; margin-bottom: 26px; }
+  .sub { color: #8a8a8a; font-size: 12.5px; margin-bottom: 22px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .kpi { background: #191919; border: 1px solid #2a2a2a; border-radius: 12px; padding: 14px 16px; }
+  .kpi .rotulo { color: #8a8a8a; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kpi .valor { font-size: 20px; margin-top: 4px; color: #fff; }
+  .kpi .pe { color: #8a8a8a; font-size: 11.5px; margin-top: 3px; }
   .grupo { background: #191919; border: 1px solid #2a2a2a; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
-  .grupo h2 { font-size: 14.5px; margin-bottom: 10px; letter-spacing: 0.02em; display: flex; align-items: center; gap: 8px; }
+  .grupo h2 { font-size: 14.5px; margin-bottom: 12px; letter-spacing: 0.02em; display: flex; align-items: center; gap: 8px; }
   .cnt { background: #262626; color: #9b9b9b; font-size: 11.5px; border-radius: 20px; padding: 1px 8px; font-weight: 400; }
+  .dinheiro { margin-left: auto; color: #6ec08a; font-size: 12.5px; font-weight: 400; }
+  .barra { display: grid; grid-template-columns: 168px 1fr 84px 92px; gap: 10px; align-items: center; padding: 5px 0; font-size: 12.5px; }
+  .barra .rot { color: #c9c9c9; }
+  .trilho { background: #232323; border-radius: 6px; height: 14px; overflow: hidden; }
+  .preench { background: linear-gradient(90deg, #6b6ff5, #8d7bf0); height: 100%; border-radius: 6px; }
+  .preench.loja { background: linear-gradient(90deg, #3f8f6a, #5bb98b); }
+  .barra .num b { color: #fff; }
+  .barra .num span { color: #8a8a8a; }
+  .barra .val { color: #8a8a8a; text-align: right; }
   .linha { font-size: 13.5px; line-height: 1.7; display: flex; gap: 8px; flex-wrap: wrap; padding: 2px 0; }
   .linha b { min-width: 62px; }
-  .valor { color: #9b9b9b; min-width: 92px; }
+  .valor { color: #9b9b9b; min-width: 118px; }
   .motivo { flex: 1; min-width: 200px; }
   .vazio { color: #8a8a8a; font-size: 13.5px; }
+  .nota { color: #7a7a7a; font-size: 11.5px; margin-top: 10px; }
+  @media (max-width: 560px) {
+    .barra { grid-template-columns: 1fr 70px; grid-template-areas: "rot num" "trilho trilho" "val val"; }
+    .barra .rot { grid-area: rot } .barra .num { grid-area: num; text-align: right }
+    .trilho { grid-area: trilho } .barra .val { grid-area: val; text-align: left }
+  }
 </style></head>
 <body><main>
 <h1>Relatório de reembolsos</h1>
-<p class="sub">${quando ? `${rel.total} caso${rel.total === 1 ? '' : 's'} · gerado em ${quando}` : 'Nenhum relatório gerado ainda.'}</p>
-${blocos || '<p class="vazio">Nenhum reembolso marcado no relatório manual.</p>'}
+<p class="sub">${r.total} caso${r.total === 1 ? '' : 's'} marcado${r.total === 1 ? '' : 's'} no relatório manual${quando ? ` · motivos lidos em ${escaparHtml(quando)}` : ''}</p>
+${r.total ? `
+<div class="cards">
+  <div class="kpi"><div class="rotulo">Total reembolsado</div><div class="valor">${dinheiro(r.reembolsado)}</div><div class="pe">média de ${dinheiro(media)} por caso</div></div>
+  <div class="kpi"><div class="rotulo">Reembolsos</div><div class="valor">${r.total}</div><div class="pe">${r.cem} de 100% · ${r.sessenta} de 60%</div></div>
+  <div class="kpi"><div class="rotulo">Maior motivo</div><div class="valor" style="font-size:15px">${escaparHtml(r.porCategoria[0]?.rotulo ?? '—')}</div><div class="pe">${r.porCategoria[0] ? `${r.porCategoria[0].quantidade} casos · ${pct(r.porCategoria[0].quantidade)}%` : ''}</div></div>
+</div>
+
+<section class="grupo"><h2>Por que pediram reembolso</h2>${barrasMotivo}</section>
+<section class="grupo"><h2>Por loja</h2>${barrasLoja}</section>
+${listas}
+${rodape ? `<p class="nota">${escaparHtml(rodape)} — esses casos entram na contagem, mas não no valor reembolsado.</p>` : ''}
+` : '<p class="vazio">Nenhum reembolso marcado no relatório manual.</p>'}
 </main></body></html>`)
   } catch (err) {
     console.error('[relatorio-reembolsos-link]', err)
@@ -1636,8 +1705,9 @@ app.post('/api/relatorio-opcoes', (req, res) => {
 
 /* ---- Relatório de reembolsos (todas as lojas) ----
    Junta o que o lojista marcou à mão no relatório manual e cujo texto fala em
-   reembolso, com o valor pago do pedido e o motivo que o CLIENTE alegou —
-   lido das mensagens dele (a IA lê em lotes; sem IA, cai numa regra local). */
+   reembolso, com o valor pago do pedido, a porcentagem devolvida e o motivo que
+   o CLIENTE alegou. O motivo fica guardado na própria conversa (t.motivoReembolso):
+   gerar de novo só relê quem ainda não tem motivo ou recebeu mensagem nova. */
 
 const EH_REEMBOLSO = /reembols|estorno|refund|r[üu]ckerstattung|erstattung|rimborso|remboursement|terugbetaling|devoluci[oó]n/i
 const SIMBOLOS_MOEDA = { EUR: '€', BRL: 'R$', USD: 'US$', GBP: '£' }
@@ -1653,23 +1723,36 @@ function textoDoCliente(t) {
 
 // reserva para quando a IA não estiver disponível — do mais específico ao mais genérico
 const MOTIVOS_LOCAIS = [
-  [/al[ée]rg|allerg/i, 'Cliente teve reação alérgica ao material'],
-  [/n[ãa]o (?:recebi|chegou|foi entregue)|nunca chegou|nicht (?:erhalten|angekommen)|nie angekommen|never (?:arrived|received)|not (?:received|arrived)|non (?:ho )?ricevut|non [èe] (?:mai )?arrivat|mai arrivat|jamais (?:re[çc]u|arriv[ée])|pas re[çc]u|niet ontvangen|nooit aangekomen|no (?:he )?recibid|nunca lleg/i, 'Cliente não recebeu o pedido'],
-  [/danific|defeito|defeituos|defekt|besch[äa]digt|damaged|difett|d[ée]faut|kapot|rasgad|furo|loch|mancha/i, 'Produto chegou com defeito'],
-  [/errad|trocad[oa] o (?:produto|item)|falsch|wrong (?:item|product|size)|sbagliat|erron|verkeerd/i, 'Cliente recebeu o produto errado'],
-  [/tamanho|size|gr[öo]ße|taille|taglia|maat|ficou pequen|ficou grand|muito pequen|muito grand|zu klein|zu gro[ßs]|too small|too (?:big|large)|n[ãa]o serviu|passt nicht|doesn'?t fit/i, 'Cliente disse que o tamanho não serviu'],
-  [/qualidade|material|qualit[äa]t|qualit[ée]|qualit[àa]|kwaliteit|tecido|stoff|fabric/i, 'Cliente não gostou da qualidade do material'],
-  [/demor|atras|sp[äa]t|versp[äa]t|delay|ritardo|retard|te laat/i, 'Cliente reclamou da demora na entrega'],
-  [/n[ãa]o gost|gef[äa]llt (?:mir )?nicht|don'?t like|didn'?t like|non mi piace|n'?aime pas|bevalt (?:me )?niet/i, 'Cliente não gostou do produto'],
+  [/al[ée]rg|allerg/i, 'alergia', 'Cliente teve reação alérgica ao material'],
+  [/n[ãa]o (?:recebi|chegou|foi entregue)|nunca chegou|nicht (?:erhalten|angekommen)|nie angekommen|never (?:arrived|received)|not (?:received|arrived)|non (?:ho )?ricevut|non [èe] (?:mai )?arrivat|mai arrivat|jamais (?:re[çc]u|arriv[ée])|pas re[çc]u|niet ontvangen|nooit aangekomen|no (?:he )?recibid|nunca lleg/i, 'nao_recebeu', 'Cliente não recebeu o pedido'],
+  [/danific|defeito|defeituos|defekt|besch[äa]digt|damaged|difett|d[ée]faut|kapot|rasgad|furo|loch|mancha/i, 'defeito', 'Produto chegou com defeito'],
+  [/errad|falsch|wrong (?:item|product|size)|sbagliat|erron|verkeerd/i, 'errado', 'Cliente recebeu o produto errado'],
+  [/tamanho|size|gr[öo]ße|taille|taglia|maat|ficou pequen|ficou grand|muito pequen|muito grand|zu klein|zu gro[ßs]|too small|too (?:big|large)|n[ãa]o serviu|passt nicht|doesn'?t fit/i, 'tamanho', 'Cliente disse que o tamanho não serviu'],
+  [/qualidade|material|qualit[äa]t|qualit[ée]|qualit[àa]|kwaliteit|tecido|stoff|fabric/i, 'qualidade', 'Cliente não gostou da qualidade do material'],
+  [/demor|atras|sp[äa]t|versp[äa]t|delay|ritardo|retard|te laat/i, 'atraso', 'Cliente reclamou da demora na entrega'],
+  [/n[ãa]o gost|gef[äa]llt (?:mir )?nicht|don'?t like|didn'?t like|non mi piace|n'?aime pas|bevalt (?:me )?niet/i, 'nao_gostou', 'Cliente não gostou do produto'],
 ]
-const motivoLocal = texto => MOTIVOS_LOCAIS.find(([re]) => re.test(String(texto || '')))?.[1] ?? null
+function motivoLocal(texto) {
+  const achado = MOTIVOS_LOCAIS.find(([re]) => re.test(String(texto || '')))
+  return achado ? { motivo: achado[2], categoria: achado[1] } : null
+}
+
+// motivo já guardado sem categoria (formato antigo): encaixa pela própria frase
+const categoriaDaFrase = frase => motivoLocal(frase)?.categoria ?? 'outro'
 
 const valorFormatado = (valor, moeda) => valor == null
   ? 'valor não encontrado'
   : `${Number(valor).toFixed(2).replace('.', ',')} ${SIMBOLOS_MOEDA[moeda] ?? moeda ?? ''}`.trim()
 
-app.post('/api/relatorio-reembolsos', async (req, res) => {
-  const estado = req.estado
+/** Data da última mensagem do cliente — para saber se o motivo guardado envelheceu. */
+function ultimaMensagemDoCliente(t) {
+  const datas = [t.data, ...(t.historico ?? []).filter(m => m.autor !== 'atendo').map(m => m.data)]
+  return datas.filter(Boolean).sort().pop() ?? null
+}
+
+/** Os casos de reembolso do relatório manual, com pedido, valor e % devolvida. */
+function casosDeReembolso(estado) {
+  const so = n => String(n ?? '').replace(/\D/g, '')
   const itens = []
   for (const t of estado.tickets) {
     if (!t.relatorioDia) continue
@@ -1677,10 +1760,11 @@ app.post('/api/relatorio-reembolsos', async (req, res) => {
     const linha = t.relatorioLinha || t.relatorioTexto || t.resolucao || t.resumoSituacao || ''
     if (!EH_REEMBOLSO.test(linha)) continue
     const numero = numeroDoTicketRelatorio(estado, t)
-    const so = n => String(n ?? '').replace(/\D/g, '')
     const pedido = numero
       ? (estado.pedidos ?? []).find(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1') && so(p.numero) === so(numero))
       : null
+    // quanto foi devolvido: a porcentagem sai da própria linha do relatório
+    const pct = /100\s*%/.test(linha) ? 100 : /60\s*%/.test(linha) ? 60 : null
     itens.push({
       ticketId: t.id,
       lojaId: t.lojaId ?? 'loja1',
@@ -1688,86 +1772,150 @@ app.post('/api/relatorio-reembolsos', async (req, res) => {
       numero: numero ? String(numero).replace('#', '') : null,
       cliente: t.nome || t.de,
       valor: pedido ? pedido.valor : null,
+      percentual: pct,
+      reembolsado: pedido && pct ? Math.round(pedido.valor * pct) / 100 : null,
       linha,
-      texto: textoDoCliente(t),
     })
   }
-  // por loja e, dentro dela, do mais recente para o mais antigo
-  itens.sort((a, b) => a.lojaId.localeCompare(b.lojaId) || (b.dia || '').localeCompare(a.dia || ''))
+  return itens.sort((a, b) => a.lojaId.localeCompare(b.lojaId) || (b.dia || '').localeCompare(a.dia || ''))
+}
 
-  // Motivo alegado pelo cliente: a IA lê as mensagens dele em lotes
-  let custoIA = 0
-  let aviso = null
-  for (let i = 0; i < itens.length; i += 8) {
-    const lote = itens.slice(i, i + 8)
-    const r = await extrairMotivosReembolso(lote.map(x => x.texto || '(o cliente não escreveu nada)'))
-    if (r.erro) { aviso = `Os motivos vieram das palavras-chave das conversas — a IA não respondeu (${r.erro})`; break }
-    custoIA += r.custo || 0
-    // gasto rateado entre as lojas dos casos do lote
-    const porCaso = (r.custo || 0) / lote.length
-    for (const [j, item] of lote.entries()) {
-      registrarGasto(estado, item.lojaId, porCaso)
-      item.iaLeu = true
-      const m = String(r.motivos[j] ?? '').trim()
-      item.motivo = m && !/^n[ãa]o informado\.?$/i.test(m) ? m : null
-    }
-  }
-  if (custoIA) salvar(req.wsId)
-
-  for (const item of itens) {
-    // a regra local só entra quando a IA não leu o caso — se ela leu e disse
-    // que não há motivo, palavra-chave solta não pode inventar um
-    if (!item.motivo && !item.iaLeu) item.motivo = motivoLocal(item.texto)
-    if (!item.motivo) item.motivo = 'Cliente não informou o motivo'
-    delete item.texto
-    delete item.iaLeu
-  }
-
+/** Agrupa por loja e devolve também os totais que alimentam os gráficos. */
+function resumoDeReembolsos(estado, itens) {
   const grupos = []
   for (const item of itens) {
     const loja = estado.lojas.find(l => l.id === item.lojaId)
     let g = grupos.find(x => x.lojaId === item.lojaId)
     if (!g) {
-      g = { lojaId: item.lojaId, nome: loja?.nome ?? item.lojaId, moeda: loja?.moeda ?? 'EUR', itens: [] }
+      g = { lojaId: item.lojaId, nome: loja?.nome ?? item.lojaId, moeda: loja?.moeda ?? 'EUR', itens: [], reembolsado: 0 }
       grupos.push(g)
     }
     item.valorTexto = valorFormatado(item.valor, g.moeda)
+    item.reembolsadoTexto = valorFormatado(item.reembolsado, g.moeda)
+    g.reembolsado += item.reembolsado ?? 0
     g.itens.push(item)
   }
+  grupos.sort((a, b) => b.itens.length - a.itens.length)
 
-  const hoje = diaLocal(Date.now())
-  const [ano, mes, dia] = hoje.split('-')
+  const moeda = grupos[0]?.moeda ?? 'EUR'
+  const porCategoria = []
+  for (const [chave, rotulo] of Object.entries(CATEGORIAS_REEMBOLSO)) {
+    const doGrupo = itens.filter(i => (i.categoria ?? 'nao_informado') === chave)
+    if (!doGrupo.length) continue
+    porCategoria.push({
+      chave, rotulo,
+      quantidade: doGrupo.length,
+      reembolsado: doGrupo.reduce((soma, i) => soma + (i.reembolsado ?? 0), 0),
+    })
+  }
+  porCategoria.sort((a, b) => b.quantidade - a.quantidade)
+
+  return {
+    grupos,
+    moeda,
+    total: itens.length,
+    reembolsado: Math.round(itens.reduce((s, i) => s + (i.reembolsado ?? 0), 0) * 100) / 100,
+    cem: itens.filter(i => i.percentual === 100).length,
+    sessenta: itens.filter(i => i.percentual === 60).length,
+    semPercentual: itens.filter(i => !i.percentual).length,
+    semValor: itens.filter(i => i.valor == null).length,
+    porCategoria,
+  }
+}
+
+/** Texto para copiar, no formato de anotação do lojista. */
+function textoDeReembolsos(resumo) {
+  const [ano, mes, dia] = diaLocal(Date.now()).split('-')
   const linhas = [`RELATÓRIO DE REEMBOLSOS — ${dia}/${mes}/${ano}`,
-    `${itens.length} caso${itens.length === 1 ? '' : 's'} marcado${itens.length === 1 ? '' : 's'} no relatório manual`]
-  for (const g of grupos) {
+    `${resumo.total} caso${resumo.total === 1 ? '' : 's'} · ${valorFormatado(resumo.reembolsado, resumo.moeda)} reembolsados`]
+  for (const g of resumo.grupos) {
     linhas.push('', `Loja ${g.nome}`)
     for (const item of g.itens) {
       const quem = item.numero ? `#${item.numero}` : String(item.cliente || '').toUpperCase()
       linhas.push(`${quem} (${item.valorTexto}) - ${item.motivo}`)
     }
   }
+  return linhas.join('\n')
+}
 
-  // Guarda o resultado e garante o link de acompanhamento — mesmo token do
-  // relatório do chefe: revogar lá revoga aqui também.
-  estado.relatorioReembolsos = {
-    geradoEm: new Date().toISOString(),
-    total: itens.length,
-    grupos: grupos.map(g => ({
-      lojaId: g.lojaId, nome: g.nome, moeda: g.moeda,
-      itens: g.itens.map(i => ({ numero: i.numero, cliente: i.cliente, valorTexto: i.valorTexto, motivo: i.motivo })),
-    })),
+app.post('/api/relatorio-reembolsos', async (req, res) => {
+  const estado = req.estado
+  const itens = casosDeReembolso(estado)
+  const porId = new Map(estado.tickets.map(t => [t.id, t]))
+
+  // Reaproveita o motivo já lido; só relê quem não tem ou recebeu mensagem nova
+  const pendentes = []
+  for (const item of itens) {
+    const t = porId.get(item.ticketId)
+    const guardado = t?.motivoReembolso
+    const novaMensagem = guardado?.em && (ultimaMensagemDoCliente(t) ?? '') > guardado.em
+    // motivo deduzido por palavra-chave (guardado.local) é provisório: quando a
+    // IA voltar, ela relê esse caso e substitui pela leitura de verdade
+    if (guardado?.motivo && !guardado.local && !novaMensagem) {
+      item.motivo = guardado.motivo
+      item.categoria = guardado.categoria || categoriaDaFrase(guardado.motivo)
+    } else {
+      pendentes.push(item)
+    }
   }
+
+  let custoIA = 0
+  let aviso = null
+  for (let i = 0; i < pendentes.length; i += 8) {
+    const lote = pendentes.slice(i, i + 8)
+    const textos = lote.map(x => textoDoCliente(porId.get(x.ticketId) ?? {}) || '(o cliente não escreveu nada)')
+    const r = await extrairMotivosReembolso(textos)
+    if (r.erro) { aviso = `Os motivos que faltavam vieram das palavras-chave das conversas — a IA não respondeu (${r.erro})`; break }
+    custoIA += r.custo || 0
+    const porCaso = (r.custo || 0) / lote.length
+    for (const [j, item] of lote.entries()) {
+      registrarGasto(estado, item.lojaId, porCaso)
+      const bruto = r.motivos[j] ?? {}
+      const semMotivo = !bruto.motivo || /^n[ãa]o informado\.?$/i.test(bruto.motivo)
+      item.motivo = semMotivo ? 'Cliente não informou o motivo' : bruto.motivo
+      item.categoria = semMotivo ? 'nao_informado' : (bruto.categoria || 'outro')
+      item.lido = true
+    }
+  }
+
+  for (const item of itens) {
+    if (!item.motivo) {
+      // a regra local só entra quando a IA não leu o caso — se ela leu e disse
+      // que não há motivo, palavra-chave solta não pode inventar um
+      const local = motivoLocal(textoDoCliente(porId.get(item.ticketId) ?? {}))
+      item.motivo = local?.motivo ?? 'Cliente não informou o motivo'
+      item.categoria = local?.categoria ?? 'nao_informado'
+      item.provisorio = true
+    }
+    // guarda na conversa: a próxima geração não paga por este caso de novo
+    const t = porId.get(item.ticketId)
+    if (t) {
+      t.motivoReembolso = {
+        motivo: item.motivo, categoria: item.categoria, em: new Date().toISOString(),
+        ...(item.provisorio ? { local: true } : {}),
+      }
+    }
+    delete item.lido
+    delete item.provisorio
+  }
+
+  const resumo = resumoDeReembolsos(estado, itens)
+  // Guarda só a marca de geração — a página pública recalcula com os dados de
+  // agora, então valores e motivos nunca ficam desencontrados.
+  estado.relatorioReembolsos = { geradoEm: new Date().toISOString(), total: itens.length }
   estado.tokenRelatorio = estado.tokenRelatorio || crypto.randomBytes(16).toString('hex')
   salvar(req.wsId)
 
   res.json({
     ok: true,
-    total: itens.length,
-    grupos,
+    total: resumo.total,
+    grupos: resumo.grupos,
+    resumo: { reembolsado: resumo.reembolsado, moeda: resumo.moeda, porCategoria: resumo.porCategoria, cem: resumo.cem, sessenta: resumo.sessenta },
+    lidosAgora: pendentes.length,
     link: `/r/${req.wsId}/${estado.tokenRelatorio}/reembolsos`,
     aviso,
     custoIA: Math.round(custoIA * 1e6) / 1e6,
-    texto: linhas.join('\n'),
+    texto: textoDeReembolsos(resumo),
     state: visao(req.wsId),
   })
 })

@@ -151,6 +151,10 @@ export interface RelatorioReembolsos {
   grupos?: GrupoReembolso[]
   /** link público de acompanhamento deste relatório */
   link?: string
+  /** totais que alimentam os gráficos da página pública */
+  resumo?: { reembolsado: number; moeda: string; cem: number; sessenta: number; porCategoria: { chave: string; rotulo: string; quantidade: number; reembolsado: number }[] }
+  /** quantos motivos precisaram ser lidos agora (os demais vieram do cache) */
+  lidosAgora?: number
   aviso?: string | null
   custoIA?: number
   texto?: string

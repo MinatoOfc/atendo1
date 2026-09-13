@@ -406,7 +406,9 @@ export default function Resumos() {
               <div className="row spread mb-12" style={{ flexWrap: 'wrap', gap: 8 }}>
                 <span className="muted-sm">
                   {reembolsos.total} reembolso{reembolsos.total !== 1 ? 's' : ''} em {reembolsos.grupos?.length} loja{reembolsos.grupos?.length !== 1 ? 's' : ''}
-                  {reembolsos.custoIA ? ` · custo da leitura: US$ ${reembolsos.custoIA.toFixed(4)}` : ''}
+                  {reembolsos.resumo ? ` · ${reembolsos.resumo.reembolsado.toFixed(2).replace('.', ',')} ${reembolsos.resumo.moeda === 'EUR' ? '€' : reembolsos.resumo.moeda} reembolsados` : ''}
+                  {reembolsos.lidosAgora ? ` · ${reembolsos.lidosAgora} motivo${reembolsos.lidosAgora !== 1 ? 's' : ''} lido${reembolsos.lidosAgora !== 1 ? 's' : ''} agora` : ' · nenhuma leitura nova'}
+                  {reembolsos.custoIA ? ` (US$ ${reembolsos.custoIA.toFixed(4)})` : ''}
                 </span>
                 <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
                   {reembolsos.link && (
