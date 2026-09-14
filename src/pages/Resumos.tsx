@@ -208,8 +208,9 @@ export default function Resumos() {
         </div>
         <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
           Junta todos os reembolsos que você marcou no relatório manual, de <b>todas as lojas</b>, com o valor pago do
-          pedido e o motivo que o cliente alegou. A IA lê as mensagens do cliente para achar o motivo (custa centavos).
-          Ao gerar, abre um link de acompanhamento — fica salvo e pode ser compartilhado sem login.
+          pedido e o motivo que o cliente alegou. Ao gerar, abre um link de acompanhamento com gráficos e filtro de
+          período (hoje, 7 dias, 30 dias, tudo) — sem login, e <b>atualizado sozinho toda semana</b>. A IA só lê os
+          reembolsos novos: os motivos já lidos ficam guardados e não são cobrados de novo.
         </p>
         {s.reembolsosLink && (
           <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>

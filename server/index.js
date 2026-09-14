@@ -1108,8 +1108,9 @@ document.addEventListener('change', function (e) {
 
 /* Página pública do relatório de reembolsos: o mesmo link do chefe, com
    /reembolsos no fim. Os motivos são os que a IA já leu (guardados em cada
-   conversa); valores, porcentagens e gráficos são recalculados na hora, então
-   a página nunca mostra número velho — e abrir não custa IA nenhuma. */
+   conversa, atualizados sozinhos toda semana); valores, porcentagens e gráficos
+   são recalculados na hora — abrir a página não custa IA nenhuma.
+   ?p=hoje | 7 | 30 | tudo escolhe o período. */
 app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
   try {
     const { wsId, token } = req.params
@@ -1126,21 +1127,36 @@ app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
       return res.status(404).send('Link inválido ou revogado.')
     }
 
-    const itens = casosDeReembolso(estado)
+    const todos = casosDeReembolso(estado)
     const porId = new Map(estado.tickets.map(t => [t.id, t]))
-    for (const item of itens) {
+    for (const item of todos) {
       const guardado = porId.get(item.ticketId)?.motivoReembolso
       item.motivo = guardado?.motivo ?? 'Motivo ainda não lido'
       item.categoria = guardado
         ? (guardado.categoria || categoriaDaFrase(guardado.motivo))
         : 'nao_informado'
     }
+
+    // período: o corte é pelo dia em que o caso entrou no relatório manual
+    const RECUOS = { hoje: 0, 7: 6, 30: 29 }
+    const periodo = Object.prototype.hasOwnProperty.call(RECUOS, req.query.p) ? String(req.query.p) : 'tudo'
+    const corteDe = chave => (chave === 'tudo' ? null : diaLocal(Date.now() - RECUOS[chave] * 864e5))
+    const noPeriodo = (lista, chave) => {
+      const corte = corteDe(chave)
+      return corte ? lista.filter(i => (i.dia ?? '') >= corte) : lista
+    }
+    const itens = noPeriodo(todos, periodo)
+
     const r = resumoDeReembolsos(estado, itens)
     const dinheiro = v => escaparHtml(valorFormatado(v, r.moeda))
     const pct = n => (r.total ? Math.round((n / r.total) * 1000) / 10 : 0)
     const quando = estado.relatorioReembolsos?.geradoEm
       ? new Date(estado.relatorioReembolsos.geradoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
       : null
+
+    const abas = [['hoje', 'Hoje'], ['7', '7 dias'], ['30', '30 dias'], ['tudo', 'Tudo']]
+      .map(([chave, rotulo]) => `<a class="aba${periodo === chave ? ' on' : ''}" href="?p=${chave}">`
+        + `${rotulo} <span>${noPeriodo(todos, chave).length}</span></a>`).join('')
 
     const maiorCat = Math.max(1, ...r.porCategoria.map(c => c.quantidade))
     const barrasMotivo = r.porCategoria.map(c => `
@@ -1172,6 +1188,7 @@ app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
     }).join('')
 
     const media = r.total ? r.reembolsado / r.total : 0
+    const rotuloPeriodo = { hoje: 'hoje', 7: 'nos últimos 7 dias', 30: 'nos últimos 30 dias', tudo: 'no total' }[periodo]
     const rodape = [
       r.semPercentual ? `${r.semPercentual} caso${r.semPercentual === 1 ? '' : 's'} sem a porcentagem escrita na linha do relatório` : '',
       r.semValor ? `${r.semValor} sem o pedido localizado` : '',
@@ -1188,7 +1205,13 @@ app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
   body { background: #101010; color: #d7d7d7; font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; padding: 32px 18px 60px; }
   main { max-width: 720px; margin: 0 auto; }
   h1 { font-size: 19px; margin-bottom: 4px; }
-  .sub { color: #8a8a8a; font-size: 12.5px; margin-bottom: 22px; }
+  .sub { color: #8a8a8a; font-size: 12.5px; margin-bottom: 16px; }
+  .abas { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+  .aba { color: #b7b7b7; background: #191919; border: 1px solid #2a2a2a; border-radius: 20px;
+         padding: 6px 13px; font-size: 12.5px; text-decoration: none; display: inline-flex; gap: 6px; align-items: center; }
+  .aba span { color: #7a7a7a; font-size: 11.5px; }
+  .aba.on { background: #2b2c55; border-color: #4a4ca8; color: #fff; }
+  .aba.on span { color: #b9baf0; }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
   .kpi { background: #191919; border: 1px solid #2a2a2a; border-radius: 12px; padding: 14px 16px; }
   .kpi .rotulo { color: #8a8a8a; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -1220,7 +1243,8 @@ app.get('/r/:wsId/:token/reembolsos', async (req, res) => {
 </style></head>
 <body><main>
 <h1>Relatório de reembolsos</h1>
-<p class="sub">${r.total} caso${r.total === 1 ? '' : 's'} marcado${r.total === 1 ? '' : 's'} no relatório manual${quando ? ` · motivos lidos em ${escaparHtml(quando)}` : ''}</p>
+<p class="sub">${r.total} caso${r.total === 1 ? '' : 's'} ${escaparHtml(rotuloPeriodo)}${quando ? ` · motivos atualizados em ${escaparHtml(quando)}` : ''}</p>
+<nav class="abas">${abas}</nav>
 ${r.total ? `
 <div class="cards">
   <div class="kpi"><div class="rotulo">Total reembolsado</div><div class="valor">${dinheiro(r.reembolsado)}</div><div class="pe">média de ${dinheiro(media)} por caso</div></div>
@@ -1232,7 +1256,7 @@ ${r.total ? `
 <section class="grupo"><h2>Por loja</h2>${barrasLoja}</section>
 ${listas}
 ${rodape ? `<p class="nota">${escaparHtml(rodape)} — esses casos entram na contagem, mas não no valor reembolsado.</p>` : ''}
-` : '<p class="vazio">Nenhum reembolso marcado no relatório manual.</p>'}
+` : '<p class="vazio">Nenhum reembolso neste período.</p>'}
 </main></body></html>`)
   } catch (err) {
     console.error('[relatorio-reembolsos-link]', err)
@@ -1838,12 +1862,11 @@ function textoDeReembolsos(resumo) {
   return linhas.join('\n')
 }
 
-app.post('/api/relatorio-reembolsos', async (req, res) => {
-  const estado = req.estado
-  const itens = casosDeReembolso(estado)
+/** Lê pela IA os motivos que ainda não estão guardados na conversa e grava em
+ *  cada uma. Reaproveita o que já foi lido: só paga pelos casos novos, pelos
+ *  que receberam mensagem nova do cliente e pelos motivos provisórios. */
+async function lerMotivosFaltantes(estado, itens, limite = Infinity) {
   const porId = new Map(estado.tickets.map(t => [t.id, t]))
-
-  // Reaproveita o motivo já lido; só relê quem não tem ou recebeu mensagem nova
   const pendentes = []
   for (const item of itens) {
     const t = porId.get(item.ticketId)
@@ -1859,10 +1882,11 @@ app.post('/api/relatorio-reembolsos', async (req, res) => {
     }
   }
 
+  const aLer = pendentes.slice(0, limite)
   let custoIA = 0
   let aviso = null
-  for (let i = 0; i < pendentes.length; i += 8) {
-    const lote = pendentes.slice(i, i + 8)
+  for (let i = 0; i < aLer.length; i += 8) {
+    const lote = aLer.slice(i, i + 8)
     const textos = lote.map(x => textoDoCliente(porId.get(x.ticketId) ?? {}) || '(o cliente não escreveu nada)')
     const r = await extrairMotivosReembolso(textos)
     if (r.erro) { aviso = `Os motivos que faltavam vieram das palavras-chave das conversas — a IA não respondeu (${r.erro})`; break }
@@ -1874,7 +1898,6 @@ app.post('/api/relatorio-reembolsos', async (req, res) => {
       const semMotivo = !bruto.motivo || /^n[ãa]o informado\.?$/i.test(bruto.motivo)
       item.motivo = semMotivo ? 'Cliente não informou o motivo' : bruto.motivo
       item.categoria = semMotivo ? 'nao_informado' : (bruto.categoria || 'outro')
-      item.lido = true
     }
   }
 
@@ -1895,11 +1918,18 @@ app.post('/api/relatorio-reembolsos', async (req, res) => {
         ...(item.provisorio ? { local: true } : {}),
       }
     }
-    delete item.lido
     delete item.provisorio
   }
 
+  return { lidos: aLer.length, custoIA: Math.round(custoIA * 1e6) / 1e6, aviso }
+}
+
+app.post('/api/relatorio-reembolsos', async (req, res) => {
+  const estado = req.estado
+  const itens = casosDeReembolso(estado)
+  const leitura = await lerMotivosFaltantes(estado, itens)
   const resumo = resumoDeReembolsos(estado, itens)
+
   // Guarda só a marca de geração — a página pública recalcula com os dados de
   // agora, então valores e motivos nunca ficam desencontrados.
   estado.relatorioReembolsos = { geradoEm: new Date().toISOString(), total: itens.length }
@@ -1911,14 +1941,45 @@ app.post('/api/relatorio-reembolsos', async (req, res) => {
     total: resumo.total,
     grupos: resumo.grupos,
     resumo: { reembolsado: resumo.reembolsado, moeda: resumo.moeda, porCategoria: resumo.porCategoria, cem: resumo.cem, sessenta: resumo.sessenta },
-    lidosAgora: pendentes.length,
+    lidosAgora: leitura.lidos,
     link: `/r/${req.wsId}/${estado.tokenRelatorio}/reembolsos`,
-    aviso,
-    custoIA: Math.round(custoIA * 1e6) / 1e6,
+    aviso: leitura.aviso,
+    custoIA: leitura.custoIA,
     texto: textoDeReembolsos(resumo),
     state: visao(req.wsId),
   })
 })
+
+/* Atualização automática semanal: uma vez por semana o atendo lê sozinho os
+   motivos dos reembolsos novos, para o link de acompanhamento nunca ficar
+   desatualizado. Só roda em quem já gerou o relatório ao menos uma vez, e o
+   teto por rodada evita surpresa de custo. */
+const SEMANA_MS = 7 * 864e5
+const TETO_LEITURA_AUTO = 300
+
+async function atualizarReembolsosSemanal() {
+  if (!iaConfigurada) return
+  for (const [wsId, estado] of workspaces) {
+    // quem nunca gerou o relatório não paga leitura nenhuma
+    if (!estado.relatorioReembolsos) continue
+    const ultima = estado.reembolsosAutoEm ? new Date(estado.reembolsosAutoEm).getTime() : 0
+    if (Date.now() - ultima < SEMANA_MS) continue
+    try {
+      const itens = casosDeReembolso(estado)
+      const leitura = await lerMotivosFaltantes(estado, itens, TETO_LEITURA_AUTO)
+      estado.reembolsosAutoEm = new Date().toISOString()
+      estado.relatorioReembolsos = { geradoEm: new Date().toISOString(), total: itens.length }
+      salvar(wsId)
+      if (leitura.lidos) {
+        console.log(`[reembolsos ${wsId}] atualização semanal: ${leitura.lidos} motivo(s) lido(s), US$ ${leitura.custoIA.toFixed(4)}`)
+      }
+    } catch (err) {
+      console.error(`[reembolsos ${wsId}] atualização semanal falhou:`, err.message)
+    }
+  }
+}
+setInterval(atualizarReembolsosSemanal, 6 * 3600_000)
+setTimeout(atualizarReembolsosSemanal, 120_000)
 
 // Fecha o caso SEM enviar e-mail: sai do atendimento humano/aprovações como resolvido
 app.post('/api/tickets/:id/resolver', (req, res) => {
