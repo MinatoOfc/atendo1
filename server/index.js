@@ -1307,6 +1307,44 @@ app.get('/api/anexos/:id', async (req, res) => {
   }
 })
 
+/* Backup: baixa o workspace inteiro num arquivo JSON. Credenciais ficam de
+   fora (só funcionam com o segredo deste servidor, então não servem em outro
+   lugar e não devem viajar). Imagens anexadas continuam no banco — para elas,
+   use o snapshot do Postgres no Railway. */
+app.get('/api/exportar', (req, res) => {
+  const copia = JSON.parse(JSON.stringify(req.estado))
+  for (const l of copia.lojas ?? []) {
+    if (l.emailCfg) l.emailCfg = { ...l.emailCfg, passCifrada: '(removida do backup)' }
+    if (l.shopify?.token) l.shopify = { ...l.shopify, token: '(removido do backup)' }
+  }
+  const anexos = copia.tickets.reduce((n, t) => n + (t.anexos?.length ?? 0)
+    + (t.historico ?? []).reduce((m, h) => m + (h.anexos?.length ?? 0), 0), 0)
+  const arquivo = {
+    atendo: 'backup-workspace',
+    versao: 1,
+    wsId: req.wsId,
+    geradoEm: new Date().toISOString(),
+    resumo: {
+      tickets: copia.tickets.length,
+      pedidos: (copia.pedidos ?? []).length,
+      produtos: (copia.produtos ?? []).length,
+      lojas: (copia.lojas ?? []).length,
+      politicas: (copia.politicas ?? []).length,
+      faqs: (copia.faqs ?? []).length,
+      comportamentos: (copia.comportamentos ?? []).length,
+      resumosDiarios: (copia.resumosDiarios ?? []).length,
+      linhasNoRelatorio: copia.tickets.filter(t => t.relatorioDia).length,
+      imagensReferenciadas: anexos,
+    },
+    aviso: 'Senhas de e-mail e tokens da Shopify não vão no backup — reconecte as integrações ao restaurar. As imagens anexadas ficam na tabela de anexos do banco.',
+    estado: copia,
+  }
+  const dia = diaLocal(Date.now())
+  res.setHeader('Content-Disposition', `attachment; filename="atendo-backup-${req.wsId}-${dia}.json"`)
+  res.setHeader('Content-Type', 'application/json; charset=utf-8')
+  res.send(JSON.stringify(arquivo, null, 2))
+})
+
 app.get('/api/state', (req, res) => ok(req, res))
 
 // Força a checagem dos resumos (a automática roda a cada 10 min de qualquer forma)

@@ -983,9 +983,19 @@ export default function Configuracoes() {
       <div className="card mb-16" style={{ padding: 16 }}>
         <div className="row gap-8 mb-8"><Database size={14} color="var(--purple)" /><b style={{ fontSize: 13.5 }}>Dados</b></div>
         <p className="muted-sm mb-12">Tickets, políticas e FAQs ficam salvos no seu workspace, no banco de dados.</p>
-        <button className="btn btn-danger" onClick={() => { if (confirm('Apagar todos os tickets, políticas, FAQs e conexões deste workspace?')) s.limparTudo() }}>
-          Apagar todos os dados
-        </button>
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+          <a className="btn" href="/api/exportar" download>
+            <Database size={13} /> Baixar backup completo
+          </a>
+          <button className="btn btn-danger" onClick={() => { if (confirm('Apagar todos os tickets, políticas, FAQs e conexões deste workspace?')) s.limparTudo() }}>
+            Apagar todos os dados
+          </button>
+        </div>
+        <p className="muted-sm" style={{ marginTop: 10, lineHeight: 1.5 }}>
+          O backup traz conversas, pedidos, produtos, políticas, FAQs, comportamentos, resumos e relatórios num arquivo
+          JSON. Senhas de e-mail e tokens da Shopify ficam de fora de propósito — só funcionam neste servidor. As
+          imagens anexadas continuam no banco: para elas, use um snapshot do Postgres no Railway.
+        </p>
       </div>
       <button className="btn" onClick={() => { if (confirm('Sair da sua conta?')) s.sair() }}>
         <LogOut size={13} /> Sair da conta
