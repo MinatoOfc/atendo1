@@ -115,8 +115,19 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
   const faltam = PERCENTUAIS_CUPOM.filter(p => p !== '10' && !cupons[p]?.trim())
   const numero = (v: string, atual: number) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : atual }
 
+  const emNovo = loja?.modoAtendimento === 'novo'
   return (
     <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+      <div className="row gap-8 mb-10">
+        <b style={{ fontSize: 13.5 }}>{emNovo ? 'Ajustes do modo novo' : 'Preparação do modo novo'}</b>
+        {!emNovo && <span className="tag tag-outro">a loja segue no clássico até você trocar o seletor acima</span>}
+      </div>
+      {!emNovo && (
+        <p className="muted-sm mb-12" style={{ lineHeight: 1.5 }}>
+          Preencha os cupons e o prazo <b>antes</b> de trocar para o modo novo — assim, no momento em que trocar, a
+          loja já entra pronta. Nada aqui muda o atendimento enquanto o seletor estiver em "Clássico".
+        </p>
+      )}
       <div className="row gap-10 mb-12" style={{ flexWrap: 'wrap' }}>
         <button className={'switch' + (loja?.novoEnvioAutomatico ? ' on' : '')}
           onClick={() => s.atualizarLoja(lojaId, { novoEnvioAutomatico: !loja?.novoEnvioAutomatico })}
@@ -637,7 +648,7 @@ export default function Configuracoes() {
           etapa (troca → cupom → 25% → 40% → 50% → 60% → 70% → você), uma etapa por resposta, sem saltos, e todo
           aceite vem para você decidir. Cada loja escolhe o seu — dá para testar o novo em uma loja só.
         </p>
-        {lojaSel?.modoAtendimento === 'novo' && <ConfigModoNovo lojaId={lojaId} />}
+        <ConfigModoNovo lojaId={lojaId} />
       </div>
       <div className="field mb-16" style={{ maxWidth: 340 }}>
         <label>Modelo de IA desta loja</label>
