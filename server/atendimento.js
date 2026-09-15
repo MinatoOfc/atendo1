@@ -12,6 +12,8 @@
  * Os dois convivem: cada loja escolhe o seu (loja.modoAtendimento).
  */
 
+import { confirmacaoIndevida } from './logic.js'
+
 export const MODOS_ATENDIMENTO = {
   classico: 'Clássico — o atendimento atual',
   novo: 'Novo — motor de etapas',
@@ -95,10 +97,10 @@ export const FASES = {
   },
   def_troca: {
     jornada: 'defeito_errado', titulo: 'Troca gratuita do produto com defeito',
-    oferta: { tipo: 'troca', pct: null, cupom: null, prazo: '4 a 11 dias', semDevolucao: true },
+    oferta: { tipo: 'troca', pct: null, cupom: null, prazo: '5 a 11 dias', semDevolucao: true },
     requer: ['produtos', 'foto'],
     aoAceitar: 'endereco', aoRecusar: 'troca_20',
-    instrucao: 'Agradeça a foto, peça desculpas e ofereça a troca GRATUITA do produto, sem necessidade de devolver o recebido, com frete expresso de 4 a 11 dias. Pergunte se aceita.',
+    instrucao: 'Agradeça a foto, peça desculpas e ofereça a troca GRATUITA do produto, sem necessidade de devolver o recebido, com frete expresso de 5 a 11 dias. Pergunte se aceita.',
   },
 
   /* ---- qualidade / não gostou (4.3) ---- */
@@ -244,12 +246,14 @@ export function novoEstado() {
     motivo: null,
     ajusteTamanho: null,
     fotoSolicitada: false,
-    fotoRecebida: false,
+    fotoRecebida: false,     // chegou uma imagem (ainda não é prova de nada)
+    fotoValidada: null,      // true só depois de o lojista confirmar que mostra o defeito
     ofertaAtual: null,
     ofertaEnviadaEm: null,
     aguardando: null,
     acaoAceita: null,
-    enderecoConfirmado: null,
+    enderecoInformado: null, // o que o cliente já escreveu (pode estar incompleto)
+    enderecoConfirmado: null, // só depois de validado por componentes
     historicoEtapas: [],
     transicaoPendente: null,
     proximaAposColeta: null,
@@ -414,7 +418,7 @@ export function faltaPara(faseId, an) {
     if (r === 'produtos' && !an.produtosAfetados.length) faltando.push('produtos')
     if (r === 'motivo' && !an.motivo) faltando.push('motivo')
     if (r === 'ajuste' && !(an.ajusteTamanho && Object.keys(an.ajusteTamanho).length)) faltando.push('ajuste')
-    if (r === 'foto' && !an.fotoRecebida) faltando.push('foto')
+    if (r === 'foto' && an.fotoValidada !== true) faltando.push('foto')
   }
   return faltando
 }
@@ -451,7 +455,8 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
     for (const a of cls.ajustes) if (a?.produto && (a.ajuste === 'pequeno' || a.ajuste === 'grande')) an.ajusteTamanho[a.produto] = a.ajuste
   }
   if (temFoto) an.fotoRecebida = true
-  if (cls.endereco) an.enderecoConfirmado = cls.endereco
+  // endereço se acumula entre mensagens; só vira "confirmado" depois de validado
+  if (cls.endereco) an.enderecoInformado = [an.enderecoInformado, cls.endereco].filter(Boolean).join('\n')
 
   // --- já está com o dono: não mexe ---
   if (an.aguardando === 'humano') { saida.humano = 'Caso já está com você — o cliente escreveu de novo'; return saida }
@@ -461,13 +466,16 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
 
   // --- aguardando endereço (aceite de troca/reenvio) ---
   if (an.etapa === 'endereco') {
-    if (an.enderecoConfirmado) {
+    const v = validarEndereco(an.enderecoInformado)
+    if (v.ok) {
+      an.enderecoConfirmado = v.normalizado
       an.aguardando = 'humano'
       saida.aceite = { fase: an.acaoAceita, oferta: FASES[an.acaoAceita]?.oferta ?? null }
       saida.humano = `Cliente aceitou "${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}" e confirmou o endereço — aprovar e despachar`
       return saida
     }
-    saida.fase = 'endereco'; return saida
+    // incompleto: pede só o que falta, e não encaminha o aceite ainda
+    saida.fase = 'endereco'; saida.faltando = v.faltando; return saida
   }
 
   // --- triagem: primeira vez (ou ainda esperando o número do pedido) ---
@@ -534,10 +542,30 @@ function irPara(saida, alvo, agora) {
     saida.aceite = { fase: alvo, oferta: FASES[alvo].oferta }
     return saida
   }
+  if (alvo === 'endereco') {
+    // o cliente pode ter mandado o endereço antes de aceitar: se já está completo, não pergunta de novo
+    const v = validarEndereco(an.enderecoInformado)
+    if (v.ok) {
+      an.enderecoConfirmado = v.normalizado
+      an.aguardando = 'humano'
+      saida.aceite = { fase: an.acaoAceita, oferta: FASES[an.acaoAceita]?.oferta ?? null }
+      saida.humano = `Cliente aceitou "${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}" e o endereço está completo — aprovar e despachar`
+      return saida
+    }
+    saida.fase = 'endereco'
+    saida.faltando = an.enderecoInformado ? v.faltando : [] // sem nada informado, pede o endereço inteiro
+    return saida
+  }
   const faltando = faltaPara(alvo, an)
   if (faltando.length) {
-    // foto tem fase própria; o resto vai para a coleta genérica
-    if (faltando.includes('foto')) { an.fotoSolicitada = true; saida.fase = 'def_foto'; an.proximaAposColeta = alvo; return saida }
+    if (faltando.includes('foto')) {
+      an.proximaAposColeta = alvo
+      if (!an.fotoRecebida) { an.fotoSolicitada = true; saida.fase = 'def_foto'; return saida }
+      // imagem chegou, mas imagem não é prova: quem confirma que ela mostra o defeito é o lojista
+      an.aguardando = 'humano'
+      saida.humano = 'Imagem recebida — confirme na conversa se ela comprova o defeito antes de a troca ser oferecida'
+      return saida
+    }
     if (faltando.includes('ajuste') && !faltando.includes('produtos')) { saida.fase = 'tam_ajuste'; an.proximaAposColeta = alvo; return saida }
     saida.fase = 'coleta'; saida.faltando = faltando; an.proximaAposColeta = alvo; return saida
   }
@@ -547,9 +575,12 @@ function irPara(saida, alvo, agora) {
 }
 
 /** Registra a transição depois de o e-mail sair com sucesso. */
-export function confirmarTransicao(an, { para, mensagem, agora = Date.now() }) {
+export function confirmarTransicao(an, { para, mensagem, observacao = null, agora = Date.now() }) {
   const fase = FASES[para]
-  an.historicoEtapas.push({ de: an.etapa, para, mensagem: String(mensagem || '').slice(0, 200), em: new Date(agora).toISOString() })
+  an.historicoEtapas.push({
+    de: an.etapa, para, mensagem: String(mensagem || '').slice(0, 200), em: new Date(agora).toISOString(),
+    ...(observacao ? { observacao: String(observacao).slice(0, 300) } : {}),
+  })
   an.etapa = para
   // fases sem oferta (coleta, endereço) não apagam a oferta que está em jogo
   if (fase?.oferta) { an.ofertaAtual = fase.oferta; an.ofertaEnviadaEm = new Date(agora).toISOString() }
@@ -689,7 +720,7 @@ function descreverOferta(o) {
  * recebe a instrução da fase, os valores já calculados e o código do cupom —
  * nunca a escada inteira.
  */
-export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido, ticket, agora = Date.now() }) {
+export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido, ticket, instrucaoEstilo = null, agora = Date.now() }) {
   const fase = FASES[faseId]
   const moeda = loja?.moeda ?? 'EUR'
   const idiomaFixo = loja?.idioma && loja.idioma !== 'auto' ? (NOMES_IDIOMA[loja.idioma] ?? loja.idioma) : null
@@ -702,9 +733,17 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
   if (fase.oferta?.prazo) dados.push(`Prazo do envio expresso: ${fase.oferta.prazo}.`)
   if (an.produtosAfetados.length) dados.push(`Produtos envolvidos: ${an.produtosAfetados.join('; ')}.`)
   if (an.ajusteTamanho && Object.keys(an.ajusteTamanho).length) dados.push(`Ajuste informado: ${Object.entries(an.ajusteTamanho).map(([p, a]) => `${p} ficou ${a}`).join('; ')}.`)
-  if (faseId === 'coleta') {
-    const nomes = { pedido: 'o número do pedido (ou o e-mail usado na compra)', produtos: 'quais produtos do pedido estão envolvidos', motivo: 'o motivo da devolução/reembolso', ajuste: 'se ficou pequeno ou grande' }
-    dados.push(`Informações que faltam: ${faltando.map(f => nomes[f] ?? f).join(' e ')}.`)
+  if (faltando.length) {
+    const nomes = {
+      pedido: 'o número do pedido (ou o e-mail usado na compra)', produtos: 'quais produtos do pedido estão envolvidos',
+      motivo: 'o motivo da devolução/reembolso', ajuste: 'se ficou pequeno ou grande',
+      end_rua: 'rua e número', end_cep: 'código postal (CEP)', end_cidade: 'cidade',
+      foto_melhor: 'outra foto, nítida, mostrando o defeito',
+    }
+    const lista = faltando.map(f => nomes[f] ?? f).join(' e ')
+    if (faseId === 'endereco') dados.push(`O cliente já mandou parte do endereço (${String(an.enderecoInformado || '').slice(0, 200)}). Peça SOMENTE o que falta: ${lista}.`)
+    else if (faseId === 'def_foto') dados.push(`A imagem que o cliente mandou não serviu como comprovação. Peça ${lista}.`)
+    else dados.push(`Informações que faltam: ${lista}.`)
   }
 
   const system = [
@@ -720,6 +759,7 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
     `AÇÃO DESTA RESPOSTA — ${fase.titulo}:`,
     fase.instrucao,
     ``,
+    ...(instrucaoEstilo ? [`Instrução de estilo do lojista (vale só para tom, tamanho e forma — NÃO muda a ação, os valores, os percentuais nem os códigos): ${instrucaoEstilo}`, ``] : []),
     dados.length ? `Dados para usar:\n${dados.map(d => `- ${d}`).join('\n')}` : '',
     ``,
     blocoPedido(pedido, loja, agora),
@@ -737,4 +777,83 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
     String(ticket.corpo || '').slice(0, 3000),
   ].join('\n')
   return { system, user }
+}
+
+/* ------------------------------------------------------------------ */
+/* Endereço: componentes mínimos antes de encaminhar troca/reenvio     */
+/* ------------------------------------------------------------------ */
+
+const escaparRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Confere se um endereço tem rua+número, código postal e cidade. Qualquer
+ * texto NÃO é endereço: "ok, pode mandar" falha nos três. Retorna
+ * { ok, faltando: ['end_rua'|'end_cep'|'end_cidade'], normalizado }.
+ */
+export function validarEndereco(texto) {
+  // partes por linha/vírgula: o cliente pode mandar "Berlin" numa mensagem e a rua noutra
+  const partes = String(texto || '').split(/[\n,;]+/).map(p => p.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  if (!partes.length) return { ok: false, faltando: ['end_rua', 'end_cep', 'end_cidade'], normalizado: null }
+  const t = partes.join(', ')
+  const faltando = []
+  // CEP europeu (4–5 dígitos, NL com letras) ou britânico
+  const cep = t.match(/\b(\d{4,5}(?:\s?[A-Z]{2})?|[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2})\b/)
+  const semCep = cep ? t.replace(cep[0], ' ') : t
+  // "Hauptstraße 12" / "Via Roma 5" ou "12 rue de Rivoli"
+  const rua = /[A-Za-zÀ-ÿ.'’-]{3,}[^\d\n]{0,25}\b\d{1,4}\s?[a-zA-Z]?\b/.test(semCep)
+    || /\b\d{1,4}\s?[a-zA-Z]?\b[,\s]+[A-Za-zÀ-ÿ.'’-]{3,}/.test(semCep)
+  // cidade: parte só de palavras começando por maiúscula ("Berlin", "Rio de Janeiro"),
+  // ou palavra capitalizada colada ao CEP ("10115 Berlin", "Paris 75001")
+  let cidade = partes.some(p => /^[A-ZÀ-Ý][A-Za-zÀ-ÿ'.-]{2,}(?: [A-Za-zÀ-ÿ'.-]{2,})*$/.test(p))
+  if (!cidade && cep) {
+    const c = escaparRe(cep[0])
+    cidade = new RegExp(`${c}\\s*,?\\s*[A-ZÀ-Ý][A-Za-zÀ-ÿ'.-]{2,}`).test(t) || new RegExp(`[A-ZÀ-Ý][A-Za-zÀ-ÿ'.-]{2,}\\s*,?\\s+${c}`).test(t)
+  }
+  if (!rua) faltando.push('end_rua')
+  if (!cep) faltando.push('end_cep')
+  if (!cidade) faltando.push('end_cidade')
+  return { ok: faltando.length === 0, faltando, normalizado: faltando.length ? null : t }
+}
+
+/* ------------------------------------------------------------------ */
+/* Conferência do texto final — usada por TODO caminho que envia       */
+/* ------------------------------------------------------------------ */
+
+/** O texto pode sair nesta fase? (ação, percentuais, cupons e linguagem de confirmação) */
+export function conferirTextoDaFase(faseId, texto, loja) {
+  const v = validarProposta(faseId, { acao_proposta: faseId, resposta: texto }, loja)
+  if (!v.ok) return v
+  const indevida = confirmacaoIndevida(texto)
+  if (indevida) return { ok: false, motivo: `o texto confirma ${indevida} como fato consumado — a oferta tem de ser apresentada como pergunta` }
+  return { ok: true, motivo: null }
+}
+
+/** Percentuais e cupons presentes num texto — a "assinatura" da oferta. */
+export function assinaturaOferta(texto, loja) {
+  const t = String(texto || '')
+  const pcts = [...new Set([...t.matchAll(/(\d{1,3})\s?%/g)].map(m => Number(m[1])))].sort((a, b) => a - b)
+  const cupons = Object.values(loja?.cupons ?? {}).filter(c => c && t.includes(c)).sort()
+  return { pcts, cupons, chave: `${pcts.join('/')}|${cupons.join('/')}` }
+}
+
+/** Uma edição humana mudou a oferta em relação ao rascunho? Devolve a descrição ou null. */
+export function diferencaDeOferta(rascunho, texto, loja) {
+  if (String(rascunho ?? '') === String(texto ?? '')) return null
+  const a = assinaturaOferta(rascunho, loja)
+  const b = assinaturaOferta(texto, loja)
+  if (a.chave === b.chave) return null
+  const fmt = s => [...s.pcts.map(p => `${p}%`), ...s.cupons].join(', ') || 'nenhum percentual ou cupom'
+  return `o rascunho tinha ${fmt(a)}; o texto final tem ${fmt(b)}`
+}
+
+/** Instrução do lojista que tentaria mudar oferta, percentual, cupom ou etapa. Devolve o motivo ou null. */
+const RE_INSTRUCAO_PROIBIDA = /\d+\s?%|\b(reembols|refund|erstatt|rimbors|rembours|cupom|cupon|coupon|gutschein|desconto|discount|rabatt|troca|umtausch|exchange|reenvi|resend|oferta|oferec|offer|etapa|fase|escada|percentual|porcent|dinheiro|gr[aá]tis|gratuit|kostenlos|free|cancel)/i
+export function instrucaoAlteraOferta(instrucao, loja) {
+  const s = String(instrucao || '')
+  if (!s.trim()) return null
+  const m = s.match(RE_INSTRUCAO_PROIBIDA)
+  if (m) return `a instrução menciona "${m[0]}" — no modo novo a instrução não pode mudar oferta, percentual, cupom ou etapa`
+  const codigo = Object.values(loja?.cupons ?? {}).find(c => c && s.toUpperCase().includes(String(c).toUpperCase()))
+  if (codigo) return `a instrução cita o cupom ${codigo}`
+  return null
 }

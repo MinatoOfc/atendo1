@@ -67,15 +67,22 @@ export interface AtendimentoNovo {
   motivo: string | null
   ajusteTamanho: Record<string, 'pequeno' | 'grande'> | null
   fotoSolicitada: boolean
+  /** chegou uma imagem — ainda não é prova de nada */
   fotoRecebida: boolean
+  /** true só depois de você confirmar que a foto mostra o defeito */
+  fotoValidada: boolean | null
   ofertaAtual: OfertaNovo | null
   ofertaEnviadaEm: string | null
   aguardando: 'cliente' | 'envio' | 'humano' | null
   acaoAceita: string | null
+  /** o que o cliente já escreveu de endereço (pode estar incompleto) */
+  enderecoInformado: string | null
+  /** só depois de validado: rua+número, código postal e cidade */
   enderecoConfirmado: string | null
-  historicoEtapas: { de: string | null; para: string; mensagem: string; em: string }[]
-  transicaoPendente: { para: string; mensagem: string; faltando?: string[] } | null
+  historicoEtapas: { de: string | null; para: string; mensagem: string; em: string; observacao?: string; evento?: string }[]
+  transicaoPendente: { para: string; mensagem: string; faltando?: string[]; observacao?: string } | null
   proximoEnvioMinimo?: string
+  rascunhoGerado?: string
 }
 export interface FaseNovo { titulo: string; jornada: string; aoAceitar: string | null; aoRecusar: string | null; oferta: OfertaNovo | null }
 
@@ -346,7 +353,9 @@ interface Store extends ServerState {
   /** move todos os casos marcados do dia `de` para o dia `para` (AAAA-MM-DD) */
   moverRelatorio: (de: string, para: string) => void
   marcarRespondido: (id: string, marcar: boolean) => void
-  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual') => void
+  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual', confirmarAlteracao?: boolean) => void
+  /** modo novo: você confirma se a imagem recebida comprova o defeito */
+  validarFotoNovo: (id: string, valida: boolean) => void
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
   restaurar: (id: string) => void
@@ -599,7 +608,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       debounces.current[id] = window.setTimeout(() => { api(`/tickets/${id}/rascunho`, 'POST', { texto }) }, 800)
     },
 
-    aprovarEnviar: (id, texto, manterAberto, origem) => {
+    aprovarEnviar: function aprovarEnviar(id, texto, manterAberto, origem, confirmarAlteracao) {
       clearTimeout(debounces.current[id])
       setState(s => ({
         ...s,
@@ -607,11 +616,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ? { ...t, status: manterAberto ? t.status : 'enviado', resposta: texto, respostaOrigem: origem, respondidoEm: new Date().toISOString(), enviaEm: undefined }
           : t)),
       }))
-      api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto, origem }).then(r => {
+      api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto, origem, confirmarAlteracao: !!confirmarAlteracao }).then(r => {
+        // modo novo: a edição mudou a oferta da etapa — só sai com confirmação explícita
+        if ((r as { precisaConfirmar?: boolean }).precisaConfirmar && !confirmarAlteracao) {
+          aplicar(r) // desfaz o "enviado" otimista
+          if (window.confirm(`${r.erro}\n\nEnviar mesmo assim? A alteração fica registrada no histórico de fases.`)) {
+            aprovarEnviar(id, texto, manterAberto, origem, true)
+          }
+          return
+        }
         if (r.erro) alert(r.erro)
         aplicar(r)
       })
     },
+    validarFotoNovo: (id, valida) => api(`/tickets/${id}/novo/foto`, 'POST', { valida }).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
 
     moverPara: (id, status, motivo) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, statusAnterior: t.status, status, enviaEm: undefined } : t)) }))

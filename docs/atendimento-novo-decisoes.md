@@ -52,9 +52,30 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
 9. **Aceite de cupom**: como qualquer aceite (regra 10 e seção 9), cria decisão
    humana pendente. A confirmação sai depois da aprovação do dono.
 
-10. **Prazo expresso da troca por defeito (3.3.4)**: usa 4 a 11 dias, o prazo
-    expresso padrão do mapa; a troca por tamanho (3.1.4) usa 5 a 11 dias, como
-    escrito.
+10. **Prazo expresso da troca por defeito (3.3.4)**: 5 a 11 dias, conforme o
+    mapa (corrigido na revisão de 15/09 — o código usava 4 a 11).
+
+12. **Endereço**: qualquer texto NÃO é endereço. Antes de encaminhar o aceite de
+    troca/reenvio, o servidor confere rua+número, código postal e cidade; se
+    faltar algo, a resposta pede só o que falta e o aceite espera. O endereço
+    pode chegar em partes, em mensagens diferentes.
+
+13. **Imagem**: uma imagem recebida é registrada como "imagem recebida", não
+    como prova. A troca por defeito só é oferecida depois que o dono confirma na
+    conversa que a foto comprova o defeito; se ele recusar, o sistema pede outra
+    foto. Nenhuma descrição automática de imagem é feita.
+
+14. **Regeneração no modo novo**: "Gerar nova resposta" reescreve apenas a ação
+    da fase pendente, passa pelos mesmos bloqueios, e a instrução do lojista só
+    pode mexer em tom/tamanho — instrução que cite percentual, cupom, oferta ou
+    etapa é recusada. Sem fase pendente (caso com o dono), não há regeneração
+    automática.
+
+15. **Texto final**: todo caminho de envio (aprovar, auto-envio) reconfere o
+    texto contra a fase. Edição humana que mude percentual ou cupom exige
+    confirmação explícita e fica registrada no histórico de fases. No modo novo,
+    a fase só muda depois de um canal real enviar com sucesso; sem canal ou com
+    falha, nada muda.
 
 11. **Envio automático no modo novo**: desligado por padrão (implantação, item
     3). Os rascunhos ficam em Aprovações com o horário mínimo da cadência

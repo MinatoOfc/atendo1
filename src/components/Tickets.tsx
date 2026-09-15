@@ -154,6 +154,7 @@ const NOME_MOTIVO: Record<string, string> = {
 }
 const NOME_FALTA: Record<string, string> = {
   pedido: 'número do pedido', produtos: 'quais produtos', motivo: 'o motivo', ajuste: 'se ficou pequeno ou grande', foto: 'foto do defeito',
+  end_rua: 'rua e número', end_cep: 'código postal', end_cidade: 'cidade', foto_melhor: 'outra foto, nítida',
 }
 function descreverOferta(o: { tipo: string; pct: number | null; cupom: number | null; prazo: string | null; semDevolucao: boolean } | null) {
   if (!o) return '—'
@@ -182,7 +183,7 @@ function LinhaFase({ rotulo, children }: { rotulo: string; children: React.React
 }
 
 function PainelFaseNovo({ t }: { t: Ticket }) {
-  const { fasesNovo, jornadasNovo, lojas } = useStore()
+  const { fasesNovo, jornadasNovo, lojas, validarFotoNovo } = useStore()
   const an = t.atendimentoNovo
   if (!an || !fasesNovo) return null
   const titulo = (id?: string | null) => (id ? fasesNovo[id]?.titulo ?? id : '')
@@ -243,10 +244,21 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
           an.motivo ? `motivo: ${NOME_MOTIVO[an.motivo] ?? an.motivo}` : null,
           an.produtosAfetados.length ? `produtos: ${an.produtosAfetados.join('; ')}` : null,
           an.ajusteTamanho && Object.keys(an.ajusteTamanho).length ? `ajuste: ${Object.entries(an.ajusteTamanho).map(([p, a]) => `${p} ficou ${a}`).join('; ')}` : null,
-          an.fotoRecebida ? 'foto recebida' : an.fotoSolicitada ? 'foto pedida, ainda não veio' : null,
-          an.enderecoConfirmado ? `endereço: ${an.enderecoConfirmado}` : null,
+          an.fotoValidada === true ? 'foto validada por você' : an.fotoRecebida ? 'imagem recebida (ainda não validada)' : an.fotoSolicitada ? 'foto pedida, ainda não veio' : null,
+          an.enderecoConfirmado ? `endereço: ${an.enderecoConfirmado}` : an.enderecoInformado ? `endereço parcial: ${an.enderecoInformado}` : null,
         ].filter(Boolean).join(' · ') || <span className="muted-sm">nada ainda</span>}
       </LinhaFase>
+      {an.fotoRecebida && an.fotoValidada !== true && an.aguardando === 'humano' && (
+        <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--panel-soft)', borderRadius: 8 }}>
+          <div style={{ fontSize: 12.5, marginBottom: 6 }}>
+            O cliente mandou uma imagem. Ela <b>comprova o defeito</b>? Só depois da sua confirmação a troca é oferecida.
+          </div>
+          <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+            <button className="btn btn-sm btn-primary" onClick={() => validarFotoNovo(t.id, true)}><Check size={13} /> Sim, comprova</button>
+            <button className="btn btn-sm" onClick={() => validarFotoNovo(t.id, false)}><X size={13} /> Não — pedir outra foto</button>
+          </div>
+        </div>
+      )}
       <div style={{ marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
         <div className="muted-sm" style={{ marginBottom: 4 }}>Histórico de fases</div>
         {an.historicoEtapas.length === 0 ? (
@@ -254,7 +266,11 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
         ) : (
           <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6 }}>
             {an.historicoEtapas.map((h, i) => (
-              <li key={i}>{titulo(h.para)} <span className="muted-sm">· {quando(h.em)}{h.mensagem ? ` · "${h.mensagem}"` : ''}</span></li>
+              <li key={i}>
+                {h.evento ? h.mensagem : titulo(h.para)}
+                <span className="muted-sm"> · {quando(h.em)}{!h.evento && h.mensagem ? ` · "${h.mensagem}"` : ''}</span>
+                {h.observacao && <div className="muted-sm" style={{ fontSize: 11.5 }}>⚠ {h.observacao}</div>}
+              </li>
             ))}
           </ol>
         )}

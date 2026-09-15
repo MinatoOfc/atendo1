@@ -12,6 +12,7 @@ import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, ex
 import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
   horarioMinimoEnvio, promptClassificar, promptEscrever, FASES, JORNADAS, PERCENTUAIS_CUPOM,
+  faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta,
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
@@ -517,6 +518,64 @@ const decisaoDaOferta = o => !o ? undefined
 
 const somarCusto = (t, custo) => { if (custo) t.custoIA = Math.round(((t.custoIA || 0) + custo) * 1e6) / 1e6 }
 
+function mandarParaHumanoNovo(t, motivo) {
+  const an = t.atendimentoNovo
+  t.status = 'humano'
+  t.motivoEscalada = motivo
+  t.motivoTraducao = undefined
+  t.rascunho = undefined
+  t.rascunhoTraducao = undefined
+  t.enviaEm = undefined
+  if (an) { an.aguardando = 'humano'; an.transicaoPendente = null; an.rascunhoGerado = undefined }
+}
+
+/**
+ * Escreve o rascunho de UMA fase, confere contra ela e agenda o envio. É o
+ * único caminho que cria rascunho no modo novo — usado ao chegar mensagem, ao
+ * regenerar e depois de o lojista validar a foto. Devolve { ok, motivo }.
+ * aoFalhar: 'humano' manda o caso para o lojista; 'manter' não mexe no ticket.
+ */
+async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo = '', instrucaoEstilo = null, aoFalhar = 'humano' }) {
+  const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+  const pedido = pedidoDoTicket(estado, t)
+  const an = t.atendimentoNovo
+  const falhar = motivo => { if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo); return { ok: false, motivo } }
+
+  const cup = cupomDaFase(faseId, loja)
+  if (cup.precisa && !cup.codigo) {
+    return falhar(`A etapa "${FASES[faseId].titulo}" usa o cupom de ${cup.pct}%, que não está cadastrado nesta loja (Configurações → Loja)`)
+  }
+
+  const p2 = promptEscrever({ loja, config: estado.config, faseId, faltando, an, pedido, ticket: t, instrucaoEstilo })
+  const e = await escreverNovo(p2.system, p2.user)
+  if (e.erro) return falhar(`A IA não conseguiu escrever a resposta (${e.erro})`)
+  somarCusto(t, e.custo); registrarGasto(estado, t.lojaId, e.custo)
+
+  // bloqueios: ação proposta, percentuais, cupons e linguagem de confirmação
+  if (e.r.acao_proposta && e.r.acao_proposta !== faseId) {
+    return falhar(`A IA saiu da etapa permitida: propôs "${e.r.acao_proposta}" em vez de "${faseId}"`)
+  }
+  const v = conferirTextoDaFase(faseId, e.r.resposta, loja)
+  if (!v.ok) return falhar(`A IA saiu da etapa permitida: ${v.motivo}`)
+
+  t.rascunho = String(e.r.resposta || '').trim()
+  t.rascunhoTraducao = undefined
+  t.geradoPorIA = true
+  t.confianca = 1
+  t.motivoEscalada = undefined
+  t.motivoTraducao = undefined
+  t.decisaoPendente = undefined
+  t.resolucao = FASES[faseId].titulo
+  an.rascunhoGerado = t.rascunho // referência para detectar edição humana que mude a oferta
+  an.transicaoPendente = { para: faseId, mensagem: resumo, faltando }
+  an.aguardando = 'envio'
+  const minimo = horarioMinimoEnvio(t, estado.config.atrasoMinutos)
+  an.proximoEnvioMinimo = new Date(minimo).toISOString()
+  t.status = 'aprovacao'
+  t.enviaEm = loja?.novoEnvioAutomatico && estado.config.automacaoAtiva ? minimo : undefined
+  return { ok: true, motivo: null }
+}
+
 async function processarNovo(estado, t) {
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
@@ -524,21 +583,10 @@ async function processarNovo(estado, t) {
   const an = t.atendimentoNovo
   const identificado = clienteComPedido(estado, t.de, t.lojaId, textoDaConversa(t))
 
-  const paraHumano = motivo => {
-    t.status = 'humano'
-    t.motivoEscalada = motivo
-    t.motivoTraducao = undefined
-    t.rascunho = undefined
-    t.rascunhoTraducao = undefined
-    t.enviaEm = undefined
-    an.aguardando = 'humano'
-    an.transicaoPendente = null
-  }
-
   // 1. classificar (a IA não vê a escada, só o que foi oferecido por último)
   const p1 = promptClassificar({ loja, an, pedido, ticket: t })
   const c = await classificarNovo(p1.system, p1.user)
-  if (c.erro) { paraHumano(`A IA não conseguiu classificar a mensagem (${c.erro})`); return { spam: false } }
+  if (c.erro) { mandarParaHumanoNovo(t, `A IA não conseguiu classificar a mensagem (${c.erro})`); return { spam: false } }
   somarCusto(t, c.custo); registrarGasto(estado, t.lojaId, c.custo)
   const cls = c.r
   if (cls.spam && !identificado) return { spam: true }
@@ -560,7 +608,7 @@ async function processarNovo(estado, t) {
     return { spam: false }
   }
   if (d.humano) {
-    paraHumano(d.humano)
+    mandarParaHumanoNovo(t, d.humano)
     if (d.aceite) {
       t.decisaoPendente = decisaoDaOferta(d.aceite.oferta)
       t.resolucao = `Aceite pendente: ${FASES[d.aceite.fase]?.titulo ?? d.aceite.fase}${an.produtosAfetados.length ? ' — ' + an.produtosAfetados.join('; ') : ''}`
@@ -568,40 +616,8 @@ async function processarNovo(estado, t) {
     return { spam: false }
   }
 
-  // 3. a fase precisa de cupom que a loja não cadastrou?
-  const cup = cupomDaFase(d.fase, loja)
-  if (cup.precisa && !cup.codigo) {
-    paraHumano(`A etapa "${FASES[d.fase].titulo}" usa o cupom de ${cup.pct}%, que não está cadastrado nesta loja (Configurações → Loja)`)
-    return { spam: false }
-  }
-
-  // 4. escrever a resposta de UMA fase
-  const p2 = promptEscrever({ loja, config: estado.config, faseId: d.fase, faltando: d.faltando, an, pedido, ticket: t })
-  const e = await escreverNovo(p2.system, p2.user)
-  if (e.erro) { paraHumano(`A IA não conseguiu escrever a resposta (${e.erro})`); return { spam: false } }
-  somarCusto(t, e.custo); registrarGasto(estado, t.lojaId, e.custo)
-
-  // 5. bloqueios: ação, percentuais, cupons e linguagem de confirmação
-  const v = validarProposta(d.fase, e.r, loja)
-  if (!v.ok) { paraHumano(`A IA saiu da etapa permitida: ${v.motivo}`); return { spam: false } }
-  const indevida = confirmacaoIndevida(e.r.resposta)
-  if (indevida) { paraHumano(`A IA escreveu uma confirmação de ${indevida} por conta própria`); return { spam: false } }
-
-  // 6. rascunho + cadência; a fase só muda quando o e-mail sair
-  t.rascunho = String(e.r.resposta || '').trim()
-  t.rascunhoTraducao = undefined
-  t.geradoPorIA = true
-  t.confianca = 1
-  t.motivoEscalada = undefined
-  t.motivoTraducao = undefined
-  t.decisaoPendente = undefined
-  t.resolucao = FASES[d.fase].titulo
-  an.transicaoPendente = { para: d.fase, mensagem: cls.resumo || '', faltando: d.faltando }
-  an.aguardando = 'envio'
-  const minimo = horarioMinimoEnvio(t, estado.config.atrasoMinutos)
-  an.proximoEnvioMinimo = new Date(minimo).toISOString()
-  t.status = 'aprovacao'
-  t.enviaEm = loja?.novoEnvioAutomatico && estado.config.automacaoAtiva ? minimo : undefined
+  // 3. escrever, conferir e agendar — a fase só muda quando o e-mail sair
+  await prepararRascunhoNovo(estado, t, { faseId: d.fase, faltando: d.faltando, resumo: cls.resumo || '' })
   return { spam: false }
 }
 
@@ -929,14 +945,23 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   const conta = contaDaLoja(wsId, ticket.lojaId ?? 'loja1')
   const contas = contasDe(wsId)
   const canal = conta?.configurado || envioPorApi ? conta : contas.find(c => c.configurado)
-  if (canal) {
-    await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto })
-  }
-  // modo novo: e-mail saiu → a transição pendente vira a fase atual (regra 4)
   const an = ticket.atendimentoNovo
-  if (an?.transicaoPendente?.para) {
-    confirmarTransicao(an, { para: an.transicaoPendente.para, mensagem: an.transicaoPendente.mensagem })
+  const modoNovo = !!an?.transicaoPendente?.para
+  // canal simulado só nos testes (ATENDO_SIMULAR=1): 'ok' envia, 'falha' quebra
+  const simulado = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_SMTP_FAKE : null
+  let enviou = false
+  if (simulado === 'ok') enviou = true
+  else if (simulado === 'falha') throw new Error('Envio simulado falhou')
+  else if (canal) { await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto }); enviou = true }
+  // modo novo: a fase só muda depois de um canal real enviar com sucesso — sem
+  // canal, nem envia (nada abaixo é executado, então nada muda no ticket)
+  if (modoNovo && !enviou) {
+    throw new Error('Nenhuma caixa de e-mail configurada nesta loja — no modo novo a resposta só conta depois de enviada de verdade')
+  }
+  if (modoNovo) {
+    confirmarTransicao(an, { para: an.transicaoPendente.para, mensagem: an.transicaoPendente.mensagem, observacao: an.transicaoPendente.observacao })
     an.proximoEnvioMinimo = undefined
+    an.rascunhoGerado = undefined
   }
   // Nova resposta numa conversa que já tem resposta enviada (respondida ou
   // mantida em atendimento humano): arquiva a troca anterior no histórico
@@ -974,6 +999,21 @@ setInterval(async () => {
     for (const t of vencidos) {
       enviando.add(t.id)
       try {
+        // modo novo: o rascunho pode ter sido editado depois de gerado — reconfere
+        const anL = t.atendimentoNovo
+        if (anL?.transicaoPendente?.para) {
+          const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL)
+          const dif = v.ok ? diferencaDeOferta(anL.rascunhoGerado ?? t.rascunho, t.rascunho, lojaL) : null
+          if (!v.ok || dif) {
+            t.status = 'humano'
+            t.enviaEm = undefined
+            t.motivoEscalada = !v.ok
+              ? `Rascunho não pertence mais à etapa: ${v.motivo} — confira e envie você`
+              : `Rascunho editado mudou a oferta (${dif}) — confira e envie você`
+            continue
+          }
+        }
         await enviarResposta(wsId, t, t.rascunho || '', 'ia')
         t.erroEnvio = undefined
         t.tentativasEnvio = undefined
@@ -2226,6 +2266,35 @@ app.post('/api/tickets/:id/lido', (req, res) => {
   t.lido = true; salvar(req.wsId); ok(req, res)
 })
 
+// Imagem nunca é prova por si só: o lojista confirma na conversa se ela mostra
+// o defeito. Só então a troca é oferecida; se não mostrar, pede outra foto.
+app.post('/api/tickets/:id/novo/foto', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  const an = t.atendimentoNovo
+  if (!an || !an.fotoRecebida) {
+    return res.status(400).json({ erro: 'Esta conversa não tem imagem aguardando validação.', state: visao(req.wsId) })
+  }
+  const agora = new Date().toISOString()
+  if (req.body?.valida === true) {
+    an.fotoValidada = true
+    an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: 'Foto validada pelo lojista: comprova o defeito', em: agora, evento: 'foto_validada' })
+    an.aguardando = null
+    const alvo = an.proximaAposColeta ?? 'def_troca'
+    const faltando = faltaPara(alvo, an)
+    await prepararRascunhoNovo(req.estado, t, faltando.length
+      ? { faseId: 'coleta', faltando, resumo: 'foto validada' }
+      : { faseId: alvo, resumo: 'foto validada pelo lojista' })
+  } else {
+    an.fotoValidada = false
+    an.fotoRecebida = false
+    an.fotoSolicitada = true
+    an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: 'Foto recusada pelo lojista: não comprova o defeito', em: agora, evento: 'foto_recusada' })
+    an.aguardando = null
+    await prepararRascunhoNovo(req.estado, t, { faseId: 'def_foto', faltando: ['foto_melhor'], resumo: 'foto recusada pelo lojista' })
+  }
+  salvar(req.wsId); ok(req, res)
+})
+
 app.post('/api/tickets/:id/rascunho', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   t.rascunho = String(req.body.texto ?? '')
@@ -2240,6 +2309,37 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
     return res.status(400).json({ erro: 'Gerar nova resposta usa o Claude — configure a ANTHROPIC_API_KEY primeiro.', state: visao(req.wsId) })
   }
   const instrucao = String(req.body.instrucao || '').trim()
+
+  // Modo novo: nunca o pipeline clássico. Reescreve SOMENTE a ação da fase
+  // pendente; a instrução só pode mexer em tom/tamanho; passa pelos mesmos bloqueios.
+  const lojaR = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+  if (modoDaLoja(lojaR) === 'novo') {
+    const anR = t.atendimentoNovo
+    const faseId = anR?.transicaoPendente?.para
+    if (!faseId) {
+      return res.status(400).json({ erro: 'No modo novo esta conversa não tem ação automática agora (está com você) — escreva a resposta.', state: visao(req.wsId) })
+    }
+    const bloqueio = instrucaoAlteraOferta(instrucao, lojaR)
+    if (bloqueio) return res.status(400).json({ erro: `Instrução recusada: ${bloqueio}.`, state: visao(req.wsId) })
+    if (req.body.somenteTexto) {
+      // escreve a MESMA ação para a caixa manual, sem mexer no rascunho nem no estado
+      const p = promptEscrever({ loja: lojaR, config: req.estado.config, faseId, faltando: anR.transicaoPendente.faltando ?? [], an: anR, pedido: pedidoDoTicket(req.estado, t), ticket: t, instrucaoEstilo: instrucao || null })
+      const e = await escreverNovo(p.system, p.user)
+      if (e.erro) return res.status(400).json({ erro: e.erro, state: visao(req.wsId) })
+      somarCusto(t, e.custo); registrarGasto(req.estado, t.lojaId, e.custo)
+      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR)
+      if (!v.ok || (e.r.acao_proposta && e.r.acao_proposta !== faseId)) {
+        return res.status(400).json({ erro: `A IA saiu da etapa permitida: ${v.motivo || 'ação diferente da permitida'}. Tente de novo.`, state: visao(req.wsId) })
+      }
+      salvar(req.wsId)
+      return res.json({ ok: true, texto: e.r.resposta, state: visao(req.wsId) })
+    }
+    const r = await prepararRascunhoNovo(req.estado, t, { faseId, faltando: anR.transicaoPendente.faltando ?? [], resumo: anR.transicaoPendente.mensagem, instrucaoEstilo: instrucao || null, aoFalhar: 'manter' })
+    salvar(req.wsId)
+    if (!r.ok) return res.status(400).json({ erro: `${r.motivo}. O rascunho anterior foi mantido.`, state: visao(req.wsId) })
+    return ok(req, res)
+  }
+
   const r = await processarEmailIA(req.estado, t, instrucao || 'Reescreva a resposta da melhor forma possível.')
   if (!r || !r.resposta) {
     return res.status(400).json({ erro: statusIA.erro || 'A IA não devolveu uma resposta. Tente de novo.', state: visao(req.wsId) })
@@ -2335,7 +2435,26 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     const origem = req.body.origem === 'ia' || req.body.origem === 'manual'
       ? req.body.origem
       : (t.geradoPorIA && String(req.body.texto ?? '') === (t.rascunho ?? '') ? 'ia' : 'manual')
-    await enviarResposta(req.wsId, t, String(req.body.texto ?? t.rascunho ?? ''), origem)
+    const textoFinal = String(req.body.texto ?? t.rascunho ?? '')
+
+    // modo novo: o texto FINAL (regenerado ou editado à mão) tem de pertencer à
+    // fase pendente; edição que mude a oferta exige confirmação explícita
+    const anA = t.atendimentoNovo
+    if (anA?.transicaoPendente?.para) {
+      const faseId = anA.transicaoPendente.para
+      const lojaA = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+      const v = conferirTextoDaFase(faseId, textoFinal, lojaA)
+      if (!v.ok) {
+        return res.status(400).json({ erro: `Não enviado — o texto não pertence à etapa "${FASES[faseId].titulo}": ${v.motivo}.`, state: visao(req.wsId) })
+      }
+      const dif = diferencaDeOferta(anA.rascunhoGerado ?? t.rascunho, textoFinal, lojaA)
+      if (dif && req.body.confirmarAlteracao !== true) {
+        return res.status(409).json({ precisaConfirmar: true, erro: `Sua edição muda a oferta desta etapa (${dif}).`, state: visao(req.wsId) })
+      }
+      if (dif) anA.transicaoPendente.observacao = `Edição manual confirmada pelo lojista: ${dif}`
+    }
+
+    await enviarResposta(req.wsId, t, textoFinal, origem)
     // "Enviar e manter comigo": a mensagem sai, mas a conversa continua em
     // atendimento humano até o lojista aprovar (fechar) de verdade
     if (req.body.manterAberto) {

@@ -347,18 +347,35 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   → 100%); cancelamento de pedido não processado (direto ao dono).
 - **Todo aceite vai para o dono** (troca e reenvio pedem o endereço completo
   antes). Reembolso de 100% e cancelamento também.
-- **Bloqueios no servidor**: ação proposta fora da fase, percentual ou cupom de
-  outra etapa no texto, e linguagem de confirmação derrubam o rascunho e mandam
-  o caso para a fila humana. Cupom não cadastrado na loja também.
+- **Bloqueios no servidor** (valem em todo caminho que gera ou envia texto —
+  chegada de mensagem, "Gerar nova resposta", "Aprovar e enviar", auto-envio):
+  ação proposta fora da fase, percentual ou cupom de outra etapa, e linguagem
+  de confirmação derrubam o texto. Cupom não cadastrado na loja também.
+  "Gerar nova resposta" no modo novo reescreve só a ação da fase pendente; a
+  instrução do lojista só pode mexer em tom/tamanho. Edição manual que mude
+  percentual ou cupom exige confirmação explícita e fica registrada no
+  histórico de fases. A fase só muda depois de um canal real enviar com
+  sucesso — sem canal ou com falha de envio, nada muda.
+- **Endereço** (aceite de troca/reenvio): validado por componentes — rua e
+  número, código postal e cidade — antes de o aceite ir para o dono; faltando
+  algo, a resposta pede só o que falta.
+- **Imagem** (defeito): registrada como "imagem recebida", nunca como prova. A
+  troca só é oferecida depois que o dono confirma na conversa que a foto
+  comprova o defeito; se recusar, o sistema pede outra foto.
 - **Cadência**: primeira resposta com o atraso normal; depois, 5 h após a última
   mensagem do cliente (mensagem nova reinicia e recalcula o rascunho). O envio
   automático do modo novo é uma chave por loja, desligada no piloto.
 - **Por loja**: prazo de entrega em dias úteis (base do "atrasado") e códigos de
   cupom por percentual (10, 15, 25, 30, 35, 40).
+- **Na conversa**: card "Atendimento novo" no painel lateral com jornada, fase
+  atual, o que está aguardando, última oferta, próxima ação, dados que faltam,
+  horário mínimo da próxima resposta, botões de validação da foto e o histórico
+  de fases. Na lista, cada conversa mostra a etiqueta da fase.
+- **Testes**: `npm test` roda o motor (funções puras) e o pipeline completo com
+  servidor real, banco temporário, IA e canal de e-mail simulados.
 
-Ainda por fazer: mostrar fase e próxima ação dentro da conversa, a Central
-operacional (mapa de jornadas, indicadores, filtros) e a migração dos casos
-antigos como "fase inferida".
+Ainda por fazer: a Central operacional (mapa de jornadas, indicadores, filtros,
+painel lateral por fase) e a migração dos casos antigos como "fase inferida".
 
 ---
 
