@@ -98,6 +98,78 @@ const nomesProvedores: Record<string, string> = {
  * digita endereço e senha, testa e salva. A senha vai cifrada para o servidor
  * e nunca volta para o navegador.
  */
+/** Ajustes do modo novo, por loja: envio automático, prazo em dias úteis e cupons. */
+const PERCENTUAIS_CUPOM = ['10', '15', '25', '30', '35', '40'] as const
+function ConfigModoNovo({ lojaId }: { lojaId: string }) {
+  const s = useStore()
+  const loja = s.lojas.find(l => l.id === lojaId)
+  const [prazo, setPrazo] = useState({ min: 5, max: 12, processamento: 3 })
+  const [cupons, setCupons] = useState<Record<string, string>>({})
+  useEffect(() => {
+    setPrazo({ min: loja?.prazoEntrega?.min ?? 5, max: loja?.prazoEntrega?.max ?? 12, processamento: loja?.prazoEntrega?.processamento ?? 3 })
+    setCupons(Object.fromEntries(PERCENTUAIS_CUPOM.map(p => [p, loja?.cupons?.[p] ?? ''])))
+  }, [lojaId, loja?.prazoEntrega?.min, loja?.prazoEntrega?.max, loja?.prazoEntrega?.processamento, JSON.stringify(loja?.cupons ?? {})])
+
+  const salvarPrazo = () => s.atualizarLoja(lojaId, { prazoEntrega: prazo })
+  const salvarCupons = () => s.atualizarLoja(lojaId, { cupons })
+  const faltam = PERCENTUAIS_CUPOM.filter(p => p !== '10' && !cupons[p]?.trim())
+  const numero = (v: string, atual: number) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : atual }
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+      <div className="row gap-10 mb-12" style={{ flexWrap: 'wrap' }}>
+        <button className={'switch' + (loja?.novoEnvioAutomatico ? ' on' : '')}
+          onClick={() => s.atualizarLoja(lojaId, { novoEnvioAutomatico: !loja?.novoEnvioAutomatico })}
+          title={loja?.novoEnvioAutomatico ? 'Ligado' : 'Desligado'} />
+        <div>
+          <b style={{ fontSize: 13 }}>Envio automático no modo novo</b>
+          <div className="muted-sm" style={{ lineHeight: 1.5 }}>
+            Desligado (recomendado no piloto): cada resposta espera sua aprovação, com o horário mínimo da cadência
+            anotado. Ligado: sai sozinha 5 h após a última mensagem do cliente.
+          </div>
+        </div>
+      </div>
+
+      <div className="field" style={{ marginBottom: 12 }}>
+        <label>Prazo de entrega prometido (dias úteis)</label>
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+          {([['min', 'mínimo'], ['max', 'máximo'], ['processamento', 'processamento']] as const).map(([k, rotulo]) => (
+            <label key={k} className="muted-sm" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {rotulo}
+              <input type="number" min={0} max={90} value={prazo[k]} style={{ width: 96 }}
+                onChange={e => setPrazo(p => ({ ...p, [k]: numero(e.target.value, p[k]) }))}
+                onBlur={salvarPrazo} />
+            </label>
+          ))}
+        </div>
+        <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+          Base do "dentro do prazo / atrasado": despacho na Shopify + máximo de dias úteis. Sem despacho, data do pedido
+          + processamento. Sábado e domingo não contam.
+        </p>
+      </div>
+
+      <div className="field" style={{ marginBottom: 0 }}>
+        <label>Cupons desta loja (código por percentual)</label>
+        <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+          {PERCENTUAIS_CUPOM.map(p => (
+            <label key={p} className="muted-sm" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {p}%
+              <input value={cupons[p] ?? ''} placeholder={p === '10' ? '10OFF' : `CUPOM${p}`} style={{ width: 118, fontFamily: 'monospace' }}
+                onChange={e => setCupons(c => ({ ...c, [p]: e.target.value.toUpperCase() }))}
+                onBlur={salvarCupons} />
+            </label>
+          ))}
+        </div>
+        <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+          Os códigos precisam existir na Shopify desta loja. O atendo nunca inventa cupom: se uma etapa precisa de um
+          código que não está aqui, o caso vai para o atendimento humano com o aviso.
+          {faltam.length > 0 && <> <b style={{ color: 'var(--amber, #d29922)' }}>Faltam: {faltam.map(p => p + '%').join(', ')}.</b></>}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function FormularioEmail({ lojaId, onSalvo }: { lojaId: string; onSalvo?: () => void }) {
   const s = useStore()
   const [provider, setProvider] = useState('')
@@ -555,15 +627,17 @@ export default function Configuracoes() {
           <select value={lojaSel?.modoAtendimento ?? 'classico'}
             onChange={e => s.atualizarLoja(lojaId, { modoAtendimento: e.target.value })}>
             <option value="classico">Clássico — o atendimento atual</option>
-            <option value="novo">Novo — em construção</option>
+            <option value="novo">Novo — motor de etapas</option>
           </select>
         </div>
         <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.55 }}>
-          O <b>clássico</b> é o atendimento que roda hoje: pergunta o motivo da devolução, oferece troca ou 60%/100%, e
-          passa para você aprovar reembolso e confirmar troca. Ele fica guardado e nunca é apagado — é sempre possível
-          voltar. O <b>novo</b> é a reformulação que estamos escrevendo: enquanto as regras novas não existirem, ele
-          responde igual ao clássico. Cada loja escolhe o seu, então dá para testar o novo em uma loja só.
+          O <b>clássico</b> é o atendimento original: pergunta o motivo da devolução, oferece troca ou 60%/100%, e
+          passa para você aprovar reembolso e confirmar troca. Ele fica guardado e nunca é apagado. O <b>novo</b> é o
+          motor de etapas: a IA só classifica o que o cliente disse, o sistema escolhe a única ação permitida naquela
+          etapa (troca → cupom → 25% → 40% → 50% → 60% → 70% → você), uma etapa por resposta, sem saltos, e todo
+          aceite vem para você decidir. Cada loja escolhe o seu — dá para testar o novo em uma loja só.
         </p>
+        {lojaSel?.modoAtendimento === 'novo' && <ConfigModoNovo lojaId={lojaId} />}
       </div>
       <div className="field mb-16" style={{ maxWidth: 340 }}>
         <label>Modelo de IA desta loja</label>

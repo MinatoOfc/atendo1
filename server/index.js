@@ -8,7 +8,11 @@ import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam, confirmacaoIndevida, textoProprio,
 } from './logic.js'
-import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso, CATEGORIAS_REEMBOLSO } from './ai.js'
+import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso, CATEGORIAS_REEMBOLSO, classificarNovo, escreverNovo } from './ai.js'
+import {
+  modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
+  horarioMinimoEnvio, promptClassificar, promptEscrever, FASES, PERCENTUAIS_CUPOM,
+} from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
@@ -202,6 +206,9 @@ function visaoLojas(wsId, estado) {
       idioma: l.idioma || 'auto',
       iaModelo: l.iaModelo || 'claude',
       modoAtendimento: l.modoAtendimento === 'novo' ? 'novo' : 'classico',
+      novoEnvioAutomatico: l.novoEnvioAutomatico === true,
+      prazoEntrega: l.prazoEntrega ?? null,
+      cupons: l.cupons ?? {},
       assinatura: l.assinatura ?? null,
       email: {
         configurado: conta?.configurado ?? false,
@@ -475,6 +482,126 @@ function aplicarResultado(estado, t, r) {
   }
 }
 
+
+/* ---------------- Atendimento novo: o motor no pipeline ----------------
+   A IA só classifica; a fase gravada no ticket escolhe a única ação permitida;
+   a resposta é escrita para essa ação e conferida antes de virar rascunho.
+   A transição de fase só é gravada quando o e-mail sai (enviarResposta). */
+
+/** Pedido do cliente desta conversa: pelo número citado, senão o mais recente pelo e-mail. */
+function pedidoDoTicket(estado, t) {
+  const so = n => String(n ?? '').replace(/\D/g, '')
+  const lojaId = t.lojaId ?? 'loja1'
+  const numero = numeroDoTicketRelatorio(estado, t)
+  if (numero) {
+    const p = (estado.pedidos ?? []).find(p => (p.lojaId ?? 'loja1') === lojaId && so(p.numero) === so(numero))
+    if (p) return p
+  }
+  const email = String(t.de || '').trim().toLowerCase()
+  return (estado.pedidos ?? [])
+    .filter(p => (p.lojaId ?? 'loja1') === lojaId && p.email && p.email.trim().toLowerCase() === email)
+    .sort((a, b) => (b.criadoEm || '').localeCompare(a.criadoEm || ''))[0] ?? null
+}
+
+const CATEGORIA_DO_FLUXO = {
+  tamanho: 'troca', errado: 'troca', defeito: 'troca', qualidade: 'reembolso',
+  nao_recebido_status: 'rastreio', nao_recebido_reembolso: 'rastreio', entregue_nao_recebido: 'rastreio',
+  cancelamento: 'reembolso',
+}
+const decisaoDaOferta = o => !o ? undefined
+  : /reembolso|cancelamento/.test(o.tipo) ? 'reembolso'
+    : /troca|reenvio/.test(o.tipo) ? 'troca' : undefined
+
+const somarCusto = (t, custo) => { if (custo) t.custoIA = Math.round(((t.custoIA || 0) + custo) * 1e6) / 1e6 }
+
+async function processarNovo(estado, t) {
+  const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+  const pedido = pedidoDoTicket(estado, t)
+  t.atendimentoNovo ??= novoEstado()
+  const an = t.atendimentoNovo
+  const identificado = clienteComPedido(estado, t.de, t.lojaId, textoDaConversa(t))
+
+  const paraHumano = motivo => {
+    t.status = 'humano'
+    t.motivoEscalada = motivo
+    t.motivoTraducao = undefined
+    t.rascunho = undefined
+    t.rascunhoTraducao = undefined
+    t.enviaEm = undefined
+    an.aguardando = 'humano'
+    an.transicaoPendente = null
+  }
+
+  // 1. classificar (a IA não vê a escada, só o que foi oferecido por último)
+  const p1 = promptClassificar({ loja, an, pedido, ticket: t })
+  const c = await classificarNovo(p1.system, p1.user)
+  if (c.erro) { paraHumano(`A IA não conseguiu classificar a mensagem (${c.erro})`); return { spam: false } }
+  somarCusto(t, c.custo); registrarGasto(estado, t.lojaId, c.custo)
+  const cls = c.r
+  if (cls.spam && !identificado) return { spam: true }
+  if (cls.idioma) t.idioma = cls.idioma
+  if (cls.resumo) { t.resumoSituacao = cls.resumo; t.situacaoTraducao = undefined }
+
+  // 2. o servidor decide a única ação permitida
+  const d = decidir({ an, cls, pedido, loja, temFoto: !!t.anexos?.length })
+  Object.assign(an, d.an)
+  if (an.fluxo && CATEGORIA_DO_FLUXO[an.fluxo]) t.categoria = CATEGORIA_DO_FLUXO[an.fluxo]
+
+  if (d.encerrar) {
+    t.status = 'enviado'; t.lido = true
+    t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined
+    t.motivoEscalada = undefined; t.decisaoPendente = undefined
+    t.respondidoEm = new Date().toISOString()
+    t.resolucao = 'Encerrada — cliente confirmou que está tudo certo'
+    an.aguardando = null
+    return { spam: false }
+  }
+  if (d.humano) {
+    paraHumano(d.humano)
+    if (d.aceite) {
+      t.decisaoPendente = decisaoDaOferta(d.aceite.oferta)
+      t.resolucao = `Aceite pendente: ${FASES[d.aceite.fase]?.titulo ?? d.aceite.fase}${an.produtosAfetados.length ? ' — ' + an.produtosAfetados.join('; ') : ''}`
+    }
+    return { spam: false }
+  }
+
+  // 3. a fase precisa de cupom que a loja não cadastrou?
+  const cup = cupomDaFase(d.fase, loja)
+  if (cup.precisa && !cup.codigo) {
+    paraHumano(`A etapa "${FASES[d.fase].titulo}" usa o cupom de ${cup.pct}%, que não está cadastrado nesta loja (Configurações → Loja)`)
+    return { spam: false }
+  }
+
+  // 4. escrever a resposta de UMA fase
+  const p2 = promptEscrever({ loja, config: estado.config, faseId: d.fase, faltando: d.faltando, an, pedido, ticket: t })
+  const e = await escreverNovo(p2.system, p2.user)
+  if (e.erro) { paraHumano(`A IA não conseguiu escrever a resposta (${e.erro})`); return { spam: false } }
+  somarCusto(t, e.custo); registrarGasto(estado, t.lojaId, e.custo)
+
+  // 5. bloqueios: ação, percentuais, cupons e linguagem de confirmação
+  const v = validarProposta(d.fase, e.r, loja)
+  if (!v.ok) { paraHumano(`A IA saiu da etapa permitida: ${v.motivo}`); return { spam: false } }
+  const indevida = confirmacaoIndevida(e.r.resposta)
+  if (indevida) { paraHumano(`A IA escreveu uma confirmação de ${indevida} por conta própria`); return { spam: false } }
+
+  // 6. rascunho + cadência; a fase só muda quando o e-mail sair
+  t.rascunho = String(e.r.resposta || '').trim()
+  t.rascunhoTraducao = undefined
+  t.geradoPorIA = true
+  t.confianca = 1
+  t.motivoEscalada = undefined
+  t.motivoTraducao = undefined
+  t.decisaoPendente = undefined
+  t.resolucao = FASES[d.fase].titulo
+  an.transicaoPendente = { para: d.fase, mensagem: cls.resumo || '', faltando: d.faltando }
+  an.aguardando = 'envio'
+  const minimo = horarioMinimoEnvio(t, estado.config.atrasoMinutos)
+  an.proximoEnvioMinimo = new Date(minimo).toISOString()
+  t.status = 'aprovacao'
+  t.enviaEm = loja?.novoEnvioAutomatico && estado.config.automacaoAtiva ? minimo : undefined
+  return { spam: false }
+}
+
 /** Cliente identificado: o remetente tem pedido na loja (pelo e-mail) ou o
  *  texto cita um número de pedido que existe — nunca pode cair no spam. */
 function clienteComPedido(estado, de, lojaId, texto) {
@@ -524,6 +651,13 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
 
   // e-mail passou no filtro local: guarda as imagens (a faxina limpa órfãs)
   if (wsId && anexos?.length) base.anexos = await guardarAnexos(wsId, anexos)
+
+  // loja no modo novo: o motor de etapas cuida de tudo (classificar, decidir, escrever)
+  if (modoDaLoja(estado.lojas.find(l => l.id === lojaId)) === 'novo') {
+    const rn = await processarNovo(estado, base)
+    if (rn.spam) { base.status = 'spam'; base.anexos = undefined }
+    return base
+  }
 
   const r = await processarEmail(estado, base)
   if (r.spam && !identificado) {
@@ -695,6 +829,10 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }, w
     t.status = 'humano'
     t.motivoEscalada = 'IA pausada nesta conversa — responda manualmente ou retome a IA'
     t.motivoTraducao = undefined
+  } else if (modoDaLoja(estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))) === 'novo') {
+    // mensagem nova reinicia a cadência e recalcula o rascunho (regra 8)
+    const rn = await processarNovo(estado, t)
+    if (rn.spam) { t.status = 'spam'; t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined }
   } else {
     const r = await processarEmail(estado, t)
     if (r.spam) {
@@ -790,6 +928,12 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   const canal = conta?.configurado || envioPorApi ? conta : contas.find(c => c.configurado)
   if (canal) {
     await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto })
+  }
+  // modo novo: e-mail saiu → a transição pendente vira a fase atual (regra 4)
+  const an = ticket.atendimentoNovo
+  if (an?.transicaoPendente?.para) {
+    confirmarTransicao(an, { para: an.transicaoPendente.para, mensagem: an.transicaoPendente.mensagem })
+    an.proximoEnvioMinimo = undefined
   }
   // Nova resposta numa conversa que já tem resposta enviada (respondida ou
   // mantida em atendimento humano): arquiva a troca anterior no histórico
@@ -1346,6 +1490,31 @@ app.get('/api/exportar', (req, res) => {
   res.send(JSON.stringify(arquivo, null, 2))
 })
 
+
+// Simula um e-mail recebido, passando pelo MESMO pipeline da caixa de entrada.
+// Só existe com ATENDO_SIMULAR=1 — para testes e para ensaiar o modo novo.
+if (process.env.ATENDO_SIMULAR === '1') {
+  app.post('/api/simular-email', async (req, res) => {
+    const { de, nome, assunto, corpo, lojaId, ticketId, comImagem } = req.body ?? {}
+    const anexos = comImagem ? [{ nome: 'foto.jpg', tipo: 'image/jpeg', dados: Buffer.from('fake') }] : []
+    try {
+      if (ticketId) {
+        const t = req.estado.tickets.find(x => x.id === ticketId)
+        if (!t) return res.status(404).json({ erro: 'ticket não encontrado' })
+        await anexarNaConversa(req.estado, t, { corpo: String(corpo || ''), data: new Date().toISOString(), anexos }, req.wsId)
+        salvar(req.wsId)
+        return res.json({ ok: true, ticket: t, state: visao(req.wsId) })
+      }
+      const t = await criarTicket(req.estado, { nome: nome || 'Cliente', de: String(de || ''), assunto: String(assunto || ''), corpo: String(corpo || ''), data: new Date().toISOString(), anexos }, lojaId || 'loja1', req.wsId)
+      req.estado.tickets = [t, ...req.estado.tickets]
+      salvar(req.wsId)
+      res.json({ ok: true, ticket: t, state: visao(req.wsId) })
+    } catch (err) {
+      res.status(500).json({ erro: err.message })
+    }
+  })
+}
+
 app.get('/api/state', (req, res) => ok(req, res))
 
 // Força a checagem dos resumos (a automática roda a cada 10 min de qualquer forma)
@@ -1653,7 +1822,7 @@ app.post('/api/shopify/testar', async (req, res) => {
 const IDIOMAS_RESPOSTA = ['auto', 'pt', 'en', 'es', 'fr', 'de', 'it', 'nl']
 
 app.post('/api/lojas', (req, res) => {
-  const { id, nome, ativa, idioma, assinatura, iaModelo, modoAtendimento } = req.body ?? {}
+  const { id, nome, ativa, idioma, assinatura, iaModelo, modoAtendimento, novoEnvioAutomatico, prazoEntrega, cupons } = req.body ?? {}
   const loja = req.estado.lojas.find(l => l.id === id)
   if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
   if (typeof nome === 'string' && nome.trim()) loja.nome = nome.trim()
@@ -1662,6 +1831,18 @@ app.post('/api/lojas', (req, res) => {
   if (typeof iaModelo === 'string' && ['claude', 'gemini'].includes(iaModelo)) loja.iaModelo = iaModelo
   // modo de atendimento desta loja: o clássico é o padrão e nunca some
   if (modoAtendimento === 'novo' || modoAtendimento === 'classico') loja.modoAtendimento = modoAtendimento
+  // modo novo: envio automático (desligado por padrão no piloto), prazo em dias úteis e cupons por percentual
+  if (typeof novoEnvioAutomatico === 'boolean') loja.novoEnvioAutomatico = novoEnvioAutomatico
+  if (prazoEntrega && typeof prazoEntrega === 'object') {
+    const n = (v, padrao) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 && x <= 90 ? x : padrao }
+    loja.prazoEntrega = { min: n(prazoEntrega.min, 5), max: n(prazoEntrega.max, 12), processamento: n(prazoEntrega.processamento, 3) }
+    if (loja.prazoEntrega.max < loja.prazoEntrega.min) loja.prazoEntrega.max = loja.prazoEntrega.min
+  }
+  if (cupons && typeof cupons === 'object') {
+    loja.cupons = Object.fromEntries(PERCENTUAIS_CUPOM
+      .map(p => [String(p), String(cupons[p] ?? cupons[String(p)] ?? '').trim().slice(0, 40)])
+      .filter(([, v]) => v))
+  }
   // assinatura própria da loja; vazia volta ao padrão do workspace
   if (typeof assinatura === 'string') loja.assinatura = assinatura.trim() || null
   salvar(req.wsId); ok(req, res)

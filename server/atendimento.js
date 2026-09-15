@@ -1,30 +1,740 @@
 /**
  * Modos de atendimento.
  *
- * "classico" é o atendimento que roda hoje: fluxo de devolução em 5 etapas
- * (perguntar o motivo → oferecer troca → oferecer 60%/100% → escalar a decisão),
- * com as travas que impedem a IA de confirmar reembolso ou troca sozinha.
+ * "classico" é o atendimento original: fluxo de devolução em 5 etapas dentro do
+ * prompt, com as travas que impedem a IA de confirmar reembolso ou troca.
  *
- * "novo" é a reformulação em desenho. Enquanto REGRAS_NOVO estiver vazio, o
- * modo novo se comporta EXATAMENTE como o clássico — a troca no painel não
- * muda nada até as regras novas existirem. Nada do clássico é apagado: os dois
- * convivem, e cada loja escolhe o seu.
+ * "novo" é o motor de estados descrito em docs/atendimento-novo-decisoes.md:
+ * a IA só CLASSIFICA o que o cliente disse; quem escolhe a única ação permitida
+ * é este arquivo, a partir da fase gravada no ticket. Uma etapa por resposta do
+ * cliente, sem saltos, com aceite indo para o dono decidir.
+ *
+ * Os dois convivem: cada loja escolhe o seu (loja.modoAtendimento).
  */
 
 export const MODOS_ATENDIMENTO = {
   classico: 'Clássico — o atendimento atual',
-  novo: 'Novo — em construção',
+  novo: 'Novo — motor de etapas',
 }
 
 /** Modo de uma loja, com o clássico como padrão para quem nunca escolheu. */
 export const modoDaLoja = loja => (loja?.modoAtendimento === 'novo' ? 'novo' : 'classico')
 
-/**
- * Regras do atendimento NOVO — substituem o fluxo de devolução do clássico
- * dentro do prompt. Cada item vira uma linha das instruções da IA.
- * Vazio de propósito: é aqui que a reformulação vai ser escrita.
- */
-export const REGRAS_NOVO = []
+/** Percentuais de cupom que o mapa usa — cada loja cadastra o código de cada um. */
+export const PERCENTUAIS_CUPOM = [10, 15, 25, 30, 35, 40]
 
-/** true quando o modo novo já tem regras próprias para valer. */
-export const novoEmVigor = () => REGRAS_NOVO.length > 0
+/* ------------------------------------------------------------------ */
+/* Jornadas e fases                                                    */
+/* ------------------------------------------------------------------ */
+
+export const JORNADAS = {
+  entrada: 'Entrada geral',
+  tamanho: 'Tamanho / caimento',
+  qualidade: 'Qualidade / não gostou',
+  defeito_errado: 'Defeito / produto errado',
+  nao_recebido: 'Não recebeu / atraso',
+  cancelamento: 'Cancelamento',
+}
+
+/**
+ * Cada fase é a ÚNICA ação permitida naquele ponto da conversa.
+ *
+ *  oferta        o que a loja oferece nesta fase (tipo, percentual, cupom, prazo)
+ *  requer        dados que precisam existir antes de enviar esta fase
+ *  aoAceitar     para onde vai se o cliente aceitar ('humano' = decisão do dono;
+ *                'endereco' = pedir endereço completo antes de ir ao dono)
+ *  aoRecusar     próxima fase se o cliente recusar (null = não há próxima)
+ *  instrucao     o que a IA deve escrever — só esta ação, nada de outras etapas
+ */
+export const FASES = {
+  /* ---- coleta ---- */
+  coleta: {
+    jornada: 'entrada', titulo: 'Coletar o que falta',
+    oferta: null, requer: [],
+    aoAceitar: null, aoRecusar: null,
+    instrucao: 'Peça, de forma curta e cordial, SOMENTE as informações que faltam (listadas abaixo). Não ofereça nada: nem troca, nem cupom, nem reembolso, nem etiqueta.',
+  },
+
+  /* ---- tamanho (3.1) ---- */
+  tam_ajuste: {
+    jornada: 'tamanho', titulo: 'Perguntar se ficou pequeno ou grande',
+    oferta: null, requer: ['produtos'],
+    aoAceitar: null, aoRecusar: null,
+    instrucao: 'Para cada produto envolvido, pergunte se ficou PEQUENO ou GRANDE. Não recomende tamanho ainda e não ofereça nada.',
+  },
+  tam_troca: {
+    jornada: 'tamanho', titulo: 'Troca gratuita pelo tamanho certo',
+    oferta: { tipo: 'troca', pct: null, cupom: null, prazo: '5 a 11 dias', semDevolucao: true },
+    requer: ['produtos', 'ajuste'],
+    aoAceitar: 'endereco', aoRecusar: 'troca_20',
+    instrucao: 'Recomende o tamanho correto para cada produto com base no ajuste informado (ficou pequeno → um tamanho MAIOR; ficou grande → um tamanho MENOR; nunca o contrário). Ofereça a troca GRATUITA por esse tamanho, sem necessidade de devolver o produto atual, com frete expresso e prazo de 5 a 11 dias. Pergunte se o cliente aceita.',
+  },
+  troca_20: {
+    jornada: 'tamanho', titulo: 'Troca gratuita + reembolso de 20%',
+    oferta: { tipo: 'troca_reembolso', pct: 20, cupom: null, prazo: '5 a 11 dias', semDevolucao: true },
+    requer: ['produtos'],
+    aoAceitar: 'endereco', aoRecusar: 'reemb_40',
+    instrucao: 'Ofereça novamente a troca gratuita (sem devolver o produto atual, frete expresso, 5 a 11 dias) e, além dela, um reembolso de 20% do valor pago, informando o valor em dinheiro. Pergunte se aceita.',
+  },
+
+  /* ---- produto errado (3.2) ---- */
+  err_envio: {
+    jornada: 'defeito_errado', titulo: 'Enviar o produto correto + cupom de 15%',
+    oferta: { tipo: 'reenvio', pct: null, cupom: 15, prazo: '4 a 11 dias', semDevolucao: true },
+    requer: ['produtos'],
+    aoAceitar: 'endereco', aoRecusar: 'qual_cupom_35',
+    instrucao: 'Peça desculpas pelo erro e ofereça o envio GRATUITO do produto correto, sem necessidade de devolver o que recebeu, com frete expresso de 4 a 11 dias, mais um cupom de 15% como pedido de desculpas (informe o código). Pergunte se aceita.',
+  },
+
+  /* ---- defeito (3.3) ---- */
+  def_foto: {
+    jornada: 'defeito_errado', titulo: 'Pedir foto do defeito',
+    oferta: null, requer: ['produtos'],
+    aoAceitar: null, aoRecusar: null,
+    instrucao: 'Lamente o ocorrido e peça uma foto do produto mostrando o defeito ou dano, para dar andamento. Não ofereça nada até a foto chegar.',
+  },
+  def_troca: {
+    jornada: 'defeito_errado', titulo: 'Troca gratuita do produto com defeito',
+    oferta: { tipo: 'troca', pct: null, cupom: null, prazo: '4 a 11 dias', semDevolucao: true },
+    requer: ['produtos', 'foto'],
+    aoAceitar: 'endereco', aoRecusar: 'troca_20',
+    instrucao: 'Agradeça a foto, peça desculpas e ofereça a troca GRATUITA do produto, sem necessidade de devolver o recebido, com frete expresso de 4 a 11 dias. Pergunte se aceita.',
+  },
+
+  /* ---- qualidade / não gostou (4.3) ---- */
+  qual_troca: {
+    jornada: 'qualidade', titulo: 'Troca por outra cor/tamanho/modelo + cupom de 15%',
+    oferta: { tipo: 'troca', pct: null, cupom: 15, prazo: '4 a 11 dias', semDevolucao: true },
+    requer: ['produtos', 'motivo'],
+    aoAceitar: 'endereco', aoRecusar: 'qual_cupom_35',
+    instrucao: 'Lamente que o produto não agradou e ofereça GRATUITAMENTE outra cor, tamanho, modelo ou versão que atenda melhor, sem devolver a primeira remessa, com frete expresso de 4 a 11 dias, mais um cupom de 15% (informe o código). Pergunte qual opção prefere.',
+  },
+  qual_cupom_35: {
+    jornada: 'qualidade', titulo: 'Cupom de 35% ficando com o produto',
+    oferta: { tipo: 'cupom', pct: null, cupom: 35, prazo: null, semDevolucao: true },
+    requer: ['produtos'],
+    aoAceitar: 'humano', aoRecusar: 'reemb_25',
+    instrucao: 'Ofereça um cupom de 35% válido para qualquer pedido (informe o código), e o cliente FICA com o produto. Pergunte se aceita.',
+  },
+
+  /* ---- escada de reembolso (5) ---- */
+  reemb_25: {
+    jornada: 'qualidade', titulo: 'Reembolso de 25%',
+    oferta: { tipo: 'reembolso', pct: 25, cupom: null, prazo: null, semDevolucao: true },
+    requer: ['produtos'],
+    aoAceitar: 'humano', aoRecusar: 'reemb_40',
+    instrucao: 'Ofereça reembolso de 25% do valor pago (informe o valor em dinheiro), e o cliente FICA com o produto. Pergunte se aceita.',
+  },
+  reemb_40: {
+    jornada: 'qualidade', titulo: 'Reembolso de 40%',
+    oferta: { tipo: 'reembolso', pct: 40, cupom: null, prazo: null, semDevolucao: true },
+    requer: ['produtos'],
+    aoAceitar: 'humano', aoRecusar: 'reemb_50',
+    instrucao: 'Explique que, na devolução, o reembolso integral só seria feito depois que o pedido chegasse às instalações e fosse revisado, o que demoraria mais de dez dias. Para evitar isso, ofereça 40% do valor pago (informe o valor em dinheiro) sem necessidade de devolução. Pergunte se aceita.',
+  },
+  reemb_50: {
+    jornada: 'qualidade', titulo: 'Reembolso de 50%',
+    oferta: { tipo: 'reembolso', pct: 50, cupom: null, prazo: null, semDevolucao: true },
+    requer: ['produtos'],
+    aoAceitar: 'humano', aoRecusar: 'reemb_60',
+    instrucao: 'Explique que o frete de devolução seria pago pelo cliente e custaria aproximadamente o valor indicado abaixo (diga o valor em dinheiro, não só a porcentagem). Para evitar a devolução, ofereça 50% do valor pago (informe o valor) ficando com o produto. Pergunte se aceita.',
+  },
+  reemb_60: {
+    jornada: 'qualidade', titulo: 'Reembolso de 60%',
+    oferta: { tipo: 'reembolso', pct: 60, cupom: null, prazo: null, semDevolucao: true },
+    requer: ['produtos'],
+    aoAceitar: 'humano', aoRecusar: 'reemb_70',
+    instrucao: 'Reforce com clareza os pontos negativos da devolução (frete por conta do cliente, espera de mais de dez dias pela revisão) e ofereça 60% do valor pago (informe o valor) ficando com o produto. Pergunte se aceita.',
+  },
+  reemb_70: {
+    jornada: 'qualidade', titulo: 'Reembolso de 70%',
+    oferta: { tipo: 'reembolso', pct: 70, cupom: null, prazo: null, semDevolucao: true },
+    requer: ['produtos'],
+    aoAceitar: 'humano', aoRecusar: 'reemb_100',
+    instrucao: 'Reforce os pontos negativos da devolução e explique que, descontado o frete de retorno, financeiramente a devolução ficaria equivalente para o cliente. Ofereça 70% do valor pago (informe o valor) ficando com o produto. Pergunte se aceita.',
+  },
+  reemb_100: {
+    jornada: 'qualidade', titulo: 'Reembolso de 100% — decisão do dono',
+    oferta: { tipo: 'reembolso', pct: 100, cupom: null, prazo: null, semDevolucao: false },
+    requer: [], aoAceitar: 'humano', aoRecusar: null,
+    instrucao: null, // não escreve: vai direto para a fila humana
+  },
+
+  /* ---- não recebido: perguntou o status (6) / ainda não chegou (8) ---- */
+  nc_no_prazo: {
+    jornada: 'nao_recebido', titulo: 'Dentro do prazo — acalmar e informar a data',
+    oferta: null, requer: [],
+    aoAceitar: null, aoRecusar: null,
+    instrucao: 'Acalme o cliente: o pedido está dentro do prazo. Informe o prazo e a data provável de recebimento indicados abaixo. Se ele pediu cancelamento ou reembolso, explique com gentileza que isso só pode seguir depois do fim do prazo de entrega, conforme os termos de entrega. Não ofereça nada.',
+  },
+  nc_atrasado_25: {
+    jornada: 'nao_recebido', titulo: 'Atrasado — pedir 5 dias úteis + cupom de 25%',
+    oferta: { tipo: 'cupom', pct: null, cupom: 25, prazo: null, semDevolucao: false },
+    requer: [],
+    aoAceitar: 'humano', aoRecusar: 'nc_cupom_40',
+    instrucao: 'Peça desculpas com cuidado. Explique que a transportadora teve atrasos logísticos e que a loja NÃO deixará o cliente no prejuízo. Peça que aguarde no máximo mais cinco dias úteis, conforme informação da transportadora, e ofereça um cupom de 25% como pedido de desculpas (informe o código). Pergunte se aceita aguardar.',
+  },
+  nc_cupom_40: {
+    jornada: 'nao_recebido', titulo: 'Cupom de 40% para aguardar mais um pouco',
+    oferta: { tipo: 'cupom', pct: null, cupom: 40, prazo: null, semDevolucao: false },
+    requer: [],
+    aoAceitar: 'humano', aoRecusar: 'reemb_100',
+    instrucao: 'Entenda a frustração e ofereça um cupom de 40% para a próxima compra (informe o código) como compensação por aguardar mais um pouco. Pergunte se aceita.',
+  },
+
+  /* ---- chegou pedindo reembolso por não recebido (7) ---- */
+  nr_reenvio_30: {
+    jornada: 'nao_recebido', titulo: 'Reenvio expresso + cupom de 30%',
+    oferta: { tipo: 'reenvio', pct: null, cupom: 30, prazo: '4 a 11 dias', semDevolucao: false },
+    requer: [],
+    aoAceitar: 'endereco', aoRecusar: 'nr_reenvio_20',
+    instrucao: 'Informe que o reembolso só poderá ser efetuado quando o pedido retornar às instalações, e que esse retorno pode demorar mais de 17 dias por ser mais lento que a entrega. Como solução rápida, ofereça o REENVIO com frete expresso de 4 a 11 dias mais um cupom de 30% para a próxima compra (informe o código). Pergunte se aceita.',
+  },
+  nr_entregue_aguardar: {
+    jornada: 'nao_recebido', titulo: 'Marcado como entregue — aguardar 2 dias',
+    oferta: null, requer: [],
+    aoAceitar: null, aoRecusar: 'nr_reenvio_20',
+    instrucao: 'Explique que a transportadora às vezes marca como entregue enquanto o pacote ainda está a caminho. Peça que aguarde mais dois dias e que verifique com vizinhos ou na portaria se alguém recebeu na ausência dele. Não ofereça nada ainda.',
+  },
+  nr_reenvio_20: {
+    jornada: 'nao_recebido', titulo: 'Reenvio expresso + reembolso de 20%',
+    oferta: { tipo: 'reenvio_reembolso', pct: 20, cupom: null, prazo: '4 a 11 dias', semDevolucao: false },
+    requer: [],
+    aoAceitar: 'endereco', aoRecusar: 'nr_reenvio_35',
+    instrucao: 'Informe novamente que o reembolso depende do retorno do pedido às instalações e pode demorar mais de 17 dias. Ofereça o REENVIO com frete expresso de 4 a 11 dias mais reembolso de 20% do valor pago (informe o valor). Pergunte se aceita.',
+  },
+  nr_reenvio_35: {
+    jornada: 'nao_recebido', titulo: 'Reenvio expresso + reembolso de 35%',
+    oferta: { tipo: 'reenvio_reembolso', pct: 35, cupom: null, prazo: '4 a 11 dias', semDevolucao: false },
+    requer: [],
+    aoAceitar: 'endereco', aoRecusar: 'reemb_100',
+    instrucao: 'Reforce os pontos negativos de esperar o retorno do pedido e ofereça o REENVIO expresso de 4 a 11 dias mais reembolso de 35% do valor pago (informe o valor). Pergunte se aceita.',
+  },
+
+  /* ---- cancelamento de pedido não processado (8.3) ---- */
+  cancel_nao_processado: {
+    jornada: 'cancelamento', titulo: 'Cancelamento — decisão do dono',
+    oferta: { tipo: 'cancelamento', pct: 100, cupom: null, prazo: null, semDevolucao: false },
+    requer: [], aoAceitar: 'humano', aoRecusar: null,
+    instrucao: null, // vai direto para a fila humana
+  },
+
+  /* ---- aceite (9) ---- */
+  endereco: {
+    jornada: 'entrada', titulo: 'Confirmar endereço completo',
+    oferta: null, requer: [],
+    aoAceitar: null, aoRecusar: null,
+    instrucao: 'Confirme que a opção aceita será providenciada e peça o endereço de entrega COMPLETO (rua, número, complemento, CEP/código postal, cidade, país) para o envio. Não prometa data nem diga que já foi despachado.',
+  },
+}
+
+/** Fases que fecham a rodada da IA mandando o caso para o dono. */
+const FASES_HUMANAS = new Set(['reemb_100', 'cancel_nao_processado'])
+
+/* ------------------------------------------------------------------ */
+/* Estado gravado no ticket                                            */
+/* ------------------------------------------------------------------ */
+
+export function novoEstado() {
+  return {
+    versao: 1,
+    fluxo: null,
+    etapa: null,
+    produtosAfetados: [],
+    motivo: null,
+    ajusteTamanho: null,
+    fotoSolicitada: false,
+    fotoRecebida: false,
+    ofertaAtual: null,
+    ofertaEnviadaEm: null,
+    aguardando: null,
+    acaoAceita: null,
+    enderecoConfirmado: null,
+    historicoEtapas: [],
+    transicaoPendente: null,
+    proximaAposColeta: null,
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Prazo de entrega em dias úteis                                      */
+/* ------------------------------------------------------------------ */
+
+const DIA = 864e5
+const fimDeSemana = d => d.getUTCDay() === 0 || d.getUTCDay() === 6
+
+/** Soma N dias úteis a uma data (sábado e domingo não contam). */
+export function somarDiasUteis(data, dias) {
+  const d = new Date(data)
+  let faltam = dias
+  while (faltam > 0) {
+    d.setTime(d.getTime() + DIA)
+    if (!fimDeSemana(d)) faltam--
+  }
+  return d
+}
+
+/** Prazo padrão quando a loja ainda não cadastrou o dela. */
+export const PRAZO_PADRAO = { min: 5, max: 12, processamento: 3 }
+
+/**
+ * Situação do prazo de um pedido: limite (fim do prazo máximo), data provável
+ * (prazo mínimo) e se já venceu. Base: data de despacho; sem despacho, a data
+ * do pedido mais os dias de processamento.
+ */
+export function prazoDoPedido(pedido, loja, agora = Date.now()) {
+  const p = { ...PRAZO_PADRAO, ...(loja?.prazoEntrega ?? {}) }
+  const despacho = pedido?.despachadoEm ? new Date(pedido.despachadoEm) : null
+  const base = despacho ?? (pedido?.criadoEm ? somarDiasUteis(new Date(pedido.criadoEm + 'T12:00:00Z'), p.processamento) : new Date(agora))
+  const limite = somarDiasUteis(base, p.max)
+  const provavel = somarDiasUteis(base, p.min)
+  return {
+    inicio: base.toISOString().slice(0, 10),
+    provavel: provavel.toISOString().slice(0, 10),
+    limite: limite.toISOString().slice(0, 10),
+    vencido: agora > limite.getTime(),
+    diasUteis: `${p.min} a ${p.max} dias úteis`,
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Cadência: 5 horas depois da última mensagem do cliente             */
+/* ------------------------------------------------------------------ */
+
+export const CADENCIA_MS = 5 * 3600_000
+
+/** Já existe resposta da loja nesta conversa? (a cadência só vale depois dela) */
+export const lojaJaRespondeu = t =>
+  !!t.resposta || (t.historico ?? []).some(m => m.autor === 'atendo')
+
+/** Última mensagem do cliente, em ms. */
+export function ultimaMensagemClienteMs(t) {
+  const datas = [t.data, ...(t.historico ?? []).filter(m => m.autor !== 'atendo').map(m => m.data)]
+  return Math.max(0, ...datas.filter(Boolean).map(d => new Date(d).getTime()))
+}
+
+/**
+ * Quando a próxima resposta pode sair. Primeira resposta da loja: usa o atraso
+ * normal do painel; depois disso, 5 h após a mensagem mais recente do cliente.
+ */
+export function horarioMinimoEnvio(t, atrasoMinutos = 0, agora = Date.now()) {
+  if (!lojaJaRespondeu(t)) return agora + Math.max(0, atrasoMinutos) * 60_000
+  return Math.max(agora, ultimaMensagemClienteMs(t) + CADENCIA_MS)
+}
+
+/* ------------------------------------------------------------------ */
+/* A máquina de estados                                                */
+/* ------------------------------------------------------------------ */
+
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim()
+
+/** Casa os produtos que o cliente citou com os itens do pedido. */
+export function casarProdutos(citados, pedido) {
+  const itens = pedido?.itens ?? []
+  const achados = []
+  for (const c of citados ?? []) {
+    const n = norm(c)
+    if (!n) continue
+    const item = itens.find(i => {
+      const t = norm(`${i.titulo} ${i.variante ?? ''}`)
+      return t === n || t.includes(n) || n.includes(norm(i.titulo))
+    })
+    const rotulo = item ? `${item.titulo}${item.variante ? ` (${item.variante})` : ''}` : String(c)
+    if (!achados.includes(rotulo)) achados.push(rotulo)
+  }
+  return achados
+}
+
+/** Rótulos de todos os itens do pedido (para preencher sozinho quando só há um). */
+const rotulosDoPedido = pedido => (pedido?.itens ?? []).map(i => `${i.titulo}${i.variante ? ` (${i.variante})` : ''}`)
+
+/** Primeira OFERTA de cada fluxo. As fases de coleta (perguntar pequeno/grande,
+ *  pedir foto, pedir produtos) entram sozinhas quando falta o dado exigido. */
+function faseInicialDoFluxo(fluxo) {
+  return {
+    tamanho: 'tam_troca',
+    errado: 'err_envio',
+    defeito: 'def_troca',
+    qualidade: 'qual_troca',
+    nao_recebido_status: 'nc_no_prazo',
+    nao_recebido_reembolso: 'nr_reenvio_30',
+    entregue_nao_recebido: 'nr_entregue_aguardar',
+    cancelamento: 'cancel_nao_processado',
+  }[fluxo] ?? null
+}
+
+/**
+ * Escolhe o fluxo na triagem, a partir da classificação e do pedido.
+ * Retorna null quando o caso está fora do mapa.
+ */
+export function escolherFluxo(cls, pedido, loja, agora = Date.now()) {
+  const querReembolso = cls.intencao === 'pede_reembolso'
+  const querCancelar = cls.intencao === 'pede_cancelamento'
+  const status = pedido?.status ?? null
+
+  // cancelamento de pedido ainda não processado
+  if (querCancelar && (status === 'aguardando' || !pedido)) return 'cancelamento'
+
+  // entrega: o que o cliente relata + o que a Shopify sabe
+  const sit = cls.situacaoEntrega
+  if (sit === 'entregue_nao_recebido' || (cls.motivo === 'nao_recebido' && status === 'entregue')) return 'entregue_nao_recebido'
+  if (sit === 'voltou_remetente' || sit === 'recusou_na_porta') return 'nao_recebido_reembolso'
+  if (cls.motivo === 'nao_recebido' || sit === 'nao_chegou' || cls.intencao === 'pergunta_status') {
+    const prazo = prazoDoPedido(pedido, loja, agora)
+    // já chegou pedindo reembolso de um pedido que não veio: seção 7
+    if (querReembolso && prazo.vencido) return 'nao_recebido_reembolso'
+    // pediu cancelamento/reembolso ou só perguntou: seção 6/8 (o prazo decide a fase)
+    return 'nao_recebido_status'
+  }
+
+  // devolução/troca/reembolso com o produto em mãos
+  if (querReembolso || querCancelar || cls.intencao === 'pede_troca' || cls.motivo) {
+    switch (cls.motivo) {
+      case 'tamanho': return 'tamanho'
+      case 'errado': return 'errado'
+      case 'defeito': return 'defeito'
+      case 'qualidade':
+      case 'nao_gostou':
+      case 'nao_informado':
+      case null:
+      case undefined:
+        return 'qualidade'
+      default: return 'qualidade'
+    }
+  }
+  return null
+}
+
+/** Dados que ainda faltam para uma fase. */
+export function faltaPara(faseId, an) {
+  const fase = FASES[faseId]
+  if (!fase) return []
+  const faltando = []
+  for (const r of fase.requer) {
+    if (r === 'produtos' && !an.produtosAfetados.length) faltando.push('produtos')
+    if (r === 'motivo' && !an.motivo) faltando.push('motivo')
+    if (r === 'ajuste' && !(an.ajusteTamanho && Object.keys(an.ajusteTamanho).length)) faltando.push('ajuste')
+    if (r === 'foto' && !an.fotoRecebida) faltando.push('foto')
+  }
+  return faltando
+}
+
+/**
+ * Decide o que fazer com a mensagem que acabou de chegar.
+ *
+ *  an        estado atendimentoNovo do ticket (não é alterado; devolve cópia)
+ *  cls       classificação da IA
+ *  pedido    pedido da Shopify (pode ser null)
+ *  loja      loja do ticket
+ *  temFoto   a mensagem trouxe imagem
+ *  agora     timestamp
+ *
+ * Retorna { an, fase, faltando, humano, encerrar, aceite }:
+ *  fase      id da fase a ESCREVER agora (null quando não há o que escrever)
+ *  faltando  dados que a fase "coleta" deve pedir
+ *  humano    motivo para ir à fila humana (string) ou null
+ *  encerrar  true quando a mensagem não pede nada (agradecimento)
+ *  aceite    { fase, oferta } quando o cliente aceitou algo
+ */
+export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora = Date.now() }) {
+  const an = { ...anAntes, produtosAfetados: [...(anAntes.produtosAfetados ?? [])], historicoEtapas: [...(anAntes.historicoEtapas ?? [])] }
+  const saida = { an, fase: null, faltando: [], humano: null, encerrar: false, aceite: null }
+
+  // --- dados novos trazidos pela mensagem ---
+  if (cls.motivo && !an.motivo) an.motivo = cls.motivo
+  if (cls.produtos?.length) {
+    for (const p of casarProdutos(cls.produtos, pedido)) if (!an.produtosAfetados.includes(p)) an.produtosAfetados.push(p)
+  }
+  if (!an.produtosAfetados.length && rotulosDoPedido(pedido).length === 1) an.produtosAfetados = rotulosDoPedido(pedido)
+  if (cls.ajustes?.length) {
+    an.ajusteTamanho = { ...(an.ajusteTamanho ?? {}) }
+    for (const a of cls.ajustes) if (a?.produto && (a.ajuste === 'pequeno' || a.ajuste === 'grande')) an.ajusteTamanho[a.produto] = a.ajuste
+  }
+  if (temFoto) an.fotoRecebida = true
+  if (cls.endereco) an.enderecoConfirmado = cls.endereco
+
+  // --- já está com o dono: não mexe ---
+  if (an.aguardando === 'humano') { saida.humano = 'Caso já está com você — o cliente escreveu de novo'; return saida }
+
+  // --- agradecimento puro: encerra ---
+  if (cls.intencao === 'agradece') { saida.encerrar = true; return saida }
+
+  // --- aguardando endereço (aceite de troca/reenvio) ---
+  if (an.etapa === 'endereco') {
+    if (an.enderecoConfirmado) {
+      an.aguardando = 'humano'
+      saida.aceite = { fase: an.acaoAceita, oferta: FASES[an.acaoAceita]?.oferta ?? null }
+      saida.humano = `Cliente aceitou "${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}" e confirmou o endereço — aprovar e despachar`
+      return saida
+    }
+    saida.fase = 'endereco'; return saida
+  }
+
+  // --- triagem: primeira vez (ou ainda esperando o número do pedido) ---
+  if (!an.etapa || (an.etapa === 'coleta' && !an.fluxo)) {
+    // sem pedido localizado não há valor, itens nem prazo: pede o número primeiro
+    if (!pedido) { saida.fase = 'coleta'; saida.faltando = ['pedido']; an.proximaAposColeta = null; return saida }
+    const fluxo = escolherFluxo(cls, pedido, loja, agora)
+    if (!fluxo) { saida.humano = 'Fora do mapa do atendimento novo — responda você'; return saida }
+    an.fluxo = fluxo
+    let alvo = faseInicialDoFluxo(fluxo)
+    if (fluxo === 'nao_recebido_status') alvo = prazoDoPedido(pedido, loja, agora).vencido ? 'nc_atrasado_25' : 'nc_no_prazo'
+    return irPara(saida, alvo, agora)
+  }
+
+  const atual = FASES[an.etapa]
+
+  // --- fase de coleta: o cliente respondeu o que faltava? ---
+  if (an.etapa === 'coleta' || an.etapa === 'tam_ajuste' || an.etapa === 'def_foto') {
+    const alvo = an.proximaAposColeta ?? faseInicialDoFluxo(an.fluxo)
+    return irPara(saida, alvo, agora)
+  }
+
+  // --- dentro do prazo: o prazo venceu? o cliente insiste? ---
+  if (an.etapa === 'nc_no_prazo') {
+    const prazo = prazoDoPedido(pedido, loja, agora)
+    return irPara(saida, prazo.vencido ? 'nc_atrasado_25' : 'nc_no_prazo', agora)
+  }
+  if (an.etapa === 'nr_entregue_aguardar') {
+    if (cls.intencao === 'informa' && /receb|chegou|arriv|erhalten|angekommen|ricevut|reçu|ontvangen/i.test(cls.resumo ?? '')) { saida.encerrar = true; return saida }
+    return irPara(saida, 'nr_reenvio_20', agora)
+  }
+
+  // --- resposta a uma oferta ---
+  if (cls.intencao === 'aceita') {
+    if (!atual?.aoAceitar) { saida.humano = 'Cliente concordou, mas esta fase não tem oferta — confira'; return saida }
+    an.acaoAceita = an.etapa
+    if (atual.aoAceitar === 'endereco') return irPara(saida, 'endereco', agora)
+    an.aguardando = 'humano'
+    saida.aceite = { fase: an.etapa, oferta: atual.oferta }
+    saida.humano = `Cliente aceitou "${atual.titulo}" — aprovar e confirmar`
+    return saida
+  }
+  if (cls.intencao === 'recusa' || cls.intencao === 'pede_reembolso' || cls.intencao === 'pede_cancelamento') {
+    if (!atual?.aoRecusar) { saida.humano = `Cliente recusou "${atual?.titulo ?? an.etapa}" e não há próxima etapa — decida você`; return saida }
+    return irPara(saida, atual.aoRecusar, agora)
+  }
+  if (cls.intencao === 'informa' || cls.intencao === 'pergunta_status') {
+    // informou algo sem aceitar nem recusar: repete a MESMA fase (não avança)
+    return irPara(saida, an.etapa, agora)
+  }
+  saida.humano = 'Não deu para entender se o cliente aceitou ou recusou — responda você'
+  return saida
+}
+
+/** Aponta a fase a escrever, respeitando dados faltantes, foto e cupons. */
+function irPara(saida, alvo, agora) {
+  const { an } = saida
+  if (!alvo) { saida.humano = 'Sem próxima etapa definida'; return saida }
+  if (FASES_HUMANAS.has(alvo)) {
+    an.aguardando = 'humano'
+    saida.humano = alvo === 'reemb_100'
+      ? 'Cliente recusou todas as alternativas — reembolso de 100% é decisão sua'
+      : 'Cancelamento de pedido não processado — decisão sua'
+    saida.aceite = { fase: alvo, oferta: FASES[alvo].oferta }
+    return saida
+  }
+  const faltando = faltaPara(alvo, an)
+  if (faltando.length) {
+    // foto tem fase própria; o resto vai para a coleta genérica
+    if (faltando.includes('foto')) { an.fotoSolicitada = true; saida.fase = 'def_foto'; an.proximaAposColeta = alvo; return saida }
+    if (faltando.includes('ajuste') && !faltando.includes('produtos')) { saida.fase = 'tam_ajuste'; an.proximaAposColeta = alvo; return saida }
+    saida.fase = 'coleta'; saida.faltando = faltando; an.proximaAposColeta = alvo; return saida
+  }
+  an.proximaAposColeta = undefined
+  saida.fase = alvo
+  return saida
+}
+
+/** Registra a transição depois de o e-mail sair com sucesso. */
+export function confirmarTransicao(an, { para, mensagem, agora = Date.now() }) {
+  const fase = FASES[para]
+  an.historicoEtapas.push({ de: an.etapa, para, mensagem: String(mensagem || '').slice(0, 200), em: new Date(agora).toISOString() })
+  an.etapa = para
+  // fases sem oferta (coleta, endereço) não apagam a oferta que está em jogo
+  if (fase?.oferta) { an.ofertaAtual = fase.oferta; an.ofertaEnviadaEm = new Date(agora).toISOString() }
+  an.aguardando = 'cliente'
+  an.transicaoPendente = null
+  return an
+}
+
+/* ------------------------------------------------------------------ */
+/* Bloqueios contra salto de etapa (11)                                */
+/* ------------------------------------------------------------------ */
+
+const PCT_RE = /(\d{1,3})\s?%/g
+
+/**
+ * Confere o resultado da IA contra a fase permitida: ação proposta, percentuais
+ * e cupons citados no texto. Retorna { ok, motivo }.
+ */
+export function validarProposta(faseId, resultado, loja) {
+  const fase = FASES[faseId]
+  if (!fase) return { ok: false, motivo: `fase desconhecida (${faseId})` }
+  if (resultado.acao_proposta && resultado.acao_proposta !== faseId) {
+    return { ok: false, motivo: `a IA propôs "${resultado.acao_proposta}" mas a etapa permitida era "${faseId}"` }
+  }
+  const texto = String(resultado.resposta || '')
+  const permitidos = new Set()
+  if (fase.oferta?.pct) permitidos.add(fase.oferta.pct)
+  if (fase.oferta?.cupom) permitidos.add(fase.oferta.cupom)
+  // o percentual do frete de devolução (fase de 50%) pode ser citado
+  if (faseId === 'reemb_50') permitidos.add(25)
+  for (const m of texto.matchAll(PCT_RE)) {
+    const n = Number(m[1])
+    if (!permitidos.has(n)) return { ok: false, motivo: `o texto cita ${n}%, que não pertence à etapa "${fase.titulo}"` }
+  }
+  // cupom: só o código da fase pode aparecer
+  const codigos = Object.entries(loja?.cupons ?? {})
+  for (const [pct, codigo] of codigos) {
+    if (codigo && texto.includes(codigo) && Number(pct) !== fase.oferta?.cupom) {
+      return { ok: false, motivo: `o texto cita o cupom de ${pct}% (${codigo}), que não pertence à etapa "${fase.titulo}"` }
+    }
+  }
+  return { ok: true, motivo: null }
+}
+
+/** Código do cupom exigido pela fase, ou null se a loja não cadastrou. */
+export function cupomDaFase(faseId, loja) {
+  const pct = FASES[faseId]?.oferta?.cupom
+  if (!pct) return { precisa: false, codigo: null }
+  const codigo = loja?.cupons?.[String(pct)] || null
+  return { precisa: true, pct, codigo }
+}
+
+/* ------------------------------------------------------------------ */
+/* Prompts do modo novo                                                */
+/* ------------------------------------------------------------------ */
+
+const NOMES_IDIOMA = { pt: 'português', en: 'inglês', es: 'espanhol', fr: 'francês', de: 'alemão', it: 'italiano', nl: 'holandês' }
+const SIMBOLOS = { EUR: '€', BRL: 'R$', USD: 'US$', GBP: '£' }
+const dinheiro = (v, moeda) => `${Number(v || 0).toFixed(2).replace('.', ',')} ${SIMBOLOS[moeda] ?? moeda ?? ''}`.trim()
+
+const nomeFase = id => FASES[id]?.titulo ?? id
+
+/** Texto do pedido para a IA: itens, valor pago, status e prazo. */
+function blocoPedido(pedido, loja, agora) {
+  if (!pedido) return 'Nenhum pedido localizado para este cliente.'
+  const prazo = prazoDoPedido(pedido, loja, agora)
+  const itens = (pedido.itens ?? []).map(i => `- ${i.quantidade}x ${i.titulo}${i.variante ? ` (${i.variante})` : ''}`).join('\n') || '- (itens não sincronizados)'
+  const status = { aguardando: 'ainda não despachado', transito: 'em trânsito', entregue: 'marcado como entregue', problema: 'com problema/cancelado' }[pedido.status] ?? pedido.status
+  return [
+    `Pedido ${pedido.numero} — VALOR TOTAL PAGO: ${dinheiro(pedido.valor, loja?.moeda)} — status: ${status}${pedido.rastreio && pedido.rastreio !== '—' ? ` — rastreio ${pedido.rastreio}` : ''}`,
+    `Itens:\n${itens}`,
+    `Prazo de entrega: ${prazo.diasUteis} a partir de ${prazo.inicio}; data provável ${prazo.provavel}; limite ${prazo.limite}${prazo.vencido ? ' (PRAZO VENCIDO)' : ' (dentro do prazo)'}.`,
+  ].join('\n')
+}
+
+/**
+ * Prompt da 1ª chamada: só CLASSIFICAR o que o cliente disse. A IA não escreve
+ * resposta aqui e não vê a escada — só o que foi oferecido por último.
+ */
+export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now() }) {
+  const ultimaDaLoja = [...(ticket.historico ?? [])].reverse().find(m => m.autor === 'atendo')?.corpo ?? ticket.resposta ?? null
+  const system = [
+    `Você classifica mensagens de clientes de uma loja de roupas online. Você NÃO responde ao cliente: só extrai dados no JSON pedido.`,
+    ``,
+    `Situação atual da conversa:`,
+    an.etapa ? `- Última ação da loja: "${nomeFase(an.etapa)}"${an.ofertaAtual ? ` (oferta em aberto: ${descreverOferta(an.ofertaAtual)})` : ''}.` : `- Primeira mensagem: ainda não há ação da loja.`,
+    an.motivo ? `- Motivo já conhecido: ${an.motivo}.` : `- Motivo ainda desconhecido.`,
+    an.produtosAfetados.length ? `- Produtos já identificados: ${an.produtosAfetados.join('; ')}.` : `- Produtos envolvidos ainda não identificados.`,
+    ``,
+    blocoPedido(pedido, loja, agora),
+    ``,
+    `Como classificar "intencao":`,
+    `- aceita: o cliente concorda com a oferta em aberto (ex.: "ok", "aceito", "pode ser", "quero a troca", "manda o cupom").`,
+    `- recusa: rejeita a oferta em aberto sem exigir outra coisa específica.`,
+    `- pede_reembolso: rejeita e quer o dinheiro de volta (inclui "quero 100%", "só aceito reembolso").`,
+    `- pede_cancelamento: quer cancelar o pedido.`,
+    `- pede_troca: quer trocar/devolver o produto (primeira mensagem, sem exigir reembolso).`,
+    `- informa: só traz dados pedidos (produto, tamanho, foto, endereço) ou responde a uma pergunta da loja.`,
+    `- pergunta_status: só quer saber onde está o pedido / quando chega.`,
+    `- agradece: agradece ou confirma que está tudo certo, sem pedir nada.`,
+    `- outro: não se encaixa (dúvida de produto antes de comprar, nota fiscal, etc.).`,
+    ``,
+    `"motivo": o motivo que o CLIENTE alegou — tamanho, qualidade, nao_gostou, defeito, errado, nao_recebido, nao_informado (quando pede reembolso/devolução sem dizer por quê) ou nenhum. Nunca invente.`,
+    `"produtos": os itens do pedido que o cliente citou, com o nome como aparece na lista acima (lista vazia se não citou).`,
+    `"ajustes": para cada produto que o cliente disse que ficou pequeno ou grande.`,
+    `"situacaoEntrega": nao_chegou, entregue_nao_recebido (consta entregue mas ele não recebeu), voltou_remetente, recusou_na_porta, ou nenhuma.`,
+    `"endereco": o endereço de entrega completo, se o cliente escreveu um; senão string vazia.`,
+    `"resumo": uma frase em português do que o cliente disse. "idioma": código ISO do idioma do cliente.`,
+    `"spam": true só se não for cliente falando da própria compra.`,
+  ].join('\n')
+  const user = [
+    ultimaDaLoja ? `Última mensagem da loja:\n${String(ultimaDaLoja).slice(0, 1500)}\n\n---\n` : '',
+    `Mensagem do cliente (${ticket.nome} <${ticket.de}>):`,
+    `Assunto: ${ticket.assunto}`,
+    String(ticket.corpo || '').slice(0, 4000),
+    ticket.anexos?.length ? `\n(O cliente anexou ${ticket.anexos.length} imagem(ns).)` : '',
+  ].join('\n')
+  return { system, user }
+}
+
+function descreverOferta(o) {
+  if (!o) return ''
+  const partes = []
+  if (o.tipo === 'troca') partes.push('troca gratuita')
+  if (o.tipo === 'troca_reembolso') partes.push(`troca gratuita + reembolso de ${o.pct}%`)
+  if (o.tipo === 'reenvio') partes.push('reenvio expresso')
+  if (o.tipo === 'reenvio_reembolso') partes.push(`reenvio expresso + reembolso de ${o.pct}%`)
+  if (o.tipo === 'reembolso') partes.push(`reembolso de ${o.pct}%`)
+  if (o.tipo === 'cupom') partes.push(`cupom de ${o.cupom}%`)
+  if (o.cupom && o.tipo !== 'cupom') partes.push(`cupom de ${o.cupom}%`)
+  if (o.semDevolucao) partes.push('sem devolução')
+  return partes.join(', ')
+}
+
+/**
+ * Prompt da 2ª chamada: ESCREVER a resposta de UMA fase, e só dela. A IA
+ * recebe a instrução da fase, os valores já calculados e o código do cupom —
+ * nunca a escada inteira.
+ */
+export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido, ticket, agora = Date.now() }) {
+  const fase = FASES[faseId]
+  const moeda = loja?.moeda ?? 'EUR'
+  const idiomaFixo = loja?.idioma && loja.idioma !== 'auto' ? (NOMES_IDIOMA[loja.idioma] ?? loja.idioma) : null
+  const valor = Number(pedido?.valor || 0)
+  const dados = []
+  if (fase.oferta?.pct && fase.oferta.pct < 100) dados.push(`Reembolso de ${fase.oferta.pct}% = ${dinheiro(valor * fase.oferta.pct / 100, moeda)} (sobre ${dinheiro(valor, moeda)} pagos).`)
+  if (faseId === 'reemb_50') dados.push(`Frete de devolução estimado (25% do valor pago): ${dinheiro(valor * 0.25, moeda)}.`)
+  const cupom = cupomDaFase(faseId, loja)
+  if (cupom.precisa) dados.push(`Cupom de ${cupom.pct}%: código ${cupom.codigo}. Use EXATAMENTE este código.`)
+  if (fase.oferta?.prazo) dados.push(`Prazo do envio expresso: ${fase.oferta.prazo}.`)
+  if (an.produtosAfetados.length) dados.push(`Produtos envolvidos: ${an.produtosAfetados.join('; ')}.`)
+  if (an.ajusteTamanho && Object.keys(an.ajusteTamanho).length) dados.push(`Ajuste informado: ${Object.entries(an.ajusteTamanho).map(([p, a]) => `${p} ficou ${a}`).join('; ')}.`)
+  if (faseId === 'coleta') {
+    const nomes = { pedido: 'o número do pedido (ou o e-mail usado na compra)', produtos: 'quais produtos do pedido estão envolvidos', motivo: 'o motivo da devolução/reembolso', ajuste: 'se ficou pequeno ou grande' }
+    dados.push(`Informações que faltam: ${faltando.map(f => nomes[f] ?? f).join(' e ')}.`)
+  }
+
+  const system = [
+    `Você é o atendimento ao cliente da loja "${loja?.nome ?? config?.nomeLoja ?? 'loja'}", um e-commerce de roupas.`,
+    `Escreva a resposta ao cliente ${idiomaFixo ? `em ${idiomaFixo}` : 'no idioma em que ele escreveu'}, cordial, direta, humana, sem parecer robô.`,
+    ``,
+    `Regras invioláveis:`,
+    `- Você executa SOMENTE a ação abaixo. Não mencione, não insinue e não prometa nenhuma outra opção, percentual, cupom ou etapa — nem "se não aceitar, podemos…".`,
+    `- Você NUNCA confirma reembolso, troca, reenvio ou cancelamento como fato consumado. Você OFERECE e PERGUNTA se o cliente aceita; quem confirma depois é o lojista.`,
+    `- Só cite valores, percentuais e códigos que estejam nos dados abaixo. Nunca invente prazo, valor, política ou código.`,
+    `- Não escreva "aprovado", "confirmado", "já está em andamento", "enviaremos", "o dinheiro chegará".`,
+    ``,
+    `AÇÃO DESTA RESPOSTA — ${fase.titulo}:`,
+    fase.instrucao,
+    ``,
+    dados.length ? `Dados para usar:\n${dados.map(d => `- ${d}`).join('\n')}` : '',
+    ``,
+    blocoPedido(pedido, loja, agora),
+    ``,
+    `Termine com a assinatura abaixo, mantendo as quebras de linha:`,
+    loja?.assinatura || config?.assinatura || '',
+    ``,
+    `No JSON, "acao_proposta" deve ser exatamente "${faseId}".`,
+  ].filter(l => l !== undefined).join('\n')
+
+  const historico = (ticket.historico ?? []).slice(-6).map(m => `${m.autor === 'atendo' ? 'Loja' : 'Cliente'}: ${String(m.corpo).slice(0, 800)}`).join('\n---\n')
+  const user = [
+    historico ? `Conversa até aqui:\n${historico}\n\n---\n` : '',
+    `Mensagem atual do cliente (${ticket.nome}):`,
+    String(ticket.corpo || '').slice(0, 3000),
+  ].join('\n')
+  return { system, user }
+}

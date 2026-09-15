@@ -161,6 +161,8 @@ export function mapearPedido(o) {
     urlRastreio: f?.tracking_url || null,
     transportadora: f?.tracking_company || null,
     criadoEm: (o.created_at || '').slice(0, 10),
+    // data do despacho: base do prazo de entrega no atendimento novo
+    despachadoEm: f?.created_at ? String(f.created_at).slice(0, 10) : null,
     itens: (o.line_items || []).map(li => {
       const qtd = Number(li.quantity) || 1
       // Preço realmente PAGO por unidade: tabela menos os descontos alocados à

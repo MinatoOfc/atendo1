@@ -126,6 +126,12 @@ export interface Loja {
   iaModelo?: string
   /** "classico" (o atendimento atual) ou "novo" (a reformulação) */
   modoAtendimento?: string
+  /** modo novo: rascunhos saem sozinhos na cadência (desligado no piloto) */
+  novoEnvioAutomatico?: boolean
+  /** modo novo: prazo de entrega prometido, em dias úteis */
+  prazoEntrega?: { min: number; max: number; processamento: number } | null
+  /** modo novo: código do cupom por percentual ("15" → "DANKE15") */
+  cupons?: Record<string, string>
   assinatura?: string | null
   email: {
     configurado: boolean; endereco: string | null; status: StatusEmail | null
@@ -289,7 +295,10 @@ interface Store extends ServerState {
   lojaAtiva: string
   setLojaAtiva: (id: string) => void
   lojasVisiveis: Loja[]
-  atualizarLoja: (id: string, patch: { nome?: string; ativa?: boolean; idioma?: string; assinatura?: string; iaModelo?: string; modoAtendimento?: string }) => void
+  atualizarLoja: (id: string, patch: {
+    nome?: string; ativa?: boolean; idioma?: string; assinatura?: string; iaModelo?: string; modoAtendimento?: string
+    novoEnvioAutomatico?: boolean; prazoEntrega?: { min: number; max: number; processamento: number }; cupons?: Record<string, string>
+  }) => void
   criarLoja: (nome?: string) => Promise<string | null>
   removerLoja: (id: string, confirmacao: string) => Promise<string | null>
   importarCaixa: (lojaId: string) => Promise<string | null>

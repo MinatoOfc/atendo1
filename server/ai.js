@@ -2,7 +2,6 @@ import Anthropic from '@anthropic-ai/sdk'
 import { gerarRascunhoLocal } from './logic.js'
 import { geminiConfigurado, gerarComGemini } from './gemini.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
-import { modoDaLoja, REGRAS_NOVO } from './atendimento.js'
 
 export const iaConfigurada = !!process.env.ANTHROPIC_API_KEY
 // Padrão econômico: Haiku 4.5 custa uma fração do Opus e dá conta de
@@ -183,10 +182,6 @@ export function montarSystem(state, ticket) {
     `- Fora do fluxo de devolução, você só confirma concessões quando o lojista JÁ AUTORIZOU explicitamente: numa INSTRUÇÃO DO LOJISTA desta resposta (ex.: "ofereça reembolso de 100%"), num comportamento cadastrado que cubra exatamente a situação, ou numa política escrita da loja. Instrução genérica ("reescreva", "seja mais curto", "traduza") NÃO autoriza concessão nenhuma.`,
     `- Sem autorização: acolha o cliente, colete o que falta (fotos, número do pedido), diga que a equipe vai analisar e retorna em breve — e escale (escalar_humano=true). Nunca decida no lugar do lojista.`,
     ``,
-    // Atendimento NOVO: quando a loja está nesse modo e as regras novas já
-    // existem, elas entram no lugar do fluxo de devolução clássico. Sem regras
-    // novas escritas, o modo novo responde igual ao clássico.
-    ...(modoDaLoja(loja) === 'novo' && REGRAS_NOVO.length ? REGRAS_NOVO : [
     `Fluxo de devolução (autorizado pelo lojista — siga à risca, etapa por etapa):`,
     `1. Cliente diz que quer devolver/reembolso mas AINDA NÃO deu o motivo: responda apenas perguntando, de forma curta e cordial, o MOTIVO da devolução. Não ofereça nada ainda (nem troca, nem valores, nem etiqueta). escalar_humano=false, aprova_reembolso=false.`,
     `2. Motivo é tamanho/caimento (ficou pequeno, grande, não serviu): ofereça TROCA GRATUITA pelo tamanho certo e pergunte qual tamanho/cor deseja — o cliente PODE FICAR com as peças atuais, sem devolver nada. escalar_humano=false, aprova_reembolso=false.`,
@@ -194,7 +189,6 @@ export function montarSystem(state, ticket) {
     `4. Cliente JÁ ESCOLHEU uma opção de reembolso (ou exige reembolso direto sem aceitar alternativas): a aprovação é do lojista — escalar_humano=true e aprova_reembolso=true, resposta VAZIA. NUNCA escreva a confirmação do reembolso por conta própria.`,
     `5. Cliente ACEITOU a troca (escolheu trocar e/ou informou tamanho/cor): a confirmação também é do lojista — escalar_humano=true e confirma_troca=true, resposta VAZIA. No campo "situacao", detalhe o que trocar (produto, quantidade, tamanho/cor novos) e no campo "resolucao" escreva a linha curta para o relatório, no formato "Troca de [quantidade] [produto] por [tamanho/cor]" — ex.: "Troca de 3 polos por tamanho XXL". NUNCA confirme a troca por conta própria.`,
     `- Pedir ETIQUETA DE DEVOLUÇÃO (return label, Rücksendeetikett, étiquette de retour) É pedir devolução: entre no fluxo acima — sem motivo ainda, pergunte o motivo (etapa 1); com o motivo dado (ex.: "ficou pequena"), vá direto à etapa certa (tamanho → etapa 2). NUNCA responda com status de entrega ou rastreio a quem pediu devolução, troca ou reembolso — isso ignora o cliente. E nunca prometa enviar etiqueta: na troca e no reembolso de 60% o cliente FICA com as peças; instruções de devolução, quando existirem, quem passa é o lojista.`,
-    ]),
     `- As políticas, FAQs e o catálogo abaixo são a ÚNICA fonte de verdade. NUNCA invente prazos, valores, regras, produtos ou promessas que não estejam neles.`,
     `- Ao falar de produtos, use apenas os do catálogo, com o nome e o preço exatos. Nunca invente um produto, preço ou disponibilidade.`,
     `- Se o cliente perguntar o que a loja vende, responda citando os produtos reais do catálogo (os mais relevantes para a pergunta), com preço e link.`,
@@ -498,5 +492,91 @@ export async function extrairMotivosReembolso(casos) {
     return { motivos, custo: custoDeUso(resp.usage) }
   } catch (err) {
     return { erro: traduzirErro(err) }
+  }
+}
+
+/* ---------------- Atendimento novo: duas chamadas curtas ---------------- */
+
+const SCHEMA_CLASSIFICACAO_NOVO = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['intencao', 'motivo', 'produtos', 'ajustes', 'situacaoEntrega', 'endereco', 'resumo', 'idioma', 'spam'],
+  properties: {
+    intencao: { type: 'string', enum: ['aceita', 'recusa', 'pede_reembolso', 'pede_cancelamento', 'pede_troca', 'informa', 'pergunta_status', 'agradece', 'outro'] },
+    motivo: { type: 'string', enum: ['tamanho', 'qualidade', 'nao_gostou', 'defeito', 'errado', 'nao_recebido', 'nao_informado', 'nenhum'] },
+    produtos: { type: 'array', items: { type: 'string' } },
+    ajustes: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false, required: ['produto', 'ajuste'],
+        properties: { produto: { type: 'string' }, ajuste: { type: 'string', enum: ['pequeno', 'grande'] } },
+      },
+    },
+    situacaoEntrega: { type: 'string', enum: ['nao_chegou', 'entregue_nao_recebido', 'voltou_remetente', 'recusou_na_porta', 'nenhuma'] },
+    endereco: { type: 'string' },
+    resumo: { type: 'string' },
+    idioma: { type: 'string' },
+    spam: { type: 'boolean' },
+  },
+}
+
+const SCHEMA_RESPOSTA_NOVO = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['resposta', 'acao_proposta'],
+  properties: {
+    resposta: { type: 'string', description: 'A resposta completa ao cliente, pronta para envio' },
+    acao_proposta: { type: 'string', description: 'O id da ação executada — deve ser exatamente o que as instruções pedem' },
+  },
+}
+
+async function chamadaEstruturada(system, user, schema, maxTokens) {
+  const resp = await client.messages.create({
+    model: MODEL,
+    max_tokens: maxTokens,
+    ...(suportaAdaptive ? { thinking: { type: 'adaptive' } } : {}),
+    system,
+    messages: [{ role: 'user', content: user }],
+    output_config: { format: { type: 'json_schema', schema } },
+  })
+  if (resp.stop_reason === 'refusal') throw new Error('O Claude recusou processar esta mensagem.')
+  const texto = resp.content.find(b => b.type === 'text')?.text
+  if (!texto) throw new Error('O Claude respondeu sem conteúdo.')
+  Object.assign(statusIA, { ok: true, erro: null, verificadoEm: new Date().toISOString() })
+  return { r: JSON.parse(texto), custo: custoDeUso(resp.usage) }
+}
+
+/** 1ª chamada do modo novo: classificar a mensagem. Retorna { r, custo } ou { erro }. */
+export async function classificarNovo(system, user) {
+  if (!client) return { erro: 'ANTHROPIC_API_KEY não configurada.' }
+  try {
+    const { r, custo } = await chamadaEstruturada(system, user, SCHEMA_CLASSIFICACAO_NOVO, 600)
+    return {
+      r: {
+        ...r,
+        motivo: r.motivo === 'nenhum' ? null : r.motivo,
+        situacaoEntrega: r.situacaoEntrega === 'nenhuma' ? null : r.situacaoEntrega,
+        endereco: String(r.endereco || '').trim() || null,
+        produtos: Array.isArray(r.produtos) ? r.produtos : [],
+        ajustes: Array.isArray(r.ajustes) ? r.ajustes : [],
+      },
+      custo,
+    }
+  } catch (err) {
+    const msg = traduzirErro(err)
+    registrarErro(msg)
+    return { erro: msg }
+  }
+}
+
+/** 2ª chamada do modo novo: escrever a resposta de UMA fase. Retorna { r, custo } ou { erro }. */
+export async function escreverNovo(system, user) {
+  if (!client) return { erro: 'ANTHROPIC_API_KEY não configurada.' }
+  try {
+    return await chamadaEstruturada(system, user, SCHEMA_RESPOSTA_NOVO, 1500)
+  } catch (err) {
+    const msg = traduzirErro(err)
+    registrarErro(msg)
+    return { erro: msg }
   }
 }

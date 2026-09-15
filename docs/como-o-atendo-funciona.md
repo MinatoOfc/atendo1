@@ -321,20 +321,44 @@ mensagens, escalados não geram rascunho, motivos em cache, tradução gratuita.
 
 ## 11. Modo de atendimento: clássico e novo
 
-Acabou de ser criada a chave que permite **reformular o atendimento sem destruir o
-atual**:
+Cada loja tem `modoAtendimento`: **`classico`** (tudo descrito acima, padrão) ou
+**`novo`**, escolhido em Configurações → Loja. Dá para testar o novo em uma loja
+só, com clientes reais, enquanto as outras seguem no clássico. O clássico nunca é
+apagado.
 
-- Cada loja tem `modoAtendimento`: **`classico`** (tudo descrito acima, padrão de
-  todas as lojas) ou **`novo`**.
-- O modo é escolhido em Configurações → Loja, por loja — dá para testar o novo em
-  uma loja só, com clientes reais, enquanto as outras seguem no clássico.
-- Em `server/atendimento.js` existe `REGRAS_NOVO`, uma lista de regras que
-  **substitui o bloco do fluxo de devolução** no prompt quando a loja está no modo
-  novo. Hoje está vazia, então o modo novo responde exatamente como o clássico.
-- O que **não** muda entre os modos: regras invioláveis, catálogo, políticas,
-  FAQs, comportamentos, idioma, assinatura e todas as travas de código.
+O **modo novo** é um motor de estados (`server/atendimento.js`), especificado em
+`docs/atendimento-novo-decisoes.md`:
 
-É aqui que entra qualquer proposta de novo fluxo de atendimento.
+- **A IA só classifica** o que o cliente disse (intenção: aceita / recusa / pede
+  reembolso / informa / agradece…, motivo, produtos citados, ajuste de tamanho,
+  situação da entrega, endereço). Ela não vê a escada de ofertas.
+- **O servidor escolhe a única ação permitida** a partir da fase gravada no
+  ticket (`ticket.atendimentoNovo`), e só então a IA escreve a resposta dessa
+  ação — recebendo a instrução da fase, os valores já calculados (percentual em
+  dinheiro, frete estimado) e o código do cupom cadastrado.
+- **Uma etapa por resposta do cliente, sem saltos.** Quem exige "100% agora"
+  recebe apenas a oferta da etapa atual. A fase só muda quando o e-mail sai.
+- **Jornadas**: tamanho (troca gratuita → troca + 20% → 40% → 50% → 60% → 70% →
+  100% com o dono); qualidade/não gostou (troca alternativa + cupom 15% → cupom
+  35% → 25% → 40% → …); defeito (foto obrigatória → troca → troca + 20% → …);
+  produto errado (produto correto + cupom 15% → escada da qualidade); não
+  recebido (prazo decide: acalmar / cupom 25% / cupom 40% / 100%; ou, se já
+  chegou pedindo reembolso, reenvio + cupom 30% → reenvio + 20% → reenvio + 35%
+  → 100%); cancelamento de pedido não processado (direto ao dono).
+- **Todo aceite vai para o dono** (troca e reenvio pedem o endereço completo
+  antes). Reembolso de 100% e cancelamento também.
+- **Bloqueios no servidor**: ação proposta fora da fase, percentual ou cupom de
+  outra etapa no texto, e linguagem de confirmação derrubam o rascunho e mandam
+  o caso para a fila humana. Cupom não cadastrado na loja também.
+- **Cadência**: primeira resposta com o atraso normal; depois, 5 h após a última
+  mensagem do cliente (mensagem nova reinicia e recalcula o rascunho). O envio
+  automático do modo novo é uma chave por loja, desligada no piloto.
+- **Por loja**: prazo de entrega em dias úteis (base do "atrasado") e códigos de
+  cupom por percentual (10, 15, 25, 30, 35, 40).
+
+Ainda por fazer: mostrar fase e próxima ação dentro da conversa, a Central
+operacional (mapa de jornadas, indicadores, filtros) e a migração dos casos
+antigos como "fase inferida".
 
 ---
 
