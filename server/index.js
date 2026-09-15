@@ -201,6 +201,7 @@ function visaoLojas(wsId, estado) {
       moeda: l.moeda || 'EUR',
       idioma: l.idioma || 'auto',
       iaModelo: l.iaModelo || 'claude',
+      modoAtendimento: l.modoAtendimento === 'novo' ? 'novo' : 'classico',
       assinatura: l.assinatura ?? null,
       email: {
         configurado: conta?.configurado ?? false,
@@ -1652,13 +1653,15 @@ app.post('/api/shopify/testar', async (req, res) => {
 const IDIOMAS_RESPOSTA = ['auto', 'pt', 'en', 'es', 'fr', 'de', 'it', 'nl']
 
 app.post('/api/lojas', (req, res) => {
-  const { id, nome, ativa, idioma, assinatura, iaModelo } = req.body ?? {}
+  const { id, nome, ativa, idioma, assinatura, iaModelo, modoAtendimento } = req.body ?? {}
   const loja = req.estado.lojas.find(l => l.id === id)
   if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
   if (typeof nome === 'string' && nome.trim()) loja.nome = nome.trim()
   if (typeof ativa === 'boolean' && loja.id !== 'loja1') loja.ativa = ativa
   if (typeof idioma === 'string' && IDIOMAS_RESPOSTA.includes(idioma)) loja.idioma = idioma
   if (typeof iaModelo === 'string' && ['claude', 'gemini'].includes(iaModelo)) loja.iaModelo = iaModelo
+  // modo de atendimento desta loja: o clássico é o padrão e nunca some
+  if (modoAtendimento === 'novo' || modoAtendimento === 'classico') loja.modoAtendimento = modoAtendimento
   // assinatura própria da loja; vazia volta ao padrão do workspace
   if (typeof assinatura === 'string') loja.assinatura = assinatura.trim() || null
   salvar(req.wsId); ok(req, res)

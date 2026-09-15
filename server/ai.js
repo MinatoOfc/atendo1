@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { gerarRascunhoLocal } from './logic.js'
 import { geminiConfigurado, gerarComGemini } from './gemini.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
+import { modoDaLoja, REGRAS_NOVO } from './atendimento.js'
 
 export const iaConfigurada = !!process.env.ANTHROPIC_API_KEY
 // Padrão econômico: Haiku 4.5 custa uma fração do Opus e dá conta de
@@ -182,6 +183,10 @@ export function montarSystem(state, ticket) {
     `- Fora do fluxo de devolução, você só confirma concessões quando o lojista JÁ AUTORIZOU explicitamente: numa INSTRUÇÃO DO LOJISTA desta resposta (ex.: "ofereça reembolso de 100%"), num comportamento cadastrado que cubra exatamente a situação, ou numa política escrita da loja. Instrução genérica ("reescreva", "seja mais curto", "traduza") NÃO autoriza concessão nenhuma.`,
     `- Sem autorização: acolha o cliente, colete o que falta (fotos, número do pedido), diga que a equipe vai analisar e retorna em breve — e escale (escalar_humano=true). Nunca decida no lugar do lojista.`,
     ``,
+    // Atendimento NOVO: quando a loja está nesse modo e as regras novas já
+    // existem, elas entram no lugar do fluxo de devolução clássico. Sem regras
+    // novas escritas, o modo novo responde igual ao clássico.
+    ...(modoDaLoja(loja) === 'novo' && REGRAS_NOVO.length ? REGRAS_NOVO : [
     `Fluxo de devolução (autorizado pelo lojista — siga à risca, etapa por etapa):`,
     `1. Cliente diz que quer devolver/reembolso mas AINDA NÃO deu o motivo: responda apenas perguntando, de forma curta e cordial, o MOTIVO da devolução. Não ofereça nada ainda (nem troca, nem valores, nem etiqueta). escalar_humano=false, aprova_reembolso=false.`,
     `2. Motivo é tamanho/caimento (ficou pequeno, grande, não serviu): ofereça TROCA GRATUITA pelo tamanho certo e pergunte qual tamanho/cor deseja — o cliente PODE FICAR com as peças atuais, sem devolver nada. escalar_humano=false, aprova_reembolso=false.`,
@@ -189,6 +194,7 @@ export function montarSystem(state, ticket) {
     `4. Cliente JÁ ESCOLHEU uma opção de reembolso (ou exige reembolso direto sem aceitar alternativas): a aprovação é do lojista — escalar_humano=true e aprova_reembolso=true, resposta VAZIA. NUNCA escreva a confirmação do reembolso por conta própria.`,
     `5. Cliente ACEITOU a troca (escolheu trocar e/ou informou tamanho/cor): a confirmação também é do lojista — escalar_humano=true e confirma_troca=true, resposta VAZIA. No campo "situacao", detalhe o que trocar (produto, quantidade, tamanho/cor novos) e no campo "resolucao" escreva a linha curta para o relatório, no formato "Troca de [quantidade] [produto] por [tamanho/cor]" — ex.: "Troca de 3 polos por tamanho XXL". NUNCA confirme a troca por conta própria.`,
     `- Pedir ETIQUETA DE DEVOLUÇÃO (return label, Rücksendeetikett, étiquette de retour) É pedir devolução: entre no fluxo acima — sem motivo ainda, pergunte o motivo (etapa 1); com o motivo dado (ex.: "ficou pequena"), vá direto à etapa certa (tamanho → etapa 2). NUNCA responda com status de entrega ou rastreio a quem pediu devolução, troca ou reembolso — isso ignora o cliente. E nunca prometa enviar etiqueta: na troca e no reembolso de 60% o cliente FICA com as peças; instruções de devolução, quando existirem, quem passa é o lojista.`,
+    ]),
     `- As políticas, FAQs e o catálogo abaixo são a ÚNICA fonte de verdade. NUNCA invente prazos, valores, regras, produtos ou promessas que não estejam neles.`,
     `- Ao falar de produtos, use apenas os do catálogo, com o nome e o preço exatos. Nunca invente um produto, preço ou disponibilidade.`,
     `- Se o cliente perguntar o que a loja vende, responda citando os produtos reais do catálogo (os mais relevantes para a pergunta), com preço e link.`,
