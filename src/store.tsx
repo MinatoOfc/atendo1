@@ -56,6 +56,10 @@ export interface Ticket {
   motivoTraducao?: string
   /** estado do motor de etapas (só em lojas no modo novo) */
   atendimentoNovo?: AtendimentoNovo
+  /** motivo do reembolso lido pelo relatório de reembolsos (cache) */
+  motivoReembolso?: { motivo: string; categoria: string; em: string; local?: boolean }
+  /** correção manual da classificação feita na Central operacional */
+  centralAjuste?: { fase: string | null; jornada: string | null; por: string; em: string; anterior: string | null; justificativa: string | null }
 }
 
 export interface OfertaNovo { tipo: string; pct: number | null; cupom: number | null; prazo: string | null; semDevolucao: boolean }
@@ -84,7 +88,7 @@ export interface AtendimentoNovo {
   proximoEnvioMinimo?: string
   rascunhoGerado?: string
 }
-export interface FaseNovo { titulo: string; jornada: string; aoAceitar: string | null; aoRecusar: string | null; oferta: OfertaNovo | null }
+export interface FaseNovo { titulo: string; jornada: string; aoAceitar: string | null; aoRecusar: string | null; oferta: OfertaNovo | null; instrucao?: string | null }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
 export interface Comportamento { id: string; situacao: string; instrucao: string; ativa: boolean }
@@ -356,6 +360,11 @@ interface Store extends ServerState {
   aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual', confirmarAlteracao?: boolean) => void
   /** modo novo: você confirma se a imagem recebida comprova o defeito */
   validarFotoNovo: (id: string, valida: boolean) => void
+  /** Central operacional: correção manual da classificação de um caso */
+  corrigirFaseCentral: (id: string, patch: { fase?: string | null; jornada?: string | null; justificativa?: string; remover?: boolean }) => void
+  /** listas completas, sem o filtro de loja da barra lateral (Central operacional) */
+  todosTickets: Ticket[]
+  todosPedidos: Pedido[]
   editarRascunho: (id: string, texto: string) => void
   moverPara: (id: string, status: StatusTicket, motivo?: string) => void
   restaurar: (id: string) => void
@@ -630,6 +639,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       })
     },
     validarFotoNovo: (id, valida) => api(`/tickets/${id}/novo/foto`, 'POST', { valida }).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
+    corrigirFaseCentral: (id, patch) => api(`/tickets/${id}/central/fase`, 'POST', patch).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
+    todosTickets: state.tickets,
+    todosPedidos: state.pedidos,
 
     moverPara: (id, status, motivo) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, statusAnterior: t.status, status, enviaEm: undefined } : t)) }))

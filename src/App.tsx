@@ -7,6 +7,7 @@ import CaixaEntrada from './pages/CaixaEntrada'
 import Enviados from './pages/Enviados'
 import Clientes from './pages/Clientes'
 import Resumos from './pages/Resumos'
+import Central from './pages/Central'
 import Aprovacoes from './pages/Aprovacoes'
 import AtendimentoHumano from './pages/AtendimentoHumano'
 import Conhecimento from './pages/Conhecimento'
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/enviados" element={<Enviados />} />
         <Route path="/clientes" element={<Clientes />} />
         <Route path="/resumos" element={<Resumos />} />
+        <Route path="/central" element={<Central />} />
         <Route path="/aprovacoes" element={<Aprovacoes />} />
         <Route path="/humano" element={<AtendimentoHumano />} />
         <Route path="/conhecimento" element={<Conhecimento />} />

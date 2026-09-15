@@ -373,9 +373,29 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   de fases. Na lista, cada conversa mostra a etiqueta da fase.
 - **Testes**: `npm test` roda o motor (funções puras) e o pipeline completo com
   servidor real, banco temporário, IA e canal de e-mail simulados.
+- **Central operacional** (`/central`, `src/pages/Central.tsx` +
+  `src/lib/central.ts`): visão de todas as lojas sobre os casos de devolução,
+  reembolso e entrega. Seis jornadas (Entrada geral, Tamanho, Qualidade,
+  Defeito/errado, Não recebeu, Cancelamento) com quantidade, valor e
+  percentual; indicadores por moeda (pedidos totais, com ticket, envolvidos em
+  reembolso, valor total, valor com ticket, valor dos pedidos reembolsados,
+  resultado antes e depois do pipeline — "antes" = se todos tivessem 100%,
+  "depois" = o efetivamente reembolsado —, reembolsos parciais, % com produto
+  identificado); duas visões: **Mapa do fluxo** (fases por jornada com
+  passaram / pararam / avançaram / valor, um pedido contado uma vez por fase)
+  e **Todos os pedidos** (tabela); filtros simultâneos de busca, loja, data do
+  pedido (7/30/90/todas) e desfecho/percentual; painel lateral da fase com a
+  descrição exata, totais, busca, abas e acesso à conversa. Toda a conta é feita
+  no navegador sobre os dados que o app já tem.
+  Origem da fase: **confirmada** (motor do modo novo), **inferida** (caso do
+  clássico, deduzido do relatório manual e do motivo lido pelo relatório de
+  reembolsos — só a fase final, sem fingir que percorreu a escada) ou
+  **manual** (correção do dono na Central, gravada no workspace com quem,
+  quando, a anterior e a justificativa; não mexe no motor nem deixa o envio
+  automático pular etapas). O card da conversa tem "Abrir na Central".
 
-Ainda por fazer: a Central operacional (mapa de jornadas, indicadores, filtros,
-painel lateral por fase) e a migração dos casos antigos como "fase inferida".
+Ainda por fazer: a migração dos casos antigos sem relatório como "fase
+inferida" pela IA (item 8), sem alterar os tickets automaticamente.
 
 ---
 

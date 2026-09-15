@@ -246,7 +246,7 @@ function visao(wsId) {
     resumosDiarios: estado.resumosDiarios ?? [],
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
     // catálogo do modo novo: a conversa mostra fase, oferta e próximos passos por ele
-    fasesNovo: Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta }])),
+    fasesNovo: Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta, instrucao: f.instrucao }])),
     jornadasNovo: JORNADAS,
     gastosIA: estado.gastosIA ?? {},
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
@@ -2291,6 +2291,29 @@ app.post('/api/tickets/:id/novo/foto', async (req, res) => {
     an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: 'Foto recusada pelo lojista: não comprova o defeito', em: agora, evento: 'foto_recusada' })
     an.aguardando = null
     await prepararRascunhoNovo(req.estado, t, { faseId: 'def_foto', faltando: ['foto_melhor'], resumo: 'foto recusada pelo lojista' })
+  }
+  salvar(req.wsId); ok(req, res)
+})
+
+// Central operacional: correção manual da classificação (jornada/fase). Fica
+// registrada com quem, quando, a anterior e a justificativa. NÃO mexe no estado
+// do motor: o envio automático continua preso às ligações do mapa.
+app.post('/api/tickets/:id/central/fase', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  const { fase, jornada, justificativa, remover } = req.body ?? {}
+  if (remover === true) { t.centralAjuste = undefined; salvar(req.wsId); return ok(req, res) }
+  if (fase !== null && fase !== undefined && fase !== '' && !FASES[fase]) {
+    return res.status(400).json({ erro: 'Fase desconhecida.', state: visao(req.wsId) })
+  }
+  if (jornada && !JORNADAS[jornada]) return res.status(400).json({ erro: 'Jornada desconhecida.', state: visao(req.wsId) })
+  const anterior = t.centralAjuste?.fase ?? t.atendimentoNovo?.etapa ?? null
+  t.centralAjuste = {
+    fase: fase || null,
+    jornada: jornada || null,
+    por: req.usuario?.nome || req.usuario?.email || 'lojista',
+    em: new Date().toISOString(),
+    anterior,
+    justificativa: String(justificativa || '').trim().slice(0, 300) || null,
   }
   salvar(req.wsId); ok(req, res)
 })

@@ -259,6 +259,11 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
           </div>
         </div>
       )}
+      <div style={{ marginTop: 8 }}>
+        <a className="btn btn-sm" href={`#/central?caso=${encodeURIComponent(t.id)}`} title="Ver esta fase na Central operacional">
+          <ExternalLink size={12} /> Abrir na Central operacional
+        </a>
+      </div>
       <div style={{ marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
         <div className="muted-sm" style={{ marginBottom: 4 }}>Histórico de fases</div>
         {an.historicoEtapas.length === 0 ? (
