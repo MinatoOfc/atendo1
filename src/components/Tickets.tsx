@@ -58,7 +58,7 @@ function ImagensAnexadas({ anexos }: { anexos?: AnexoImagem[] }) {
 }
 
 export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Ticket) => void; tagStatus?: boolean }) {
-  const { lojasVisiveis, lojaAtiva, prefs, pedidos, moverPara } = useStore()
+  const { lojasVisiveis, lojaAtiva, prefs, pedidos, moverPara, fasesNovo } = useStore()
   const nomeLojaDona = lojaAtiva === 'todas' && lojasVisiveis.length > 1
     ? lojasVisiveis.find(l => l.id === (t.lojaId ?? 'loja1'))?.nome
     : null
@@ -98,6 +98,12 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
         </span>
       )}
       <span className={`tag tag-${t.categoria}`}>{nomeCategoria[t.categoria]}</span>
+      {/* modo novo: em que fase da escada a conversa está */}
+      {t.atendimentoNovo && fasesNovo && (
+        <span className="tag tag-outro" title="Fase do atendimento novo">
+          {t.atendimentoNovo.etapa ? fasesNovo[t.atendimentoNovo.etapa]?.titulo ?? t.atendimentoNovo.etapa : 'Triagem'}
+        </span>
+      )}
       {/* atalho: manda a conversa para o atendimento humano sem abrir */}
       {!['humano', 'spam', 'lixeira'].includes(t.status) && (
         <span className="btn btn-sm" role="button" title="Mover para atendimento humano"
@@ -135,6 +141,128 @@ const statusPedido: Record<string, { rotulo: string; cls: string }> = {
  * Painel à direita do ticket: os pedidos do cliente, localizados pelo e-mail,
  * para a equipe responder sem sair da conversa.
  */
+/* ---------- Modo novo: fase, oferta e próximos passos da conversa ---------- */
+
+const JORNADA_DO_FLUXO: Record<string, string> = {
+  tamanho: 'tamanho', errado: 'defeito_errado', defeito: 'defeito_errado', qualidade: 'qualidade',
+  nao_recebido_status: 'nao_recebido', nao_recebido_reembolso: 'nao_recebido', entregue_nao_recebido: 'nao_recebido',
+  cancelamento: 'cancelamento',
+}
+const NOME_MOTIVO: Record<string, string> = {
+  tamanho: 'tamanho não serviu', qualidade: 'qualidade/material', nao_gostou: 'não gostou', defeito: 'defeito',
+  errado: 'produto errado', nao_recebido: 'não recebido', nao_informado: 'não informou',
+}
+const NOME_FALTA: Record<string, string> = {
+  pedido: 'número do pedido', produtos: 'quais produtos', motivo: 'o motivo', ajuste: 'se ficou pequeno ou grande', foto: 'foto do defeito',
+}
+function descreverOferta(o: { tipo: string; pct: number | null; cupom: number | null; prazo: string | null; semDevolucao: boolean } | null) {
+  if (!o) return '—'
+  const partes: string[] = []
+  if (o.tipo === 'troca') partes.push('troca gratuita')
+  if (o.tipo === 'troca_reembolso') partes.push(`troca gratuita + reembolso de ${o.pct}%`)
+  if (o.tipo === 'reenvio') partes.push('reenvio expresso')
+  if (o.tipo === 'reenvio_reembolso') partes.push(`reenvio expresso + reembolso de ${o.pct}%`)
+  if (o.tipo === 'reembolso') partes.push(`reembolso de ${o.pct}%`)
+  if (o.tipo === 'cancelamento') partes.push('cancelamento')
+  if (o.tipo === 'cupom') partes.push(`cupom de ${o.cupom}%`)
+  else if (o.cupom) partes.push(`cupom de ${o.cupom}%`)
+  if (o.prazo) partes.push(o.prazo)
+  if (o.semDevolucao) partes.push('sem devolução')
+  return partes.join(' · ')
+}
+const quando = (iso?: string | null) => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''
+
+function LinhaFase({ rotulo, children }: { rotulo: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '92px 1fr', gap: 8, fontSize: 12.5, lineHeight: 1.5, padding: '3px 0' }}>
+      <span className="muted-sm" style={{ paddingTop: 1 }}>{rotulo}</span>
+      <span>{children}</span>
+    </div>
+  )
+}
+
+function PainelFaseNovo({ t }: { t: Ticket }) {
+  const { fasesNovo, jornadasNovo, lojas } = useStore()
+  const an = t.atendimentoNovo
+  if (!an || !fasesNovo) return null
+  const titulo = (id?: string | null) => (id ? fasesNovo[id]?.titulo ?? id : '')
+  const fase = an.etapa ? fasesNovo[an.etapa] : null
+  const jornada = an.fluxo ? jornadasNovo?.[JORNADA_DO_FLUXO[an.fluxo] ?? ''] : null
+  const pendente = an.transicaoPendente
+  const faltando = pendente?.faltando ?? []
+  const loja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+  const minimo = an.proximoEnvioMinimo ? new Date(an.proximoEnvioMinimo).getTime() : null
+
+  const aguardando = an.aguardando === 'humano' ? 'você (decisão pendente)'
+    : an.aguardando === 'envio' ? 'o envio do rascunho'
+      : an.aguardando === 'cliente' ? 'resposta do cliente' : 'classificação da primeira mensagem'
+
+  let proxima: React.ReactNode
+  if (an.aguardando === 'humano') {
+    proxima = an.acaoAceita
+      ? <>Decisão sua — o cliente aceitou <b>{titulo(an.acaoAceita)}</b>{an.enderecoConfirmado ? ` (endereço: ${an.enderecoConfirmado})` : ''}</>
+      : <>Decisão sua — {t.motivoEscalada || 'sem próxima etapa automática'}</>
+  } else if (pendente) {
+    proxima = <>Rascunho pronto para <b>{titulo(pendente.para)}</b></>
+  } else if (fase) {
+    const seAceitar = fase.aoAceitar === 'endereco' ? 'pedir o endereço e passar para você' : fase.aoAceitar === 'humano' ? 'passar para você' : '—'
+    const seRecusar = fase.aoRecusar ? titulo(fase.aoRecusar) : 'passar para você'
+    proxima = <>Se aceitar → {seAceitar}. Se recusar → <b>{seRecusar}</b>.</>
+  } else {
+    proxima = 'Definida na primeira classificação'
+  }
+
+  return (
+    <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+      <div className="row gap-8 mb-8" style={{ flexWrap: 'wrap' }}>
+        <Sparkles size={13} color="var(--purple)" />
+        <b style={{ fontSize: 13 }}>Atendimento novo</b>
+        {jornada && <span className="tag tag-outro">{jornada}</span>}
+      </div>
+      <LinhaFase rotulo="Fase atual">
+        <b>{fase ? fase.titulo : 'Triagem'}</b>
+        {an.ofertaEnviadaEm && fase?.oferta && <span className="muted-sm"> · enviada {quando(an.ofertaEnviadaEm)}</span>}
+      </LinhaFase>
+      <LinhaFase rotulo="Aguardando">{aguardando}</LinhaFase>
+      {an.ofertaAtual && <LinhaFase rotulo="Última oferta">{descreverOferta(an.ofertaAtual)}</LinhaFase>}
+      <LinhaFase rotulo="Próxima ação">{proxima}</LinhaFase>
+      {faltando.length > 0 && (
+        <LinhaFase rotulo="Falta o cliente informar">{faltando.map(f => NOME_FALTA[f] ?? f).join(', ')}</LinhaFase>
+      )}
+      {an.aguardando === 'envio' && minimo && (
+        <LinhaFase rotulo="Pode sair a partir de">
+          {quando(an.proximoEnvioMinimo)}
+          <span className="muted-sm">
+            {' · '}{t.enviaEm ? 'sai sozinho na hora' : loja?.novoEnvioAutomatico ? 'aguardando' : 'envio automático desligado — aguarda sua aprovação'}
+            {minimo <= Date.now() && !t.enviaEm ? ' · já pode sair' : ''}
+          </span>
+        </LinhaFase>
+      )}
+      <LinhaFase rotulo="Já sabemos">
+        {[
+          an.motivo ? `motivo: ${NOME_MOTIVO[an.motivo] ?? an.motivo}` : null,
+          an.produtosAfetados.length ? `produtos: ${an.produtosAfetados.join('; ')}` : null,
+          an.ajusteTamanho && Object.keys(an.ajusteTamanho).length ? `ajuste: ${Object.entries(an.ajusteTamanho).map(([p, a]) => `${p} ficou ${a}`).join('; ')}` : null,
+          an.fotoRecebida ? 'foto recebida' : an.fotoSolicitada ? 'foto pedida, ainda não veio' : null,
+          an.enderecoConfirmado ? `endereço: ${an.enderecoConfirmado}` : null,
+        ].filter(Boolean).join(' · ') || <span className="muted-sm">nada ainda</span>}
+      </LinhaFase>
+      <div style={{ marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+        <div className="muted-sm" style={{ marginBottom: 4 }}>Histórico de fases</div>
+        {an.historicoEtapas.length === 0 ? (
+          <span className="muted-sm" style={{ fontSize: 12 }}>nenhuma etapa enviada ainda</span>
+        ) : (
+          <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6 }}>
+            {an.historicoEtapas.map((h, i) => (
+              <li key={i}>{titulo(h.para)} <span className="muted-sm">· {quando(h.em)}{h.mensagem ? ` · "${h.mensagem}"` : ''}</span></li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function PainelPedidos({ t }: { t: Ticket }) {
   const { pedidos, fmtMoeda, produtos, tickets } = useStore()
   // foto da variante escolhida (a cor comprada); sem ela, a foto principal do produto
@@ -169,7 +297,7 @@ function PainelPedidos({ t }: { t: Ticket }) {
   const nTrocas = casosAnteriores.filter(t2 => t2.categoria === 'troca').length
 
   return (
-    <aside className="painel-pedidos" style={{ width: 280, flexShrink: 0 }}>
+    <aside className="painel-pedidos" style={{ width: '100%' }}>
       {(todosDoCliente.length > 0 || casosAnteriores.length > 0) && (
         <div className="card mb-12" style={{ padding: '12px 16px' }}>
           <div className="row gap-8 mb-8">
@@ -766,7 +894,10 @@ export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void
       )}
     </div>
 
-    <PainelPedidos t={t} />
+    <div className="coluna-lateral" style={{ width: 280, flexShrink: 0 }}>
+      <PainelFaseNovo t={t} />
+      <PainelPedidos t={t} />
+    </div>
 
     {/* atalhos de rolagem para conversas longas: coluna sticky colada à direita
         do conteúdo — acompanha a rolagem sempre na mesma altura da janela */}

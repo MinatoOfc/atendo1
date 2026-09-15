@@ -54,7 +54,30 @@ export interface Ticket {
   rascunhoTraducao?: string
   situacaoTraducao?: string
   motivoTraducao?: string
+  /** estado do motor de etapas (só em lojas no modo novo) */
+  atendimentoNovo?: AtendimentoNovo
 }
+
+export interface OfertaNovo { tipo: string; pct: number | null; cupom: number | null; prazo: string | null; semDevolucao: boolean }
+export interface AtendimentoNovo {
+  versao: number
+  fluxo: string | null
+  etapa: string | null
+  produtosAfetados: string[]
+  motivo: string | null
+  ajusteTamanho: Record<string, 'pequeno' | 'grande'> | null
+  fotoSolicitada: boolean
+  fotoRecebida: boolean
+  ofertaAtual: OfertaNovo | null
+  ofertaEnviadaEm: string | null
+  aguardando: 'cliente' | 'envio' | 'humano' | null
+  acaoAceita: string | null
+  enderecoConfirmado: string | null
+  historicoEtapas: { de: string | null; para: string; mensagem: string; em: string }[]
+  transicaoPendente: { para: string; mensagem: string; faltando?: string[] } | null
+  proximoEnvioMinimo?: string
+}
+export interface FaseNovo { titulo: string; jornada: string; aoAceitar: string | null; aoRecusar: string | null; oferta: OfertaNovo | null }
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
 export interface Comportamento { id: string; situacao: string; instrucao: string; ativa: boolean }
@@ -214,6 +237,9 @@ interface ServerState {
   comportamentos?: Comportamento[]
   resumosDiarios?: ResumoDiario[]
   geminiDisponivel?: boolean
+  /** catálogo do motor de etapas: id da fase → título, jornada e destinos */
+  fasesNovo?: Record<string, FaseNovo>
+  jornadasNovo?: Record<string, string>
   gastosIA?: Record<string, Record<string, number>>
   opcoesRelatorio?: string[]
   /** instruções salvas do "Gerar com IA" (1 clique em vez de digitar) */

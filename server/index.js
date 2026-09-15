@@ -11,7 +11,7 @@ import {
 import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso, CATEGORIAS_REEMBOLSO, classificarNovo, escreverNovo } from './ai.js'
 import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
-  horarioMinimoEnvio, promptClassificar, promptEscrever, FASES, PERCENTUAIS_CUPOM,
+  horarioMinimoEnvio, promptClassificar, promptEscrever, FASES, JORNADAS, PERCENTUAIS_CUPOM,
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
@@ -244,6 +244,9 @@ function visao(wsId) {
     comportamentos: estado.comportamentos ?? [],
     resumosDiarios: estado.resumosDiarios ?? [],
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
+    // catálogo do modo novo: a conversa mostra fase, oferta e próximos passos por ele
+    fasesNovo: Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta }])),
+    jornadasNovo: JORNADAS,
     gastosIA: estado.gastosIA ?? {},
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
     opcoesInstrucao: estado.opcoesInstrucao ?? [],

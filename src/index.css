@@ -439,7 +439,7 @@ a { color: inherit; text-decoration: none; }
 
   /* detalhe da conversa: coluna única, painel de pedidos abaixo */
   .detail-wrap { flex-direction: column; }
-  .painel-pedidos { width: 100% !important; }
+  .painel-pedidos, .coluna-lateral { width: 100% !important; }
   .botoes-rolagem { position: fixed !important; top: auto !important; right: 12px; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 40; }
 
   /* dica flutuante cobre a tela inteira no celular — melhor sem ela */
