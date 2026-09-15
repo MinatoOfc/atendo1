@@ -543,6 +543,28 @@ export default function Configuracoes() {
           A mudança vale para os próximos e-mails; rascunhos que já estão na fila de aprovação não são refeitos.
         </p>
       </div>
+      <div className="card mb-16" style={{ padding: 16 }}>
+        <div className="row gap-8 mb-8">
+          <Sparkles size={14} color="var(--purple)" />
+          <b style={{ fontSize: 13.5 }}>Modo de atendimento desta loja</b>
+          <span className={'tag ' + (lojaSel?.modoAtendimento === 'novo' ? 'tag-amber' : 'tag-green')}>
+            {lojaSel?.modoAtendimento === 'novo' ? 'Novo' : 'Clássico'}
+          </span>
+        </div>
+        <div className="field" style={{ maxWidth: 340, marginBottom: 0 }}>
+          <select value={lojaSel?.modoAtendimento ?? 'classico'}
+            onChange={e => s.atualizarLoja(lojaId, { modoAtendimento: e.target.value })}>
+            <option value="classico">Clássico — o atendimento atual</option>
+            <option value="novo">Novo — em construção</option>
+          </select>
+        </div>
+        <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.55 }}>
+          O <b>clássico</b> é o atendimento que roda hoje: pergunta o motivo da devolução, oferece troca ou 60%/100%, e
+          passa para você aprovar reembolso e confirmar troca. Ele fica guardado e nunca é apagado — é sempre possível
+          voltar. O <b>novo</b> é a reformulação que estamos escrevendo: enquanto as regras novas não existirem, ele
+          responde igual ao clássico. Cada loja escolhe o seu, então dá para testar o novo em uma loja só.
+        </p>
+      </div>
       <div className="field mb-16" style={{ maxWidth: 340 }}>
         <label>Modelo de IA desta loja</label>
         <select value={lojaSel?.iaModelo ?? 'claude'} onChange={e => s.atualizarLoja(lojaId, { iaModelo: e.target.value })}>
