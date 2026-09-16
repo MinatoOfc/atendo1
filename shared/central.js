@@ -29,11 +29,32 @@
 export const DESFECHOS = ['em_aberto', 'reembolso', 'troca', 'reenvio', 'cupom', 'cancelamento', 'encerrado']
 const CATEGORIAS_MOTIVO = ['qualidade', 'tamanho', 'defeito', 'nao_recebeu', 'atraso', 'errado', 'nao_gostou', 'alergia', 'arrependimento', 'outro', 'nao_informado']
 
-/** Ticket do clássico que a Central trata como caso (candidato à inferência). */
+/**
+ * Fases que a IA pode inferir para um caso antigo — lista explícita, usada no
+ * schema da IA, na normalização e nos testes. Confirmações (conf_*) nunca:
+ * elas só existem depois de o dono aprovar um aceite no motor.
+ */
+export const FASES_MIGRAVEIS = [
+  'coleta', 'tam_ajuste', 'tam_troca', 'troca_20', 'err_envio', 'def_foto', 'def_troca', 'qual_troca', 'qual_cupom_35',
+  'reemb_25', 'reemb_40', 'reemb_50', 'reemb_60', 'reemb_70', 'reemb_100',
+  'nc_no_prazo', 'nc_atrasado_25', 'nc_cupom_40', 'nr_reenvio_30', 'nr_entregue_aguardar', 'nr_reenvio_20', 'nr_reenvio_35',
+  'cancel_nao_processado', 'endereco',
+]
+
+/** O ticket tem relatório manual (fonte humana)? */
+export const temRelatorio = t => !!(t?.relatorioDia || t?.relatorioLinha || t?.relatorioTexto)
+
+/**
+ * Caso ANTIGO SEM RELATÓRIO do modo clássico: o único tipo que a migração lê.
+ * Qualquer ticket com estado do motor (atendimentoNovo, mesmo ainda em coleta,
+ * com fluxo null) fica fora; quem já tem relatório manual também — o relatório
+ * é a fonte humana e não precisa de IA.
+ */
 export function ehCandidatoMigracao(t) {
   if (!t || t.status === 'spam' || t.status === 'lixeira') return false
-  if (t.atendimentoNovo?.fluxo) return false // o motor já tem o estado real
-  return !!t.relatorioDia || ['reembolso', 'troca', 'entrega'].includes(t.categoria) || !!t.motivoReembolso
+  if (t.atendimentoNovo) return false
+  if (temRelatorio(t)) return false
+  return ['reembolso', 'troca', 'entrega'].includes(t.categoria) || !!t.motivoReembolso
 }
 
 /** Quantos casos históricos existem, quantos já têm inferência e quantos faltam. */
@@ -47,7 +68,8 @@ export function statusMigracao(tickets) {
 export function normalizarInferencia(bruto, fases) {
   if (!bruto || typeof bruto !== 'object') return null
   const jornada = ORDEM_JORNADAS.includes(bruto.jornada) ? bruto.jornada : 'entrada'
-  const fase = bruto.fase && fases[bruto.fase] ? bruto.fase : null
+  // só fase da lista explícita, existente no catálogo e sem ser confirmação
+  const fase = bruto.fase && FASES_MIGRAVEIS.includes(bruto.fase) && fases[bruto.fase] && !fases[bruto.fase].confirmacao ? bruto.fase : null
   const desfecho = DESFECHOS.includes(bruto.desfecho) ? bruto.desfecho : 'em_aberto'
   let percentual = Number(bruto.percentual)
   percentual = Number.isFinite(percentual) && percentual > 0 && percentual <= 100 ? Math.round(percentual) : null
@@ -190,13 +212,14 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       else if (desfecho === 'cancelamento') faseInferida = 'cancel_nao_processado'
       if (doRelatorio || t.relatorioDia) inferidaPor = 'relatorio'
       // 2) sem registro do dono: a inferência da IA (Parte 8) — desfecho, percentual e fase
+      const faseInf = inf?.fase && FASES_MIGRAVEIS.includes(inf.fase) && fases[inf.fase] && !fases[inf.fase].confirmacao ? inf.fase : null
       if (!doRelatorio && inf) {
         inferidaPor = 'ia'
         desfecho = inf.desfecho ?? 'em_aberto'
         percentual = inf.percentual ?? null
-        faseInferida = inf.fase ?? null
+        faseInferida = faseInf
         if (['reembolso', 'cancelamento'].includes(desfecho) && percentual != null) situacaoReembolso = t.relatorioProcessado ? 'efetivado' : 'inferido'
-      } else if (inf && !faseInferida) faseInferida = inf.fase ?? null
+      } else if (inf && !faseInferida) faseInferida = faseInf
       if (!produto && inf?.produtos?.length) produto = inf.produtos.join('; ')
     }
 

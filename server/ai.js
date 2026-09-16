@@ -497,6 +497,8 @@ export async function extrairMotivosReembolso(casos) {
 
 /* ---------------- Parte 8: inferência das fases dos casos históricos ---------------- */
 
+import { FASES_MIGRAVEIS } from '../shared/central.js'
+
 const SCHEMA_INFERENCIA_HISTORICA = {
   type: 'object',
   additionalProperties: false,
@@ -511,7 +513,7 @@ const SCHEMA_INFERENCIA_HISTORICA = {
         required: ['jornada', 'fase', 'desfecho', 'percentual', 'motivo', 'categoria', 'produtos', 'confianca'],
         properties: {
           jornada: { type: 'string', enum: ['entrada', 'tamanho', 'qualidade', 'defeito_errado', 'nao_recebido', 'cancelamento'] },
-          fase: { type: 'string', description: 'id da última fase do catálogo que a LOJA de fato enviou/ofereceu na conversa; "" se nenhuma se aplica' },
+          fase: { type: 'string', enum: [...FASES_MIGRAVEIS, ''], description: 'id da última fase do catálogo que a LOJA de fato enviou/ofereceu na conversa; "" se nenhuma se aplica' },
           desfecho: { type: 'string', enum: ['em_aberto', 'reembolso', 'troca', 'reenvio', 'cupom', 'cancelamento', 'encerrado'] },
           percentual: { type: 'number', description: 'percentual reembolsado quando a conversa diz explicitamente (25, 40, 60, 100…); 0 quando não aparece' },
           motivo: { type: 'string', description: 'Frase curta em português começando com "Cliente"; exatamente "não informado" quando ele não disse' },

@@ -16,7 +16,7 @@ import {
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS,
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
-import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia } from '../shared/central.js'
+import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
@@ -2430,12 +2430,38 @@ app.get('/api/central', (req, res) => {
    status, categoria, relatório e motor ficam como estão. Só roda por clique
    do dono, em lotes, e nunca sozinha. */
 
-// conversa inteira (os dois lados), porque a fase depende do que a LOJA ofereceu
+// Conversa em ordem cronológica (os dois lados), porque a fase depende do que a
+// LOJA ofereceu por último. Em conversa longa, mantém o INÍCIO (assunto e primeiras
+// mensagens, para contexto) e o FIM (últimas mensagens do cliente e da loja — a
+// última oferta e o encerramento), nunca só os primeiros caracteres.
+const LIMITE_INFERENCIA = 3500
+const LIMITE_INICIO = 900
 function textoParaInferencia(t) {
-  const partes = [`Assunto: ${t.assunto ?? ''}`, `Cliente: ${textoProprio(t.corpo) || ''}`]
-  for (const m of t.historico ?? []) partes.push(`${m.autor === 'atendo' ? 'Loja' : 'Cliente'}: ${m.autor === 'atendo' ? String(m.corpo || '') : textoProprio(m.corpo)}`)
-  if (t.resposta) partes.push(`Loja: ${t.resposta}`)
-  return partes.map(p => p.trim()).filter(Boolean).join('\n').replace(/\n{3,}/g, '\n\n').slice(0, 3500)
+  const blocos = [`Assunto: ${t.assunto ?? ''}`]
+  for (const m of t.historico ?? []) blocos.push(`${m.autor === 'atendo' ? 'Loja' : 'Cliente'}: ${m.autor === 'atendo' ? String(m.corpo || '') : textoProprio(m.corpo)}`)
+  blocos.push(`Cliente (mensagem atual): ${textoProprio(t.corpo) || ''}`)
+  if (t.resposta) blocos.push(`Loja (última resposta): ${t.resposta}`)
+  const limpos = blocos.map(b => b.replace(/\n{3,}/g, '\n\n').trim()).filter(Boolean)
+  const inteiro = limpos.join('\n')
+  if (inteiro.length <= LIMITE_INFERENCIA) return inteiro
+  // fim primeiro (prioridade), depois o início; o assunto entra sempre
+  const fim = []
+  let tam = 0
+  for (let i = limpos.length - 1; i >= 1; i--) {
+    const b = limpos[i]
+    if (tam + b.length > LIMITE_INFERENCIA - LIMITE_INICIO) { if (!fim.length) fim.unshift('…' + b.slice(-(LIMITE_INFERENCIA - LIMITE_INICIO))); break }
+    fim.unshift(b); tam += b.length + 1
+  }
+  const inicio = [limpos[0]]
+  let tamIni = limpos[0].length
+  const primeiroDoFim = limpos.length - fim.length
+  for (let i = 1; i < primeiroDoFim; i++) {
+    const b = limpos[i]
+    if (tamIni + b.length > LIMITE_INICIO) break
+    inicio.push(b); tamIni += b.length + 1
+  }
+  const omitidas = primeiroDoFim - inicio.length
+  return [...inicio, `[... ${omitidas} mensagem(ns) intermediária(s) omitida(s) ...]`, '[FINAL DA CONVERSA — as últimas mensagens são as que valem para a fase e o desfecho]', ...fim].join('\n')
 }
 
 app.get('/api/central/migracao', (req, res) => {
@@ -2456,7 +2482,7 @@ app.post('/api/central/migrar', async (req, res) => {
     ? req.estado.tickets.filter(t => t.id === ticketId && ehCandidatoMigracao(t))
     : req.estado.tickets.filter(t => ehCandidatoMigracao(t) && (forcar === true || !t.inferenciaCentral)).slice(0, max)
   if (ticketId && !alvo.length) return res.status(400).json({ erro: 'Esta conversa não é um caso histórico do modo clássico.', state: visao(req.wsId) })
-  const catalogo = Object.entries(FASES).filter(([, f]) => !f.confirmacao).map(([id, f]) => ({ id, titulo: f.titulo, jornada: f.jornada }))
+  const catalogo = FASES_MIGRAVEIS.filter(id => FASES[id] && !FASES[id].confirmacao).map(id => ({ id, titulo: FASES[id].titulo, jornada: FASES[id].jornada }))
   const fases = catalogoFases()
   let lidos = 0; let custoIA = 0; let aviso = null
   for (let i = 0; i < alvo.length; i += 8) {

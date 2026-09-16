@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { FASES, FASES_HUMANAS } from '../server/atendimento.js'
-import { calcularCentral, montarCasos, consolidarPorPedido, metricasPorFase, relacaoComFase, filtrarRegistros, FILTROS_PADRAO, ehCandidatoMigracao, statusMigracao, normalizarInferencia } from '../shared/central.js'
+import { calcularCentral, montarCasos, consolidarPorPedido, metricasPorFase, relacaoComFase, filtrarRegistros, FILTROS_PADRAO, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS, temRelatorio } from '../shared/central.js'
 
 const fases = Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta, instrucao: f.instrucao, confirmacao: !!f.confirmacao, decisaoDono: FASES_HUMANAS.has(id) }]))
 const lojas = [
@@ -207,8 +207,18 @@ test('Parte 8: casos antigos com inferência da IA entram como "inferida (IA)", 
     // modo novo: nunca é candidato
     tk('th5', 'c1@x.de', 'l1', { atendimentoNovo: an('qual_troca', ['qual_troca']) }),
   ]
-  assert.deepEqual(ticketsH.map(ehCandidatoMigracao), [true, true, true, true, false])
-  assert.deepEqual(statusMigracao(ticketsH), { candidatos: 4, inferidos: 3, pendentes: 1 })
+  // candidato = clássico SEM relatório; th3 tem relatório (fonte humana) e fica fora do lote
+  assert.deepEqual(ticketsH.map(ehCandidatoMigracao), [true, true, false, true, false])
+  assert.deepEqual(statusMigracao(ticketsH), { candidatos: 3, inferidos: 2, pendentes: 1 })
+  // qualquer estado do motor exclui — inclusive em coleta, com fluxo null
+  assert.equal(ehCandidatoMigracao(tk('n1', 'x@x.de', 'l1', { categoria: 'reembolso', atendimentoNovo: { ...an(null, []), fluxo: null, etapa: null } })), false, 'modo novo em coleta (fluxo null) não é candidato')
+  assert.equal(ehCandidatoMigracao(tk('n2', 'x@x.de', 'l1', { categoria: 'reembolso', atendimentoNovo: an('qual_troca', ['qual_troca'], { fluxo: 'qualidade' }) })), false, 'modo novo com fluxo não é candidato')
+  assert.equal(ehCandidatoMigracao(tk('n3', 'x@x.de', 'l1', { categoria: 'reembolso' })), true, 'clássico sem atendimentoNovo é candidato')
+  assert.equal(ehCandidatoMigracao(tk('n4', 'x@x.de', 'l1', { categoria: 'reembolso', relatorioTexto: 'REEMBOLSO 60%' })), false, 'relatorioTexto basta para ficar fora')
+  assert.equal(ehCandidatoMigracao(tk('n5', 'x@x.de', 'l1', { categoria: 'reembolso', relatorioLinha: '#1 - REEMBOLSO' })), false, 'relatorioLinha também')
+  assert.equal(ehCandidatoMigracao(tk('n6', 'x@x.de', 'l1', { categoria: 'rastreio' })), false, 'rastreio não é caso')
+  assert.equal(ehCandidatoMigracao(tk('n7', 'x@x.de', 'l1', { categoria: 'reembolso', status: 'spam' })), false)
+  assert.deepEqual([temRelatorio({ relatorioDia: '2026-09-01' }), temRelatorio({ relatorioLinha: 'x' }), temRelatorio({ relatorioTexto: 'x' }), temRelatorio({})], [true, true, true, false])
   const r = calcularCentral({ tickets: ticketsH, pedidos: pedidosH, lojas, fases, agora })
   const reg = id => r.registros.find(x => x.pedidoId === id)
   assert.deepEqual([reg('h1').origem, reg('h1').inferidaPor, reg('h1').jornada, reg('h1').faseAtual, reg('h1').desfecho, reg('h1').motivo, reg('h1').produto], ['inferida', 'ia', 'tamanho', 'tam_troca', 'troca', 'Cliente disse que ficou pequeno', 'Polo Premium'])
@@ -227,6 +237,16 @@ test('Parte 8: casos antigos com inferência da IA entram como "inferida (IA)", 
   assert.equal(normalizarInferencia({ desfecho: 'cupom', percentual: 30 }, fases).percentual, null, 'cupom e encerrado não têm percentual')
   assert.equal(normalizarInferencia({ desfecho: 'cancelamento' }, fases).percentual, 100)
   assert.equal(normalizarInferencia({ desfecho: 'reembolso', percentual: 250 }, fases).percentual, null)
+  // só fases da lista explícita; confirmações nunca
+  for (const id of FASES_MIGRAVEIS) { assert.ok(fases[id], `${id} existe no catálogo`); assert.ok(!fases[id].confirmacao, `${id} não é confirmação`) }
+  assert.deepEqual(Object.keys(fases).filter(id => !fases[id].confirmacao).sort(), [...FASES_MIGRAVEIS].sort(), 'a lista cobre todas as fases não confirmatórias')
+  for (const id of ['conf_reembolso', 'conf_troca', 'conf_cupom', 'conf_cancelamento', 'inexistente']) {
+    assert.equal(normalizarInferencia({ desfecho: 'reembolso', percentual: 25, fase: id }, fases).fase, null, `${id} é recusada`)
+  }
+  assert.equal(normalizarInferencia({ desfecho: 'reembolso', percentual: 25, fase: 'reemb_25' }, fases).fase, 'reemb_25')
+  // inferência antiga gravada com confirmação nunca aparece na Central
+  const rConf = calcularCentral({ tickets: [tk('th6', 'h1@x.de', 'l1', { status: 'enviado', inferenciaCentral: infer({ fase: 'conf_reembolso', desfecho: 'reembolso', percentual: 25 }) })], pedidos: pedidosH, lojas, fases, agora })
+  assert.equal(rConf.registros[0].faseAtual, null); assert.equal(rConf.registros[0].desfecho, 'reembolso')
 })
 
 test('relação com a fase: recusou tudo e chegou ao 100% conta como avançou (o 100% está com o dono, não foi enviado)', () => {

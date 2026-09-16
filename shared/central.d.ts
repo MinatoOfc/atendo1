@@ -108,6 +108,8 @@ export interface ResultadoCentral {
 
 export const ORDEM_JORNADAS: readonly string[]
 export const DESFECHOS: readonly Desfecho[]
+export const FASES_MIGRAVEIS: readonly string[]
+export function temRelatorio(t: Ticket): boolean
 export function ehCandidatoMigracao(t: Ticket): boolean
 export function statusMigracao(tickets: Ticket[]): { candidatos: number; inferidos: number; pendentes: number }
 export function normalizarInferencia(bruto: unknown, fases: Record<string, FaseNovo>): Omit<InferenciaCentral, 'em' | 'modelo'> | null

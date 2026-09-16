@@ -46,6 +46,15 @@ estado.tickets = [
   antigo('h902', { categoria: 'reembolso', corpo: 'Schlechte Qualität, ich will mein Geld zurück.', historico: [{ autor: 'atendo', corpo: 'Wir bieten 60% Rückerstattung an.', data: '2026-07-02T12:00:00.000Z' }, { autor: 'cliente', corpo: 'Ok, 60%.', data: '2026-07-02T13:00:00.000Z' }], resposta: 'Erledigt.' }),
   antigo('h903', { categoria: 'entrega', corpo: 'Wo ist mein Paket?' }),
   antigo('h904', { categoria: 'rastreio', corpo: 'Tracking bitte.' }), // não é caso
+  antigo('h905', { categoria: 'reembolso', relatorioDia: '2026-07-10', relatorioTexto: 'REEMBOLSO 100%', corpo: 'Geld zurück bitte.' }), // já tem relatório: fora do lote
+  antigo('h906', { categoria: 'reembolso', status: 'aprovacao', atendimentoNovo: { versao: 1, fluxo: null, etapa: null, historicoEtapas: [], produtosAfetados: [] }, corpo: 'Geld zurück.' }), // modo novo em coleta: nunca
+  // conversa LONGA (> 3.500 caracteres): 25% no começo, 60% perto do fim
+  antigo('h907', { categoria: 'reembolso', corpo: 'Ja, 60% ist ok.', historico: [
+    { autor: 'cliente', corpo: 'Die Qualität ist schlecht, ich will mein Geld zurück.', data: '2026-07-03T10:00:00.000Z' },
+    { autor: 'atendo', corpo: 'Wir bieten 25% Rückerstattung an.', data: '2026-07-03T11:00:00.000Z' },
+    ...Array.from({ length: 12 }, (_, i) => ({ autor: i % 2 ? 'atendo' : 'cliente', corpo: (i % 2 ? 'Wir verstehen Sie. ' : 'Das reicht mir nicht. ') + 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.', data: `2026-07-04T${String(10 + i).padStart(2, '0')}:00:00.000Z` })),
+    { autor: 'atendo', corpo: 'Als letztes Angebot: 60% Rückerstattung, Sie behalten das Produkt.', data: '2026-07-05T10:00:00.000Z' },
+  ], resposta: 'Erledigt, 60% werden erstattet.' }),
 ]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
@@ -59,6 +68,7 @@ const fila = []
 let sabotagem = null
 // sabotagem de idioma: { idioma, vezes } — o escritor responde nesse idioma por N chamadas
 let idiomaSabotado = null
+let ultimoPromptInferencia = ''
 // frases do escritor simulado por idioma (o bloqueio positivo exige a ação nomeada no idioma do cliente)
 const FRASES = {
   de: { ola: 'Hallo!', troca: 'Wir bieten Ihnen einen kostenlosen Umtausch an.', reenvio: 'Wir senden das Paket erneut.', reembolso: p => `Wir bieten eine Rückerstattung von ${p[1]}% (${p[2]}) an.`, reembolsoSem: 'Wir bieten eine Rückerstattung an.', cupom: c => `Gutschein: ${c}.`, cupomSem: 'Wir bieten einen Gutschein an.', cancel: 'Die Bestellung wird storniert.', frete: f => `Die Rücksendung würde ca. ${f} kosten.`, dinheiro: 'Das Geld ist in 3 bis 14 Tagen wieder da.', prazo: p => `Lieferzeit ${p}.`, pergunta: 'Möchten Sie das annehmen?' },
@@ -77,12 +87,15 @@ globalThis.fetch = async (url, opts) => {
   const req = body.output_config.format.schema.required ?? []
   if (req.includes('inferencias')) {
     const user = String(body.messages?.[0]?.content || '')
+    ultimoPromptInferencia = user
     const casos = user.split(/\[caso \d+\]/).slice(1)
-    return responder({ inferencias: casos.map(c => /zu klein|umtausch/i.test(c)
-      ? { jornada: 'tamanho', fase: 'tam_troca', desfecho: 'troca', percentual: 0, motivo: 'Cliente disse que ficou pequeno', categoria: 'tamanho', produtos: ['Polo'], confianca: 0.9 }
-      : /60%/.test(c)
-        ? { jornada: 'qualidade', fase: 'reemb_60', desfecho: 'reembolso', percentual: 60, motivo: 'Cliente não gostou da qualidade', categoria: 'qualidade', produtos: [], confianca: 0.85 }
-        : { jornada: 'nao_recebido', fase: '', desfecho: 'em_aberto', percentual: 0, motivo: 'não informado', categoria: 'nao_recebeu', produtos: [], confianca: 0.4 }) })
+    // a última porcentagem que aparece no trecho enviado é a oferta mais recente
+    return responder({ inferencias: casos.map(c => {
+      if (/zu klein|umtausch/i.test(c)) return { jornada: 'tamanho', fase: 'tam_troca', desfecho: 'troca', percentual: 0, motivo: 'Cliente disse que ficou pequeno', categoria: 'tamanho', produtos: ['Polo'], confianca: 0.9 }
+      const pcts = [...c.matchAll(/(\d{2,3})%/g)].map(m => Number(m[1]))
+      if (pcts.length) { const p = pcts.at(-1); return { jornada: 'qualidade', fase: `reemb_${p}`, desfecho: 'reembolso', percentual: p, motivo: 'Cliente não gostou da qualidade', categoria: 'qualidade', produtos: [], confianca: 0.85 } }
+      return { jornada: 'nao_recebido', fase: '', desfecho: 'em_aberto', percentual: 0, motivo: 'não informado', categoria: 'nao_recebeu', produtos: [], confianca: 0.4 }
+    }) })
   }
   if (req.includes('intencao')) {
     const c = fila.shift() ?? { intencao: 'outro' }
@@ -558,17 +571,31 @@ test('Parte 8: migração dos casos históricos por clique, em lotes, sem altera
   const foto = t => JSON.stringify({ status: t.status, categoria: t.categoria, relatorioDia: t.relatorioDia, relatorioTexto: t.relatorioTexto, atendimentoNovo: t.atendimentoNovo, resposta: t.resposta, historico: t.historico })
   const antes = Object.fromEntries((await api('/api/state', null, 'GET')).state.tickets.filter(t => /^h90/.test(t.id)).map(t => [t.id, foto(t)]))
   let st = await api('/api/central/migracao', null, 'GET')
-  assert.deepEqual([st.candidatos, st.inferidos, st.pendentes], [3, 0, 3], 'rastreio não é caso; nada inferido ainda')
+  assert.deepEqual([st.candidatos, st.inferidos, st.pendentes], [4, 0, 4], 'rastreio não é caso; quem tem relatório (h905) e quem está no modo novo (h906) ficam fora; nada inferido ainda')
   // nada acontece sozinho: a Central mostra os casos sem fase
   let c = await api('/api/central?loja=loja2', null, 'GET')
-  assert.ok(c.registros.filter(x => /^h90/.test(x.ticketId)).every(x => x.faseAtual === null && x.inferidaPor === null))
+  assert.ok(c.registros.filter(x => /^h90[1237]$/.test(x.ticketId)).every(x => x.faseAtual === null && x.inferidaPor === null), 'candidatos sem fase antes do clique')
+  assert.equal(c.registros.find(x => x.ticketId === 'h905').inferidaPor, 'relatorio', 'quem tem relatório já aparece pela linha do relatório')
   // lote de 2
   let r = await api('/api/central/migrar', { limite: 2 })
-  assert.equal(r.status, 200, r.erro); assert.equal(r.lidos, 2); assert.equal(r.restantes, 1)
-  // lote seguinte só pega o pendente; depois, nada
-  r = await api('/api/central/migrar', { limite: 10 }); assert.equal(r.lidos, 1); assert.equal(r.restantes, 0)
+  assert.equal(r.status, 200, r.erro); assert.equal(r.lidos, 2); assert.equal(r.restantes, 2)
+  // lote seguinte pega os pendentes; depois, nada
+  r = await api('/api/central/migrar', { limite: 10 }); assert.equal(r.lidos, 2); assert.equal(r.restantes, 0)
   r = await api('/api/central/migrar', { limite: 10 }); assert.equal(r.lidos, 0)
-  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [3, 0]); assert.equal(st.ultima.lidos, 0)
+  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [4, 0]); assert.equal(st.ultima.lidos, 0)
+  // conversa longa: o trecho enviado preserva assunto, mensagem atual e o FIM (a oferta de 60%), e a inferência escolhe 60%, nunca 25%
+  const h907 = (await api('/api/state', null, 'GET')).state.tickets.find(t => t.id === 'h907')
+  assert.deepEqual([h907.inferenciaCentral.desfecho, h907.inferenciaCentral.percentual, h907.inferenciaCentral.fase], ['reembolso', 60, 'reemb_60'])
+  const trechoLongo = ultimoPromptInferencia.split(/\[caso \d+\]/).find(c => /Ja, 60% ist ok/.test(c)) ?? ''
+  assert.ok(trechoLongo.length > 0 && trechoLongo.length <= 3800, 'trecho limitado')
+  assert.match(trechoLongo, /^\s*Assunto: Bestellung #907/); assert.match(trechoLongo, /Cliente \(mensagem atual\): Ja, 60% ist ok/); assert.match(trechoLongo, /Als letztes Angebot: 60%/); assert.match(trechoLongo, /Loja \(última resposta\): Erledigt, 60%/)
+  assert.match(trechoLongo, /mensagem\(ns\) intermediária\(s\) omitida\(s\)/); assert.match(trechoLongo, /FINAL DA CONVERSA/)
+  assert.ok(trechoLongo.indexOf('Als letztes Angebot: 60%') > trechoLongo.indexOf('omitida'), 'a última oferta vem depois do corte, no fim')
+  // quem tem relatório ou está no modo novo não foi lido
+  const todos = (await api('/api/state', null, 'GET')).state.tickets
+  assert.equal(todos.find(t => t.id === 'h905').inferenciaCentral, undefined, 'com relatório: não gasta IA'); assert.equal(todos.find(t => t.id === 'h906').inferenciaCentral, undefined, 'modo novo: nunca')
+  r = await api('/api/central/migrar', { ticketId: 'h905' }); assert.equal(r.status, 400, 'nem por clique individual')
+  r = await api('/api/central/migrar', { ticketId: 'h906' }); assert.equal(r.status, 400)
   const depois = (await api('/api/state', null, 'GET')).state.tickets.filter(t => /^h90/.test(t.id))
   for (const t of depois) assert.equal(foto(t), antes[t.id], `${t.id}: status, categoria, relatório, motor e mensagens intactos`)
   const h901 = depois.find(t => t.id === 'h901'); const h902 = depois.find(t => t.id === 'h902'); const h904 = depois.find(t => t.id === 'h904')
@@ -585,7 +612,7 @@ test('Parte 8: migração dos casos históricos por clique, em lotes, sem altera
   // refazer uma só (forçado) e remover
   r = await api('/api/central/migrar', { ticketId: 'h903', forcar: true }); assert.equal(r.lidos, 1)
   r = await api('/api/central/migrar', { ticketId: 'h903', remover: true }); assert.equal(r.status, 200)
-  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [2, 1])
+  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [3, 1])
   r = await api('/api/central/migrar', { ticketId: 'h904' }); assert.equal(r.status, 400, 'fora dos casos')
 })
 
