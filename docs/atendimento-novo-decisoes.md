@@ -301,6 +301,33 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     só pedido, produto, motivo e loja. Rascunho pendente, inferência e
     correção manual continuam fora das métricas de fases enviadas.
 
+36. **Mapa visual completo (16/09)**: `shared/mapa.js` é o catálogo de TODOS os
+    itens do mapa mental — 62 itens (regras, coletas, decisões, ofertas,
+    confirmações e decisões do dono), cada um com id estável, jornada, grupo,
+    ordem, título, descrição, tipo, fase real do motor (quando existe) e
+    destinos. As 28 fases do motor aparecem todas; 26 são efetivamente
+    enviáveis (100% e cancelamento são decisão do dono). Regra e decisão nunca
+    contam como fase enviada. A página externa desenha esse catálogo; o teste
+    `test/mapa.test.mjs` guarda a lista fechada e ordenada e falha se um item
+    for removido, omitido, duplicado ou trocado de lugar.
+
+37. **Link externo sem texto livre**: o JSON público leva só categoria fechada
+    do motivo (rótulo gerado no servidor: tamanho pequeno/grande, qualidade,
+    não gostou, defeito, produto errado, atraso, não recebido, cancelamento,
+    não informado, outro), produto só do catálogo do pedido (itens da
+    Shopify) e número do pedido só em dígitos; nada vem da conversa, da
+    inferência da IA ou de dados antigos. A busca externa ignora o nome.
+
+38. **Envio automático no piloto**: toda ativação do modo novo zera
+    `novoEnvioAutomatico` (mesmo se estava ligado antes de voltar ao
+    clássico); ligar exige loja no novo, confirmação explícita e a variável
+    `ATENDO_LIBERAR_AUTOENVIO=1` — sem ela, fica bloqueado durante o piloto.
+
+39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
+    exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
+    se unem automaticamente. O Vite encaminha `/p` para o servidor, então o
+    link copiado abre também em desenvolvimento.
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.

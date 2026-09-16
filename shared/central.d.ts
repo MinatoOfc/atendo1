@@ -18,6 +18,8 @@ export interface Caso {
   produto: string | null
   produtoIdentificado: boolean
   motivo: string | null
+  /** categoria fechada do motivo (tamanho_pequeno, qualidade, defeito…) — o link externo só mostra isto */
+  motivoCategoria: string
   jornada: string
   faseAtual: string | null
   faseTitulo: string

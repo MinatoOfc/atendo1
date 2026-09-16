@@ -457,7 +457,11 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   externo": gerar, copiar, gerar novo, revogar): página "Pipeline completo",
   somente leitura, com as jornadas, fases, indicadores, filtros e painel por
   fase da Central, calculados no servidor pelo mesmo `shared/central.js`,
-  sem dados pessoais e com token longo revogável.
+  sem dados pessoais e com token longo revogável. A página desenha o mapa
+  visual completo (`shared/mapa.js`: 62 itens — regras, coletas, decisões,
+  ofertas, confirmações e decisões do dono — na ordem do mapa mental); só os
+  30 itens ligados a uma fase real do motor carregam números. O motivo sai
+  como categoria fechada e o produto vem do catálogo do pedido.
 
 Piloto (item 9): ainda desligado.
 

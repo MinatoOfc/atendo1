@@ -53,12 +53,20 @@ const LIMITE = {
   ultimaResposta: 'Erledigt: 70% werden in 3 bis 14 Tagen erstattet. Vielen Dank!',
 }
 const antigo = (id, extra) => ({ id, nome: 'Antigo ' + id, de: `${id}@web.de`, assunto: 'Bestellung #' + id.replace(/\D/g, ''), corpo: 'Hallo', data: '2026-07-01T10:00:00.000Z', lido: true, origem: 'cliente', status: 'enviado', idioma: 'de', lojaId: 'loja2', historico: [], ...extra })
+const VAZAMENTO = ['fulano@example.com', '+55 11 99999-9999', '99999-9999', 'Rua das Acácias', '01310-100', 'https://exemplo.test', 'exemplo.test', 'Fulano da Silva Sauro', 'Ich möchte mein Geld zurück', 'Sie erreichen mich', 'Hauptstraße 5', 'Deutschland', 'ik wil mijn geld terug']
 estado.tickets = [
+  // modo novo com produtos "afetados" e endereço contaminados de propósito (nada pode vazar)
+  { id: 'n909', nome: 'Fulano da Silva Sauro', de: 'c16@web.de', assunto: 'Bestellung #16', corpo: 'ik wil mijn geld terug, Hauptstraße 5, 10115 Berlin, Deutschland', data: '2026-08-01T10:00:00.000Z', lido: true, origem: 'cliente', categoria: 'reembolso', status: 'aprovacao', idioma: 'nl', lojaId: 'loja1', historico: [], motor: 'novo',
+    atendimentoNovo: { versao: 1, fluxo: 'qualidade', etapa: 'qual_troca', produtosAfetados: ['Polo do Fulano da Silva Sauro fulano@example.com +55 11 99999-9999'], motivo: 'qualidade', ajusteTamanho: null, fotoSolicitada: false, fotoRecebida: false, fotoValidada: null, ofertaAtual: null, ofertaEnviadaEm: '2026-08-01T12:00:00.000Z', aguardando: 'cliente', acaoAceita: null, enderecoInformado: 'Rua das Acácias 123, CEP 01310-100', enderecoConfirmado: 'Rua das Acácias 123, 01310-100 São Paulo', historicoEtapas: [{ de: null, para: 'qual_troca', mensagem: 'ik wil mijn geld terug', em: '2026-08-01T12:00:00.000Z' }], transicaoPendente: null, idioma: 'nl' } },
   antigo('h901', { categoria: 'troca', corpo: 'Das Polo ist zu klein, ich möchte umtauschen.', historico: [{ autor: 'atendo', corpo: 'Wir tauschen es gratis gegen Größe L um.', data: '2026-07-01T12:00:00.000Z' }], resposta: 'Wir tauschen es gratis gegen Größe L um.' }),
   antigo('h902', { categoria: 'reembolso', corpo: 'Schlechte Qualität, ich will mein Geld zurück.', historico: [{ autor: 'atendo', corpo: 'Wir bieten 60% Rückerstattung an.', data: '2026-07-02T12:00:00.000Z' }, { autor: 'cliente', corpo: 'Ok, 60%.', data: '2026-07-02T13:00:00.000Z' }], resposta: 'Erledigt.' }),
   antigo('h903', { categoria: 'entrega', corpo: 'Wo ist mein Paket?' }),
   antigo('h904', { categoria: 'rastreio', corpo: 'Tracking bitte.' }), // não é caso
   antigo('h905', { categoria: 'reembolso', relatorioDia: '2026-07-10', relatorioTexto: 'REEMBOLSO 100%', corpo: 'Geld zurück bitte.' }), // já tem relatório: fora do lote
+  // dados pessoais plantados DE PROPÓSITO nos campos textuais (nada disto pode vazar no link externo)
+  antigo('h909', { categoria: 'reembolso', relatorioDia: '2026-07-11', relatorioTexto: 'REEMBOLSO 60%', corpo: 'Ich möchte mein Geld zurück, Sie erreichen mich unter fulano@example.com.',
+    motivoReembolso: { motivo: 'Cliente informou fulano@example.com e telefone +55 11 99999-9999', categoria: 'qualidade', em: '2026-07-11T10:00:00.000Z' },
+    inferenciaCentral: { jornada: 'qualidade', fase: 'reemb_60', desfecho: 'reembolso', percentual: 60, motivo: 'Cliente Fulano da Silva Sauro mora na Rua das Acácias 123, CEP 01310-100, ver https://exemplo.test/x', categoria: 'qualidade', produtos: ['Polo do Fulano da Silva Sauro fulano@example.com'], confianca: 0.7, em: '2026-07-11T10:00:00.000Z', origem: 'ia' } }),
   // conversa NO LIMITE: início ≈ 900, fim ≈ 2.600, última resposta relevante no extremo final
   antigo('h908', { categoria: 'reembolso', corpo: LIMITE.mensagemAtual, historico: [
     { autor: 'cliente', corpo: LIMITE.inicio1, data: '2026-07-06T10:00:00.000Z' },
@@ -734,6 +742,7 @@ test('link externo do pipeline: somente leitura, mesmos números da Central, tod
   for (const [id, f] of Object.entries(st.fasesNovo)) { assert.ok(pg.texto.includes(`data-fase="${id}"`), `fase ${id} na página`); assert.ok(pg.texto.includes(f.titulo.replace(/&/g, '&amp;').replace(/'/g, '&#39;')), `título de ${id}`) }
   assert.ok(!pg.texto.includes(link.split('/').pop()), 'o token não aparece no HTML')
   // os dados: mesmos números da Central interna para os mesmos filtros
+  assert.equal(JSON.parse((await raw(link + '/dados?busca=Fulano')).texto).registros.length, 0, 'a busca externa não procura no nome do cliente')
   for (const q of ['', '?loja=loja1', '?loja=loja2&periodo=todas', '?jornada=qualidade&fase=reemb_25&desfecho=reembolso', '?desfecho=25']) {
     const ext = JSON.parse((await raw(link + '/dados' + q)).texto)
     const int = await api('/api/central' + q, null, 'GET')
@@ -745,11 +754,25 @@ test('link externo do pipeline: somente leitura, mesmos números da Central, tod
     // percentuais por fase sobre os casos filtrados; painel por fase coerente com as métricas
     for (const [id, m] of Object.entries(ext.metricas)) { assert.equal(m.pctPassaram, ext.totalCasos ? Math.round((m.passaram / ext.totalCasos) * 1000) / 10 : 0); assert.equal(ext.porFase[id].passaram.length, m.passaram); assert.equal(ext.porFase[id].pararam.length, m.pararam); assert.equal(ext.porFase[id].avancaram.length, m.avancaram) }
   }
-  // sem dados pessoais nem texto de conversa — no HTML e no JSON
+  // sem dados pessoais nem texto de conversa — no HTML e no JSON (inclusive os plantados em h909 e n909)
   const dados = (await raw(link + '/dados')).texto
-  for (const proibido of ['@web.de', '@teste.local', 'Hauptstr', 'Schlecht', 'Umtausch', 'Cliente 1', '"cliente"', '"de":', '"corpo"', '"historico"', '"enderecoConfirmado"', '"enderecoInformado"', '"rascunho"', '"resposta"']) {
+  for (const proibido of ['@web.de', '@teste.local', 'Hauptstr', 'Schlecht', 'Umtausch', 'Cliente 1', '"cliente"', '"de":', '"corpo"', '"historico"', '"enderecoConfirmado"', '"enderecoInformado"', '"rascunho"', '"resposta"', ...VAZAMENTO]) {
     assert.ok(!dados.includes(proibido), `JSON externo não pode conter "${proibido}"`); assert.ok(!pg.texto.includes(proibido), `HTML externo não pode conter "${proibido}"`)
   }
+  // os dois casos contaminados estão lá — só com categoria fechada e produto do catálogo do pedido
+  const ext0 = JSON.parse(dados)
+  const h909 = ext0.registros.find(x => x.chave.startsWith('t:') || x.pedidoNumero === null) // sem pedido: chave por ticket
+  const n909 = ext0.registros.find(x => x.pedidoNumero === '16')
+  assert.ok(n909, 'n909 aparece'); assert.equal(n909.motivo, 'qualidade'); assert.equal(n909.produto, 'Polo Premium (Schwarz / L)', 'produto vem do pedido, não do texto')
+  assert.ok(ext0.registros.every(x => ['tamanho pequeno', 'tamanho grande', 'tamanho não serviu', 'qualidade', 'não gostou', 'defeito', 'produto errado', 'atraso', 'não recebido', 'cancelamento', 'não informado', 'outro'].includes(x.motivo)), 'motivo é sempre um rótulo fechado')
+  assert.ok(ext0.registros.every(x => !x.pedidoNumero || /^\d+$/.test(x.pedidoNumero)))
+  void h909
+  // o mapa visual completo, item a item, no HTML e no JSON
+  const { MAPA_VISUAL } = await import('../shared/mapa.js')
+  for (const i of MAPA_VISUAL) assert.ok(pg.texto.includes(`data-item="${i.id}"`), `item ${i.id} na página`)
+  assert.equal((pg.texto.match(/data-item="/g) || []).length, MAPA_VISUAL.length, 'nem mais nem menos itens')
+  assert.equal(ext0.catalogo.mapa.length, MAPA_VISUAL.length)
+  assert.equal((pg.texto.match(/ data-fase="/g) || []).length, MAPA_VISUAL.filter(i => i.fase).length, 'só itens com fase do motor carregam números')
   assert.ok(dados.includes('"registros"') && dados.includes('"linhas"') && dados.includes('"metricas"'))
   // nenhuma rota de escrita pelo link
   for (const caminho of [link + '/dados', link]) { const w = await raw(caminho, 'POST'); assert.ok(w.status === 404 || w.status === 405, `POST ${caminho} → ${w.status}`) }
@@ -763,6 +786,54 @@ test('link externo do pipeline: somente leitura, mesmos números da Central, tod
   // revogar: o endereço para de funcionar imediatamente
   r = await api('/api/pipeline-link', { acao: 'revogar' }); assert.equal(r.state.pipelineLink, null)
   assert.equal((await raw(link2)).status, 404); assert.equal((await raw(link2 + '/dados')).status, 404)
+})
+
+test('envio automático: só no novo, com confirmação, bloqueado no piloto; toda reativação do novo volta desligado', async () => {
+  // loja6 está no clássico: não liga
+  let r = await api('/api/lojas', { id: 'loja6', novoEnvioAutomatico: true, confirmar: true })
+  assert.equal(r.status, 400); assert.match(r.erro, /clássico/)
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200, r.erro)
+  // no novo, durante o piloto (variável não liberada): bloqueado
+  delete process.env.ATENDO_LIBERAR_AUTOENVIO
+  r = await api('/api/lojas', { id: 'loja6', novoEnvioAutomatico: true, confirmar: true })
+  assert.equal(r.status, 400); assert.equal(r.bloqueadoPiloto, true)
+  assert.equal((await api('/api/state', null, 'GET')).state.envioAutomaticoLiberado, false)
+  // liberado, mas sem confirmação: não liga
+  process.env.ATENDO_LIBERAR_AUTOENVIO = '1'
+  try {
+    r = await api('/api/lojas', { id: 'loja6', novoEnvioAutomatico: true }); assert.equal(r.status, 400); assert.equal(r.precisaConfirmar, true)
+    r = await api('/api/lojas', { id: 'loja6', novoEnvioAutomatico: true, confirmar: true }); assert.equal(r.status, 200)
+    assert.equal(r.state.lojas.find(l => l.id === 'loja6').novoEnvioAutomatico, true)
+    // novo → clássico → novo: volta DESLIGADO, sem exceção
+    r = await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true }); assert.equal(r.status, 200)
+    r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200)
+    assert.equal(r.state.lojas.find(l => l.id === 'loja6').novoEnvioAutomatico, false, 'reativar o novo desliga o automático')
+    // nenhuma conversa nova ganha enviaEm depois da reativação
+    const t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c34@web.de', nome: 'C34', corpo: 'Schlecht.', lojaId: 'loja6' })
+    assert.equal(t.motor, 'novo'); assert.equal(t.status, 'aprovacao'); assert.equal(t.enviaEm, undefined, 'sem envio automático agendado')
+  } finally { delete process.env.ATENDO_LIBERAR_AUTOENVIO }
+  await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
+})
+
+test('conversas de motores diferentes nunca se fundem; do mesmo motor continuam se fundindo', async () => {
+  const { fundirConversasDuplicadas } = await import('../server/index.js')
+  const base = (id, extra) => ({ id, nome: 'Ana Maria Souza', de: 'ana@web.de', assunto: 'Bestellung #500', corpo: 'Wo ist Bestellung #500?', data: '2026-08-01T10:00:00.000Z', lido: true, origem: 'cliente', categoria: 'rastreio', status: 'aprovacao', idioma: 'de', lojaId: 'loja2', historico: [], ...extra })
+  const novo = () => ({ versao: 1, fluxo: 'qualidade', etapa: 'qual_troca', produtosAfetados: [], motivo: 'qualidade', historicoEtapas: [{ de: null, para: 'qual_troca', mensagem: 'x', em: '2026-08-01T12:00:00.000Z' }], transicaoPendente: null, aguardando: 'cliente', acaoAceita: null })
+  const rodar = tickets => { const estado = { tickets, pedidos: [], lojas: [] }; const mudou = fundirConversasDuplicadas(estado); return { mudou, restantes: estado.tickets.filter(t => !['spam', 'lixeira'].includes(t.status)).map(t => t.id) } }
+  // mesmo cliente, mesmo pedido, motores diferentes → não funde
+  let r = rodar([base('a1', { motor: 'classico' }), base('a2', { motor: 'novo', atendimentoNovo: novo() })])
+  assert.equal(r.mudou, false); assert.deepEqual(r.restantes.sort(), ['a1', 'a2'])
+  // mesmo assunto, motores diferentes (o do novo sem campo motor, só com estado) → não funde
+  r = rodar([base('b1', { motor: 'classico', corpo: 'Hallo' }), base('b2', { atendimentoNovo: novo(), corpo: 'Hallo nochmal' })])
+  assert.equal(r.mudou, false); assert.deepEqual(r.restantes.sort(), ['b1', 'b2'])
+  // e-mails diferentes, mesmo pedido, mesma pessoa provada pelo nome, motores diferentes → não funde
+  r = rodar([base('c1', { motor: 'classico' }), base('c2', { de: 'ana.souza@outro.de', motor: 'novo', atendimentoNovo: novo() })])
+  assert.equal(r.mudou, false); assert.deepEqual(r.restantes.sort(), ['c1', 'c2'])
+  // mesmo motor: continua fundindo normalmente
+  r = rodar([base('d1', { motor: 'classico' }), base('d2', { motor: 'classico' })])
+  assert.equal(r.mudou, true); assert.equal(r.restantes.length, 1)
+  r = rodar([base('e1', { motor: 'novo', atendimentoNovo: novo() }), base('e2', { de: 'ana.souza@outro.de', motor: 'novo', atendimentoNovo: novo() })])
+  assert.equal(r.mudou, true); assert.equal(r.restantes.length, 1)
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

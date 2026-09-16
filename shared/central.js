@@ -169,6 +169,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
     let situacaoReembolso = null // 'efetivado' | 'aceite_pendente' | 'registrado' | 'inferido' | null
     let confirmacaoEnviada = null
     let inferidaPor = null // 'relatorio' | 'ia' | null
+    let motivoCategoria = 'nao_informado' // categoria FECHADA (a página externa só mostra isto, nunca o texto)
 
     if (an?.fluxo) {
       origem = 'confirmada'
@@ -182,6 +183,10 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       trilha = enviadas.filter(id => !fases[id].confirmacao)
       confirmacaoEnviada = enviadas.find(id => fases[id].confirmacao) ?? null
       motivo = an.motivo ? NOME_MOTIVO[an.motivo] ?? an.motivo : null
+      const ajustes = Object.values(an.ajusteTamanho ?? {})
+      motivoCategoria = an.motivo === 'tamanho' && ajustes.length && ajustes.every(a => a === 'pequeno') ? 'tamanho_pequeno'
+        : an.motivo === 'tamanho' && ajustes.length && ajustes.every(a => a === 'grande') ? 'tamanho_grande'
+          : NOME_MOTIVO[an.motivo] ? an.motivo : 'nao_informado'
       produto = an.produtosAfetados?.length ? an.produtosAfetados.join('; ') : null
       comVoce = an.aguardando === 'humano'
       if (an.acaoAceita) {
@@ -193,6 +198,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
     } else {
       // 1) o que o dono registrou (relatório manual + motivo lido) tem prioridade
       const cat = t.motivoReembolso?.categoria ?? inf?.categoria
+      motivoCategoria = typeof cat === 'string' && /^[a-z_]+$/.test(cat) ? cat : 'nao_informado'
       jornada = (cat && JORNADA_DA_CATEGORIA_MOTIVO[cat]) || inf?.jornada || 'entrada'
       motivo = t.motivoReembolso?.motivo ?? inf?.motivo ?? null
       const pct = linha.match(/(\d{1,3})\s*%/)
@@ -248,7 +254,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       faseConfirmada, faseInferida, faseManual, origem, trilha,
       pendente: an?.transicaoPendente?.para ?? null,
       desfecho, percentual, reembolsado, concluido, comVoce, acaoPendente, escalouAoDono,
-      situacaoReembolso, confirmacaoEnviada, inferidaPor, inferencia: inf,
+      situacaoReembolso, confirmacaoEnviada, inferidaPor, inferencia: inf, motivoCategoria,
       dataMs: new Date(pedido?.criadoEm ? pedido.criadoEm + 'T12:00:00' : t.data).getTime(),
       ajuste: t.centralAjuste ?? null,
       historicoAjustes: t.centralHistorico ?? [],

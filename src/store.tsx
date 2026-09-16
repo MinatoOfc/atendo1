@@ -315,6 +315,8 @@ interface ServerState {
   relatorioLink?: string | null
   /** link externo do pipeline (somente leitura), ou null quando não existe/foi revogado */
   pipelineLink?: string | null
+  /** envio automático do novo liberado no servidor (fora do piloto)? */
+  envioAutomaticoLiberado?: boolean
   /** link público do último relatório de reembolsos gerado (mesmo token) */
   reembolsosLink?: string | null
   /** quando esse relatório foi gerado (ISO) */
@@ -392,7 +394,7 @@ interface Store extends ServerState {
   lojasVisiveis: Loja[]
   atualizarLoja: (id: string, patch: {
     nome?: string; ativa?: boolean; idioma?: string; assinatura?: string; iaModelo?: string; modoAtendimento?: string
-    novoEnvioAutomatico?: boolean; prazoEntrega?: { min: number; max: number; processamento: number }; cupons?: Record<string, string>
+    novoEnvioAutomatico?: boolean; confirmar?: boolean; prazoEntrega?: { min: number; max: number; processamento: number }; cupons?: Record<string, string>
   }) => void
   criarLoja: (nome?: string) => Promise<string | null>
   removerLoja: (id: string, confirmacao: string) => Promise<string | null>

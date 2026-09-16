@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8787',
       '/r': 'http://localhost:8787', // link público do relatório manual
+      '/p': 'http://localhost:8787', // link externo do pipeline (somente leitura)
     },
   },
 })

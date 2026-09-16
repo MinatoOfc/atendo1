@@ -2,14 +2,20 @@
  * Pipeline completo — página externa, somente leitura.
  *
  * Mesmo cálculo da Central interna (shared/central.js) sobre os dados reais do
- * workspace; nada simulado, nada fixo. A página é um HTML estático que busca
- * "./dados" (relativo ao próprio endereço, que carrega o token) e desenha.
+ * workspace; nada simulado, nada fixo. O desenho segue o mapa visual completo
+ * (shared/mapa.js): regras, coletas, decisões, ofertas, confirmações e decisões
+ * humanas na ordem do mapa mental. Só os itens ligados a uma fase real do motor
+ * carregam números de "fase enviada"; regra e decisão nunca são contabilizadas.
  *
- * Segurança: o JSON sai SANITIZADO — sem nome, e-mail, endereço, telefone ou
- * texto de conversa do cliente. A busca externa procura só em pedido, produto,
- * motivo e loja (nunca no nome do cliente). Nenhuma rota de escrita existe aqui.
+ * Segurança: o JSON sai SANITIZADO no servidor — nenhum texto livre vindo da
+ * conversa, da IA ou de dados antigos. Motivo vira uma categoria fechada com
+ * rótulo gerado aqui; produto vem só do catálogo do pedido (itens da Shopify);
+ * pedido é só o número. Nada de nome, e-mail, endereço, telefone ou mensagem.
+ * A busca externa procura só em pedido, produto, motivo (rótulo) e loja.
+ * Nenhuma rota de escrita existe aqui.
  */
 import { calcularCentral, metricasPorFase, indicadores, relacaoComFase, ORDEM_JORNADAS } from '../shared/central.js'
+import { MAPA_VISUAL, itensDaJornada } from '../shared/mapa.js'
 
 const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
@@ -25,31 +31,49 @@ export function filtrosDaConsulta(q = {}) {
   }
 }
 
-const registroPublico = r => ({
-  chave: r.chave, pedidoNumero: r.pedidoNumero, lojaId: r.lojaId, lojaNome: r.lojaNome, moeda: r.moeda,
-  pedidoValor: r.pedidoValor, produto: r.produto, motivo: r.motivo, jornada: r.jornada,
-  faseAtual: r.faseAtual, faseTitulo: r.faseTitulo, origem: r.origem, inferidaPor: r.inferidaPor,
-  desfecho: r.desfecho, percentual: r.percentual, reembolsado: r.reembolsado, situacaoReembolso: r.situacaoReembolso,
-  concluido: r.concluido, comVoce: r.comVoce, dataMs: r.dataMs, conversas: r.tickets?.length ?? 1,
-})
-const linhaPublica = l => ({
-  chave: l.chave, pedidoNumero: l.pedidoNumero, lojaId: l.lojaId, lojaNome: l.lojaNome, moeda: l.moeda,
-  valor: l.valor, dataMs: l.dataMs, produto: l.produto, atendimento: l.atendimento, faseTitulo: l.faseTitulo,
-  registro: l.registro ? registroPublico(l.registro) : null,
-})
+/** Categoria fechada → rótulo gerado no servidor (nunca texto da conversa ou da IA). */
+export const ROTULO_MOTIVO = {
+  tamanho_pequeno: 'tamanho pequeno', tamanho_grande: 'tamanho grande', tamanho: 'tamanho não serviu',
+  qualidade: 'qualidade', nao_gostou: 'não gostou', defeito: 'defeito', errado: 'produto errado',
+  atraso: 'atraso', nao_recebido: 'não recebido', nao_recebeu: 'não recebido',
+  cancelamento: 'cancelamento', arrependimento: 'cancelamento', alergia: 'outro', outro: 'outro', nao_informado: 'não informado',
+}
+export const motivoPublico = categoria => ROTULO_MOTIVO[categoria] ?? (categoria ? 'outro' : 'não informado')
+
+/** Produto só do catálogo do pedido (títulos e variantes da Shopify), nunca de texto livre. */
+const produtoDoPedido = p => p?.itens?.[0]
+  ? `${p.itens[0].titulo}${p.itens[0].variante ? ` (${p.itens[0].variante})` : ''}${p.itens.length > 1 ? ` +${p.itens.length - 1}` : ''}`
+  : null
+const numeroPublico = n => { const d = String(n ?? '').replace(/\D/g, ''); return d || null }
 
 /**
- * Dados da página: o mesmo calcularCentral da Central interna. A busca é
- * aplicada DEPOIS, só sobre campos públicos (pedido, produto, motivo, loja),
- * e as métricas/indicadores são recalculados pelas mesmas funções.
+ * Dados da página: o mesmo calcularCentral da Central interna. Depois de
+ * calcular, os registros e linhas são reduzidos a campos públicos e a busca é
+ * aplicada SÓ sobre esses campos; métricas e indicadores são recalculados
+ * pelas mesmas funções quando há busca.
  */
 export function dadosPipeline({ estado, fases, jornadas, filtros }) {
   const lojas = estado.lojas.map(l => ({ id: l.id, nome: l.nome, moeda: l.moeda || 'EUR' }))
+  const produtoPorPedido = new Map((estado.pedidos ?? []).map(p => [p.id, produtoDoPedido(p)]))
+  const publico = r => ({
+    chave: r.chave, pedidoNumero: numeroPublico(r.pedidoNumero), lojaId: r.lojaId, lojaNome: r.lojaNome, moeda: r.moeda,
+    pedidoValor: r.pedidoValor, produto: r.pedidoId ? produtoPorPedido.get(r.pedidoId) ?? null : null,
+    motivo: motivoPublico(r.motivoCategoria), jornada: r.jornada,
+    faseAtual: r.faseAtual, faseTitulo: r.faseTitulo, origem: r.origem, inferidaPor: r.inferidaPor,
+    desfecho: r.desfecho, percentual: r.percentual, reembolsado: r.reembolsado, situacaoReembolso: r.situacaoReembolso,
+    concluido: r.concluido, comVoce: r.comVoce, dataMs: r.dataMs, conversas: r.tickets?.length ?? 1,
+  })
   const base = calcularCentral({ tickets: estado.tickets, pedidos: estado.pedidos ?? [], lojas: estado.lojas, fases, filtros: { ...filtros, busca: '' } })
   const q = norm(filtros.busca.trim())
   const casa = campos => !q || norm(campos.filter(Boolean).join(' ')).includes(q)
-  const registros = base.registros.filter(r => casa([r.pedidoNumero, r.produto, r.motivo, r.lojaNome]))
-  const linhas = base.linhas.filter(l => casa([l.pedidoNumero, l.produto, l.registro?.motivo, l.lojaNome]))
+  const registrosPub = base.registros.map(publico)
+  const registros = base.registros.filter((r, i) => { const p = registrosPub[i]; return casa([p.pedidoNumero, p.produto, p.motivo, p.lojaNome]) })
+  const linhasPub = base.linhas.map(l => ({
+    chave: l.chave, pedidoId: l.pedidoId, pedidoNumero: numeroPublico(l.pedidoNumero), lojaId: l.lojaId, lojaNome: l.lojaNome, moeda: l.moeda,
+    valor: l.valor, dataMs: l.dataMs, produto: l.pedidoId ? produtoPorPedido.get(l.pedidoId) ?? null : null,
+    atendimento: l.atendimento, faseTitulo: l.faseTitulo, registro: l.registro ? publico(l.registro) : null,
+  }))
+  const linhas = base.linhas.filter((l, i) => { const p = linhasPub[i]; return casa([p.pedidoNumero, p.produto, p.registro?.motivo, p.lojaNome]) })
   const metricas = q ? metricasPorFase(registros, fases) : base.metricas
   const kpis = q ? indicadores(linhas) : base.indicadores
   const total = registros.length
@@ -64,7 +88,6 @@ export function dadosPipeline({ estado, fases, jornadas, filtros }) {
         else if (rel === 'avancaram') grupo.avancaram.push(r.chave)
         else grupo.emAberto.push(r.chave)
       } else if (r.confirmacaoEnviada === id) {
-        // fase de confirmação enviada: conta como passou e parou (mesma regra de metricasPorFase)
         grupo.passaram.push(r.chave); grupo.pararam.push(r.chave)
       }
     }
@@ -76,38 +99,50 @@ export function dadosPipeline({ estado, fases, jornadas, filtros }) {
     catalogo: {
       ordem: ORDEM_JORNADAS, jornadas,
       fases: Object.fromEntries(Object.entries(fases).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, instrucao: f.instrucao ?? null, confirmacao: !!f.confirmacao }])),
+      mapa: MAPA_VISUAL,
     },
     lojas,
     indicadores: kpis,
     metricas: Object.fromEntries(Object.entries(metricas).map(([id, m]) => [id, { ...m, pctPassaram: total ? Math.round((m.passaram / total) * 1000) / 10 : 0 }])),
     porFase,
     totalCasos: total,
-    registros: registros.map(registroPublico),
-    linhas: linhas.map(linhaPublica),
+    registros: registros.map(publico),
+    linhas: linhasPub.filter((_, i) => casa([linhasPub[i].pedidoNumero, linhasPub[i].produto, linhasPub[i].registro?.motivo, linhasPub[i].lojaNome])),
   }
 }
 
 const escapar = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+const NOME_TIPO = { regra: 'regra', coleta: 'coleta', decisao: 'decisão', oferta: 'oferta', confirmacao: 'confirmação', humano: 'decisão do dono' }
 
-/** HTML da página. Sem token no corpo: a página busca "dados" pelo caminho relativo. */
+/** HTML da página. Sem token no corpo: a página busca "dados" pelo caminho relativo ao próprio endereço. */
 export function paginaPipeline({ catalogo, lojas }) {
   const ordem = catalogo.ordem
-  const fasesPorJornada = j => Object.entries(catalogo.fases).filter(([, f]) => f.jornada === j)
-  // as fases também vão no HTML (servidor), para a página nunca depender só do JS
-  const mapaInicial = ordem.map(j => `
+  const titulo = id => catalogo.fases[id]?.titulo ?? id
+  // o mapa visual inteiro vai no HTML (servidor): a página nunca depende só do JS para mostrar as etapas
+  const mapaInicial = ordem.map(j => {
+    const itens = itensDaJornada(j)
+    const grupos = [...new Set(itens.map(i => i.grupo))]
+    return `
     <section class="jornada" data-jornada="${j}">
       <h2>${escapar(catalogo.jornadas[j] ?? j)} <span class="mini" data-jornada-resumo="${j}"></span></h2>
+      ${grupos.map(g => `
+      <div class="grupo"><div class="grupo-titulo">${escapar(g)}</div>
       <div class="fases">
-        ${fasesPorJornada(j).map(([id, f]) => `
-        <button class="fase" data-fase="${id}" type="button">
-          <div class="fase-titulo">${escapar(f.titulo)}</div>
+        ${itens.filter(i => i.grupo === g).map(i => `
+        <${i.fase ? 'button type="button"' : 'div'} class="fase tipo-${i.tipo}${i.fase ? '' : ' sem-fase'}" data-item="${i.id}"${i.fase ? ` data-fase="${i.fase}"` : ''}>
+          <div class="fase-cab"><span class="ordem">${i.ordem}</span><span class="tipo">${NOME_TIPO[i.tipo]}</span></div>
+          <div class="fase-titulo">${escapar(i.titulo)}</div>
+          <div class="mini desc">${escapar(i.descricao)}</div>
+          ${i.fase ? `<div class="mini">fase do motor: <code>${i.fase}</code>${i.fase !== i.id ? ` — ${escapar(titulo(i.fase))}` : ''}</div>
           <div class="nums"><span><b data-n="passaram">0</b> passaram</span><span><b data-n="pararam">0</b> pararam</span><span><b data-n="avancaram">0</b> avançaram</span></div>
           <div class="mini" data-n="pct"></div>
           <div class="mini" data-n="valor">—</div>
-          <div class="mini" data-n="fora"></div>
-        </button>`).join('')}
-      </div>
-    </section>`).join('')
+          <div class="mini" data-n="fora"></div>` : `<div class="mini nao-conta">${i.tipo === 'humano' ? 'decisão do dono — não é fase enviada' : `${NOME_TIPO[i.tipo]} — não é fase enviada, não entra nas métricas`}</div>`}
+          ${i.destinos.length ? `<div class="mini">→ ${i.destinos.map(d => escapar(MAPA_VISUAL.find(x => x.id === d)?.titulo ?? d)).join(' · ')}</div>` : ''}
+        </${i.fase ? 'button' : 'div'}>`).join('')}
+      </div></div>`).join('')}
+    </section>`
+  }).join('')
 
   return `<!doctype html>
 <html lang="pt-BR">
@@ -117,13 +152,14 @@ export function paginaPipeline({ catalogo, lojas }) {
 <meta name="robots" content="noindex, nofollow">
 <title>Pipeline completo</title>
 <style>
-  :root { --bg:#f6f7fb; --panel:#fff; --border:#e4e6ee; --text:#1c1f2b; --muted:#6b7080; --purple:#6b5cf6; --purple-soft:#eeebff; --green:#e6f7ee; --amber:#fff3d6; --red:#fde8e8; }
+  :root { --bg:#f6f7fb; --panel:#fff; --border:#e4e6ee; --text:#1c1f2b; --muted:#6b7080; --purple:#6b5cf6; --purple-soft:#eeebff; --green:#e6f7ee; --amber:#fff3d6; --red:#fde8e8; --blue:#e7f0ff; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:14px 16px 40px; }
   h1 { font-size:20px; margin:0 0 4px; }
   h2 { font-size:15px; margin:18px 0 8px; }
   .muted { color:var(--muted); font-size:12.5px; }
   .mini { color:var(--muted); font-size:11.5px; }
+  code { font-size:11px; background:#eef0f5; padding:0 4px; border-radius:4px; }
   .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
   .wrap { max-width:1180px; margin:0 auto; }
   .topo { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start; margin-bottom:12px; }
@@ -139,10 +175,20 @@ export function paginaPipeline({ catalogo, lojas }) {
   .jornadas { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-bottom:6px; }
   .jornadas .card { cursor:pointer; }
   .jornadas .card.on { border-color:var(--purple); box-shadow:0 0 0 2px var(--purple-soft); }
-  .fases { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; }
-  .fase { text-align:left; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; cursor:pointer; display:grid; gap:4px; font:inherit; color:inherit; }
-  .fase.on { border-color:var(--purple); box-shadow:0 0 0 2px var(--purple-soft); }
+  .legenda { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 4px; }
+  .grupo { margin-bottom:10px; }
+  .grupo-titulo { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:6px 0 6px; }
+  .fases { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px; }
+  .fase { text-align:left; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:grid; gap:4px; font:inherit; color:inherit; align-content:start; }
+  button.fase { cursor:pointer; }
+  button.fase.on { border-color:var(--purple); box-shadow:0 0 0 2px var(--purple-soft); }
+  .fase.sem-fase { background:#fbfbfd; border-style:dashed; }
+  .fase-cab { display:flex; justify-content:space-between; align-items:center; }
+  .ordem { font-size:11px; color:var(--muted); }
+  .tipo { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; border-radius:999px; padding:1px 8px; background:#eef0f5; }
+  .tipo-oferta .tipo { background:var(--purple-soft); } .tipo-confirmacao .tipo { background:var(--green); } .tipo-humano .tipo { background:var(--amber); } .tipo-decisao .tipo { background:var(--blue); } .tipo-coleta .tipo { background:#f1f5f9; }
   .fase-titulo { font-weight:600; font-size:12.5px; }
+  .nao-conta { font-style:italic; }
   .nums { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
   .nums b { color:var(--text); }
   .tabela { overflow-x:auto; }
@@ -179,13 +225,16 @@ export function paginaPipeline({ catalogo, lojas }) {
     <select class="chip" id="f-periodo"><option value="todas">Todas as datas</option><option value="7">7 dias</option><option value="30">30 dias</option><option value="90">90 dias</option></select>
     <select class="chip" id="f-desfecho"><option value="todos">Todos os desfechos</option><option value="em_aberto">Em aberto</option><option value="reembolso">Reembolso</option><option value="troca">Troca</option><option value="reenvio">Reenvio</option><option value="cupom">Cupom</option><option value="cancelamento">Cancelamento</option><option value="encerrado">Encerrado</option>${[20, 25, 35, 40, 50, 60, 70, 100].map(p => `<option value="${p}">${p}% reembolsado</option>`).join('')}</select>
     <select class="chip" id="f-jornada"><option value="todas">Todas as jornadas</option>${ordem.map(j => `<option value="${j}">${escapar(catalogo.jornadas[j] ?? j)}</option>`).join('')}</select>
-    <select class="chip" id="f-fase"><option value="todas">Todas as fases</option><option value="sem_fase">Sem fase</option>${ordem.flatMap(j => fasesPorJornada(j).map(([id, f]) => `<option value="${id}" data-jornada="${j}">${escapar(f.titulo)}</option>`)).join('')}</select>
+    <select class="chip" id="f-fase"><option value="todas">Todas as fases</option><option value="sem_fase">Sem fase</option>${ordem.flatMap(j => Object.entries(catalogo.fases).filter(([, f]) => f.jornada === j).map(([id, f]) => `<option value="${id}" data-jornada="${j}">${escapar(f.titulo)}</option>`)).join('')}</select>
   </div>
 
   <div id="aviso-moedas" class="muted oculto" style="margin-bottom:8px">Lojas em moedas diferentes não se somam — os indicadores aparecem por moeda.</div>
   <div id="kpis"></div>
 
-  <div id="mapa">${mapaInicial}</div>
+  <div id="mapa">
+    <div class="legenda muted">Legenda: <span class="tipo" style="background:var(--purple-soft)">oferta</span> <span class="tipo" style="background:var(--green)">confirmação</span> <span class="tipo" style="background:#f1f5f9">coleta</span> <span class="tipo" style="background:var(--blue)">decisão</span> <span class="tipo">regra</span> <span class="tipo" style="background:var(--amber)">decisão do dono</span> — só itens com fase do motor carregam números; regra e decisão não entram nas métricas.</div>
+    ${mapaInicial}
+  </div>
 
   <div id="pedidos" class="card tabela oculto">
     <table>
@@ -261,8 +310,8 @@ export function paginaPipeline({ catalogo, lojas }) {
       });
       bloco.appendChild(j); kp.appendChild(bloco);
     });
-    // fases (já estão no HTML): só os números
-    $$('.fase').forEach(function (b) {
+    // itens do mapa com fase (já estão no HTML): só os números
+    $$('.fase[data-fase]').forEach(function (b) {
       var id = b.getAttribute('data-fase'); var m = d.metricas[id] || { passaram: 0, pararam: 0, avancaram: 0, emAberto: 0, valorPorMoeda: {}, inferidos: 0, manuais: 0, pctPassaram: 0 };
       texto($('[data-n=passaram]', b), m.passaram); texto($('[data-n=pararam]', b), m.pararam); texto($('[data-n=avancaram]', b), m.avancaram);
       texto($('[data-n=pct]', b), m.pctPassaram + '% dos casos filtrados' + (m.emAberto ? ' · ' + m.emAberto + ' em aberto' : ''));
@@ -284,7 +333,7 @@ export function paginaPipeline({ catalogo, lojas }) {
       var tdp = el('td', '', !r ? '—' : r.percentual != null ? r.percentual + '%' : (r.desfecho === 'em_aberto' ? 'em aberto' : NOME_DESFECHO[r.desfecho] || r.desfecho));
       if (r && r.situacaoReembolso) tdp.appendChild(el('div', 'mini', { efetivado: 'efetivado', aceite_pendente: 'aceite pendente', registrado: 'no relatório, não processado', inferido: 'só inferido pela IA' }[r.situacaoReembolso] || r.situacaoReembolso));
       tr.appendChild(tdp);
-      tr.appendChild(el('td', '', r && r.motivo ? r.motivo : '—'));
+      tr.appendChild(el('td', '', r ? r.motivo : '—'));
       var tda = el('td'); var tag = el('span', 'tag ' + (l.atendimento === 'confirmada' ? 'green' : l.atendimento === 'manual' ? 'amber' : ''), l.atendimento + (r && r.inferidaPor === 'ia' ? ' (IA)' : r && r.inferidaPor === 'relatorio' ? ' (relatório)' : '')); tda.appendChild(tag);
       if (r && r.comVoce) { tda.appendChild(document.createTextNode(' ')); tda.appendChild(el('span', 'tag red', 'com o dono')); }
       tr.appendChild(tda);
@@ -309,19 +358,18 @@ export function paginaPipeline({ catalogo, lojas }) {
     itens.forEach(function (r) {
       var it = el('div', 'item'); var l1 = el('div', 'l'); l1.appendChild(el('b', '', r.pedidoNumero ? '#' + r.pedidoNumero : 'sem pedido')); l1.appendChild(el('span', 'muted', r.pedidoValor != null ? dinheiro(r.pedidoValor, r.moeda) : '')); it.appendChild(l1);
       it.appendChild(el('div', 'muted', [r.produto, r.lojaNome].filter(Boolean).join(' · ')));
-      it.appendChild(el('div', 'muted', (r.motivo || 'motivo não informado') + ' · estágio: ' + r.faseTitulo + (r.concluido ? ' · ' + (NOME_DESFECHO[r.desfecho] || r.desfecho) + (r.percentual != null ? ' ' + r.percentual + '%' : '') : '')));
+      it.appendChild(el('div', 'muted', r.motivo + ' · estágio: ' + r.faseTitulo + (r.concluido ? ' · ' + (NOME_DESFECHO[r.desfecho] || r.desfecho) + (r.percentual != null ? ' ' + r.percentual + '%' : '') : '')));
       it.appendChild(el('div', 'mini', 'origem: ' + r.origem + (r.inferidaPor === 'ia' ? ' (IA)' : r.inferidaPor === 'relatorio' ? ' (relatório)' : '') + (r.conversas > 1 ? ' · ' + r.conversas + ' conversas' : '')));
       lista.appendChild(it);
     });
   }
-  // eventos
   $$('#filtros select').forEach(function (s) { s.addEventListener('change', function () { if (s.id === 'f-jornada') $('#f-fase').value = 'todas'; carregar(); }); });
   var t; $('#f-busca').addEventListener('input', function () { clearTimeout(t); t = setTimeout(carregar, 300); });
   $$('[data-aba]').forEach(function (b) { b.addEventListener('click', function () {
     estado.aba = b.getAttribute('data-aba'); $$('[data-aba]').forEach(function (x) { x.classList.toggle('on', x === b); });
     $('#mapa').classList.toggle('oculto', estado.aba !== 'mapa'); $('#pedidos').classList.toggle('oculto', estado.aba !== 'pedidos');
   }); });
-  $$('.fase').forEach(function (b) { b.addEventListener('click', function () { estado.fase = b.getAttribute('data-fase'); estado.rel = 'passaram'; estado.buscaFase = ''; $('#painel-busca').value = ''; desenhar(); }); });
+  $$('.fase[data-fase]').forEach(function (b) { b.addEventListener('click', function () { estado.fase = b.getAttribute('data-fase'); estado.rel = 'passaram'; estado.buscaFase = ''; $('#painel-busca').value = ''; desenhar(); }); });
   $('#painel-fechar').addEventListener('click', function () { estado.fase = null; desenhar(); });
   $$('#painel-abas .chip').forEach(function (b) { b.addEventListener('click', function () { estado.rel = b.getAttribute('data-rel'); desenharPainel(); }); });
   $('#painel-busca').addEventListener('input', function (e) { estado.buscaFase = e.target.value; desenharPainel(); });

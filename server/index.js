@@ -176,6 +176,9 @@ const motorDaConversa = t => (t?.motor === 'novo' || t?.motor === 'classico') ? 
 /** Cupons que o mapa usa (percentuais das fases com cupom). */
 const CUPONS_NECESSARIOS = [...new Set(Object.values(FASES).map(f => f.oferta?.cupom).filter(Boolean))].sort((a, b) => a - b)
 
+/** Durante o piloto o envio automático fica bloqueado; só libera com ATENDO_LIBERAR_AUTOENVIO=1. */
+const envioAutomaticoLiberado = () => process.env.ATENDO_LIBERAR_AUTOENVIO === '1'
+
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
 function prontidaoModoNovo(wsId, loja) {
   const faltando = []
@@ -302,6 +305,7 @@ function visao(wsId) {
     fasesNovo: catalogoFases(),
     jornadasNovo: JORNADAS,
     gastosIA: estado.gastosIA ?? {},
+    envioAutomaticoLiberado: envioAutomaticoLiberado(),
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
     opcoesInstrucao: estado.opcoesInstrucao ?? [],
     relatorioLink: estado.tokenRelatorio ? `/r/${wsId}/${estado.tokenRelatorio}` : null,
@@ -850,6 +854,7 @@ const nomePessoa = s => String(s || '').toLowerCase().normalize('NFD').replace(/
  *   transportadora citando o mesmo pedido NÃO entra na conversa do cliente).
  * Roda a cada sincronização — cobre inclusive tickets antigos.
  */
+export { motorDaConversa }
 export function fundirConversasDuplicadas(estado) {
   let mudou = false
   let denovo = true
@@ -873,6 +878,8 @@ export function fundirConversasDuplicadas(estado) {
       for (let j = i + 1; j < info.length; j++) {
         const a = info[i], b = info[j]
         if (a.loja !== b.loja) continue
+        // conversas de motores diferentes NUNCA se fundem (só a migração manual muda o motor)
+        if (motorDaConversa(a.t) !== motorDaConversa(b.t)) continue
         let numeroComum = false
         for (const n of a.numeros) if (b.numeros.has(n)) { numeroComum = true; break }
         let mesma = false
@@ -2021,8 +2028,8 @@ app.post('/api/lojas/:id/modo', (req, res) => {
   loja.modoAtendimento = modo
   loja.modoDesde = em
   loja.modoHistorico = [...(loja.modoHistorico ?? []), { de: atual, para: modo, por: req.usuario?.nome || req.usuario?.email || 'lojista', lojaId: loja.id, em }].slice(-100)
-  // o envio automático do novo NUNCA liga sozinho com a troca de modo
-  if (modo === 'novo' && loja.novoEnvioAutomatico !== true) loja.novoEnvioAutomatico = false
+  // toda ativação do novo começa com o envio automático DESLIGADO, sem exceção
+  if (modo === 'novo') loja.novoEnvioAutomatico = false
   salvar(req.wsId); ok(req, res)
 })
 
@@ -2055,7 +2062,14 @@ app.post('/api/lojas', (req, res) => {
   // o modo de atendimento só muda pela rota própria (validação, confirmação e auditoria)
   if (modoAtendimento !== undefined) return res.status(400).json({ erro: 'O modo de atendimento muda em Configurações → Loja → "Mudar modo", com confirmação.', state: visao(req.wsId) })
   // modo novo: envio automático (desligado por padrão no piloto), prazo em dias úteis e cupons por percentual
-  if (typeof novoEnvioAutomatico === 'boolean') loja.novoEnvioAutomatico = novoEnvioAutomatico
+  if (typeof novoEnvioAutomatico === 'boolean') {
+    if (novoEnvioAutomatico) {
+      if (modoDaLoja(loja) !== 'novo') return res.status(400).json({ erro: 'O envio automático só existe no atendimento novo — esta loja está no clássico.', state: visao(req.wsId) })
+      if (!envioAutomaticoLiberado()) return res.status(400).json({ erro: 'Envio automático bloqueado durante o piloto: cada resposta passa pela sua aprovação.', bloqueadoPiloto: true, state: visao(req.wsId) })
+      if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'Ligar o envio automático precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
+    }
+    loja.novoEnvioAutomatico = novoEnvioAutomatico
+  }
   if (prazoEntrega && typeof prazoEntrega === 'object') {
     const n = (v, padrao) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 && x <= 90 ? x : padrao }
     loja.prazoEntrega = { min: n(prazoEntrega.min, 5), max: n(prazoEntrega.max, 12), processamento: n(prazoEntrega.processamento, 3) }

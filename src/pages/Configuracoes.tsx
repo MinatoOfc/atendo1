@@ -188,6 +188,7 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
   const loja = s.lojas.find(l => l.id === lojaId)
   const [prazo, setPrazo] = useState({ min: 5, max: 12, processamento: 3 })
   const [cupons, setCupons] = useState<Record<string, string>>({})
+  const [confirmandoAuto, setConfirmandoAuto] = useState(false)
   useEffect(() => {
     setPrazo({ min: loja?.prazoEntrega?.min ?? 5, max: loja?.prazoEntrega?.max ?? 12, processamento: loja?.prazoEntrega?.processamento ?? 3 })
     setCupons(Object.fromEntries(PERCENTUAIS_CUPOM.map(p => [p, loja?.cupons?.[p] ?? ''])))
@@ -213,14 +214,27 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
       )}
       <div className="row gap-10 mb-12" style={{ flexWrap: 'wrap' }}>
         <button className={'switch' + (loja?.novoEnvioAutomatico ? ' on' : '')}
-          onClick={() => s.atualizarLoja(lojaId, { novoEnvioAutomatico: !loja?.novoEnvioAutomatico })}
-          title={loja?.novoEnvioAutomatico ? 'Ligado' : 'Desligado'} />
+          disabled={!emNovo || (!loja?.novoEnvioAutomatico && !s.envioAutomaticoLiberado)}
+          onClick={() => { if (loja?.novoEnvioAutomatico) s.atualizarLoja(lojaId, { novoEnvioAutomatico: false }); else setConfirmandoAuto(true) }}
+          title={!emNovo ? 'Só no atendimento novo' : !s.envioAutomaticoLiberado && !loja?.novoEnvioAutomatico ? 'Bloqueado durante o piloto' : loja?.novoEnvioAutomatico ? 'Ligado' : 'Desligado'} />
         <div>
           <b style={{ fontSize: 13 }}>Envio automático no modo novo</b>
           <div className="muted-sm" style={{ lineHeight: 1.5 }}>
             Desligado (recomendado no piloto): cada resposta espera sua aprovação, com o horário mínimo da cadência
             anotado. Ligado: sai sozinha 5 h após a última mensagem do cliente.
+            {!emNovo && <> <b>Só existe no atendimento novo.</b></>}
+            {emNovo && !s.envioAutomaticoLiberado && <> <b>Bloqueado durante o piloto.</b></>}
+            {' '}Toda vez que a loja é ativada no novo, ele volta desligado.
           </div>
+          {confirmandoAuto && (
+            <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--panel-soft)', borderRadius: 8, fontSize: 12.5 }}>
+              <div style={{ marginBottom: 6 }}>Confirma ligar o envio automático nesta loja? Os rascunhos do modo novo passam a sair <b>sem a sua aprovação</b>, 5 h após a última mensagem do cliente.</div>
+              <div className="row gap-8">
+                <button className="btn btn-sm btn-primary" onClick={() => { setConfirmandoAuto(false); s.atualizarLoja(lojaId, { novoEnvioAutomatico: true, confirmar: true }) }}><Check size={13} /> Confirmar e ligar</button>
+                <button className="btn btn-sm" onClick={() => setConfirmandoAuto(false)}>Cancelar</button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
