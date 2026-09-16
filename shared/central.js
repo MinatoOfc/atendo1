@@ -19,7 +19,47 @@
  *  - "Reembolsado de fato" só depois da confirmação realmente enviada (fase de
  *    confirmação em historicoEtapas) ou do reembolso marcado como processado no
  *    relatório; aceite aguardando o dono é "aceite pendente".
+ *  - Casos históricos (Parte 8): a IA infere jornada, fase, desfecho, motivo e
+ *    produtos dos tickets antigos e grava em ticket.inferenciaCentral — um campo
+ *    só da Central, que nunca altera status, categoria, motor ou relatório. A
+ *    linha do relatório manual tem prioridade sobre a inferência; reembolso só
+ *    inferido é "inferido", nunca "efetivado".
  */
+
+export const DESFECHOS = ['em_aberto', 'reembolso', 'troca', 'reenvio', 'cupom', 'cancelamento', 'encerrado']
+const CATEGORIAS_MOTIVO = ['qualidade', 'tamanho', 'defeito', 'nao_recebeu', 'atraso', 'errado', 'nao_gostou', 'alergia', 'arrependimento', 'outro', 'nao_informado']
+
+/** Ticket do clássico que a Central trata como caso (candidato à inferência). */
+export function ehCandidatoMigracao(t) {
+  if (!t || t.status === 'spam' || t.status === 'lixeira') return false
+  if (t.atendimentoNovo?.fluxo) return false // o motor já tem o estado real
+  return !!t.relatorioDia || ['reembolso', 'troca', 'entrega'].includes(t.categoria) || !!t.motivoReembolso
+}
+
+/** Quantos casos históricos existem, quantos já têm inferência e quantos faltam. */
+export function statusMigracao(tickets) {
+  const candidatos = tickets.filter(ehCandidatoMigracao)
+  const inferidos = candidatos.filter(t => t.inferenciaCentral)
+  return { candidatos: candidatos.length, inferidos: inferidos.length, pendentes: candidatos.length - inferidos.length }
+}
+
+/** Valida o que a IA devolveu para um caso; devolve null se não houver nada aproveitável. */
+export function normalizarInferencia(bruto, fases) {
+  if (!bruto || typeof bruto !== 'object') return null
+  const jornada = ORDEM_JORNADAS.includes(bruto.jornada) ? bruto.jornada : 'entrada'
+  const fase = bruto.fase && fases[bruto.fase] ? bruto.fase : null
+  const desfecho = DESFECHOS.includes(bruto.desfecho) ? bruto.desfecho : 'em_aberto'
+  let percentual = Number(bruto.percentual)
+  percentual = Number.isFinite(percentual) && percentual > 0 && percentual <= 100 ? Math.round(percentual) : null
+  if (!['reembolso', 'troca', 'reenvio', 'cancelamento'].includes(desfecho)) percentual = null
+  if (desfecho === 'cancelamento') percentual = 100
+  const motivo = String(bruto.motivo ?? '').trim().slice(0, 80) || null
+  const categoria = CATEGORIAS_MOTIVO.includes(bruto.categoria) ? bruto.categoria : (motivo ? 'outro' : 'nao_informado')
+  const produtos = (Array.isArray(bruto.produtos) ? bruto.produtos : []).map(p => String(p).trim()).filter(Boolean).slice(0, 5)
+  let confianca = Number(bruto.confianca)
+  confianca = Number.isFinite(confianca) ? Math.min(1, Math.max(0, confianca)) : 0.5
+  return { jornada, fase, desfecho, percentual, motivo, categoria, produtos, confianca }
+}
 
 export const ORDEM_JORNADAS = ['entrada', 'tamanho', 'qualidade', 'defeito_errado', 'nao_recebido', 'cancelamento']
 
@@ -85,7 +125,8 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
     if (!ativo(t)) continue
     const an = t.atendimentoNovo
     const linha = t.relatorioLinha || t.relatorioTexto || t.resolucao || ''
-    const ehCasoClassico = !!t.relatorioDia || t.categoria === 'reembolso' || t.categoria === 'troca' || !!t.motivoReembolso
+    const inf = !an?.fluxo && t.inferenciaCentral ? t.inferenciaCentral : null
+    const ehCasoClassico = !!t.relatorioDia || t.categoria === 'reembolso' || t.categoria === 'troca' || t.categoria === 'entrega' || !!t.motivoReembolso || !!inf
     if (!an?.fluxo && !ehCasoClassico) continue
 
     const loja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
@@ -103,8 +144,9 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
     let comVoce = false
     let acaoPendente = null
     let escalouAoDono = false
-    let situacaoReembolso = null // 'efetivado' | 'aceite_pendente' | 'registrado' | null
+    let situacaoReembolso = null // 'efetivado' | 'aceite_pendente' | 'registrado' | 'inferido' | null
     let confirmacaoEnviada = null
+    let inferidaPor = null // 'relatorio' | 'ia' | null
 
     if (an?.fluxo) {
       origem = 'confirmada'
@@ -127,9 +169,10 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
         if (percentual != null) situacaoReembolso = (confirmacaoEnviada || t.relatorioProcessado) ? 'efetivado' : 'aceite_pendente'
       } else if (t.status === 'enviado' && /^Encerrada/.test(t.resolucao ?? '')) desfecho = 'encerrado'
     } else {
-      const cat = t.motivoReembolso?.categoria
-      jornada = (cat && JORNADA_DA_CATEGORIA_MOTIVO[cat]) || 'entrada'
-      motivo = t.motivoReembolso?.motivo ?? null
+      // 1) o que o dono registrou (relatório manual + motivo lido) tem prioridade
+      const cat = t.motivoReembolso?.categoria ?? inf?.categoria
+      jornada = (cat && JORNADA_DA_CATEGORIA_MOTIVO[cat]) || inf?.jornada || 'entrada'
+      motivo = t.motivoReembolso?.motivo ?? inf?.motivo ?? null
       const pct = linha.match(/(\d{1,3})\s*%/)
       if (/reembols|refund|estorno/i.test(linha)) { desfecho = 'reembolso'; percentual = pct ? Number(pct[1]) : null }
       else if (/reenvio|resend/i.test(linha)) desfecho = 'reenvio'
@@ -137,13 +180,24 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       else if (/cancel/i.test(linha)) { desfecho = 'cancelamento'; percentual = 100 }
       else if (t.status === 'enviado' && t.relatorioDia) desfecho = 'encerrado'
       comVoce = t.status === 'humano'
+      const doRelatorio = desfecho !== 'em_aberto'
       // clássico: a linha do relatório é registro; efetivado só quando o dono marcou "processado"
-      if ((desfecho === 'reembolso' || desfecho === 'cancelamento') && percentual != null) situacaoReembolso = t.relatorioProcessado ? 'efetivado' : 'registrado'
+      if (doRelatorio && (desfecho === 'reembolso' || desfecho === 'cancelamento') && percentual != null) situacaoReembolso = t.relatorioProcessado ? 'efetivado' : 'registrado'
       // fase final deduzida do desfecho — o clássico não percorreu a escada (nada entra em trilha)
       if (desfecho === 'reembolso') faseInferida = percentual === 100 ? 'reemb_100' : percentual && fases[`reemb_${percentual}`] ? `reemb_${percentual}` : 'reemb_100'
       else if (desfecho === 'troca') faseInferida = jornada === 'tamanho' ? 'tam_troca' : jornada === 'defeito_errado' ? 'def_troca' : 'qual_troca'
       else if (desfecho === 'reenvio') faseInferida = 'nr_reenvio_30'
       else if (desfecho === 'cancelamento') faseInferida = 'cancel_nao_processado'
+      if (doRelatorio || t.relatorioDia) inferidaPor = 'relatorio'
+      // 2) sem registro do dono: a inferência da IA (Parte 8) — desfecho, percentual e fase
+      if (!doRelatorio && inf) {
+        inferidaPor = 'ia'
+        desfecho = inf.desfecho ?? 'em_aberto'
+        percentual = inf.percentual ?? null
+        faseInferida = inf.fase ?? null
+        if (['reembolso', 'cancelamento'].includes(desfecho) && percentual != null) situacaoReembolso = t.relatorioProcessado ? 'efetivado' : 'inferido'
+      } else if (inf && !faseInferida) faseInferida = inf.fase ?? null
+      if (!produto && inf?.produtos?.length) produto = inf.produtos.join('; ')
     }
 
     let faseManual = null
@@ -171,7 +225,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       faseConfirmada, faseInferida, faseManual, origem, trilha,
       pendente: an?.transicaoPendente?.para ?? null,
       desfecho, percentual, reembolsado, concluido, comVoce, acaoPendente, escalouAoDono,
-      situacaoReembolso, confirmacaoEnviada,
+      situacaoReembolso, confirmacaoEnviada, inferidaPor, inferencia: inf,
       dataMs: new Date(pedido?.criadoEm ? pedido.criadoEm + 'T12:00:00' : t.data).getTime(),
       ajuste: t.centralAjuste ?? null,
       historicoAjustes: t.centralHistorico ?? [],
@@ -344,6 +398,7 @@ export function indicadores(linhas) {
     const efetivados = rs.filter(r => r.situacaoReembolso === 'efetivado' && r.reembolsado != null)
     const pendentes = rs.filter(r => r.situacaoReembolso === 'aceite_pendente')
     const registrados = rs.filter(r => r.situacaoReembolso === 'registrado')
+    const inferidos = rs.filter(r => r.situacaoReembolso === 'inferido')
     const confirmados = efetivados.filter(r => r.origem === 'confirmada')
     const porJornada = ORDEM_JORNADAS.map(chave => {
       const d = rs.filter(r => r.jornada === chave)
@@ -362,6 +417,7 @@ export function indicadores(linhas) {
       aceitesPendentes: pendentes.length,
       valorAceitesPendentes: soma(pendentes, r => r.reembolsado),
       reembolsosRegistrados: registrados.length,
+      reembolsosInferidos: inferidos.length,
       hipoteticoSemRetencao: soma(efetivados, r => r.pedidoValor),
       historicoSuficiente: confirmados.length > 0,
       reembolsosConfirmados: confirmados.length,

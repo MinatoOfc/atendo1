@@ -62,6 +62,21 @@ export interface Ticket {
   centralAjuste?: { fase: string | null; jornada: string | null; por: string; em: string; anterior: string | null; justificativa: string | null }
   /** auditoria: cada correção manual e cada remoção, em ordem */
   centralHistorico?: AjusteCentral[]
+  /** Parte 8: fase/jornada/desfecho inferidos pela IA para casos antigos — só a Central usa; nunca muda o atendimento */
+  inferenciaCentral?: InferenciaCentral
+}
+
+export interface InferenciaCentral {
+  jornada: string
+  fase: string | null
+  desfecho: string
+  percentual: number | null
+  motivo: string | null
+  categoria: string
+  produtos: string[]
+  confianca: number
+  em: string
+  origem?: 'ia'
 }
 
 export interface AjusteCentral {
@@ -396,6 +411,10 @@ interface Store extends ServerState {
   confirmarAceiteNovo: (id: string) => void
   /** Central operacional: correção manual da classificação de um caso */
   corrigirFaseCentral: (id: string, patch: { fase?: string | null; jornada?: string | null; justificativa?: string; remover?: boolean }) => void
+  /** Parte 8: quantos casos históricos existem, quantos já têm inferência e quantos faltam */
+  statusMigracaoCentral: () => Promise<{ candidatos: number; inferidos: number; pendentes: number; iaConfigurada: boolean; ultima: { em: string; lidos: number; custoIA: number; por: string } | null }>
+  /** Parte 8: roda a inferência da IA num lote de casos antigos (ou num só) — nunca automática */
+  migrarCasosHistoricos: (opcoes: { limite?: number; forcar?: boolean; ticketId?: string; remover?: boolean }) => Promise<{ lidos?: number; restantes?: number; custoIA?: number; aviso?: string | null; erro?: string }>
   /** listas completas, sem o filtro de loja da barra lateral (Central operacional) */
   todosTickets: Ticket[]
   todosPedidos: Pedido[]
@@ -675,6 +694,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     validarFotoNovo: (id, valida) => api(`/tickets/${id}/novo/foto`, 'POST', { valida }).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     confirmarAceiteNovo: id => api(`/tickets/${id}/novo/confirmar`, 'POST', {}).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     corrigirFaseCentral: (id, patch) => api(`/tickets/${id}/central/fase`, 'POST', patch).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
+    statusMigracaoCentral: () => fetch('/api/central/migracao').then(r => r.json()),
+    migrarCasosHistoricos: async opcoes => {
+      const r = await api('/central/migrar', 'POST', opcoes) as { lidos?: number; restantes?: number; custoIA?: number; aviso?: string | null; erro?: string; state?: ServerState }
+      if (r.erro) alert(r.erro)
+      aplicar(r)
+      return r
+    },
     todosTickets: state.tickets,
     todosPedidos: state.pedidos,
 

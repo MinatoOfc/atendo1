@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Workflow, Search, X, ExternalLink, Pencil, ArrowLeft } from 'lucide-react'
+import { Workflow, Search, X, ExternalLink, Pencil, ArrowLeft, Sparkles, History } from 'lucide-react'
 import { useStore } from '../store'
 import type { Ticket } from '../store'
 import { TicketDetail } from '../components/Tickets'
 import { Modal } from '../components/Shared'
 import { calcularCentral, relacaoComFase, ORDEM_JORNADAS, FILTROS_PADRAO } from '../../shared/central.js'
 import type { Registro, Filtros, MetricaFase } from '../../shared/central.js'
+import { statusMigracao } from '../../shared/central.js'
 
 const NOME_DESFECHO: Record<string, string> = {
   em_aberto: 'Em aberto', reembolso: 'Reembolso', troca: 'Troca', reenvio: 'Reenvio', cupom: 'Cupom', cancelamento: 'Cancelamento', encerrado: 'Encerrado',
@@ -132,6 +133,8 @@ export default function Central() {
         {casoAlvo && <p className="muted-sm" style={{ marginTop: 6 }}>Mostrando o caso aberto a partir da conversa. <button className="btn btn-sm" onClick={limparAlvo}>Ver tudo</button></p>}
       </div>
 
+      <PainelMigracao />
+
       {/* indicadores gerais, por moeda */}
       {kpis.length > 1 && <p className="muted-sm mb-8">Lojas em moedas diferentes não se somam — os indicadores aparecem por moeda. Para um total único, filtre uma loja.</p>}
       {kpis.map(k => (
@@ -141,7 +144,7 @@ export default function Central() {
             <Kpi rotulo="Pedidos totais" valor={String(k.pedidosTotais)} pe="nos filtros atuais" />
             <Kpi rotulo="Pedidos com atendimento" valor={String(k.pedidosComAtendimento)} pe={dinheiro(k.valorComAtendimento, k.moeda) + ' em pedidos'} />
             <Kpi rotulo="Casos" valor={String(k.casos)} pe={`${k.pctProdutoIdentificado}% com produto identificado`} />
-            <Kpi rotulo="Envolvidos em reembolso" valor={String(k.pedidosEmReembolso)} pe={`${k.reembolsosRegistrados} só no relatório (não processados)`} />
+            <Kpi rotulo="Envolvidos em reembolso" valor={String(k.pedidosEmReembolso)} pe={`${k.reembolsosRegistrados} só no relatório · ${k.reembolsosInferidos} só inferidos pela IA`} />
             <Kpi rotulo="Valor total dos pedidos" valor={dinheiro(k.valorTotalPedidos, k.moeda)} pe="pago na Shopify" />
             <Kpi rotulo="Valor dos pedidos reembolsados" valor={dinheiro(k.valorPedidosReembolsados, k.moeda)} pe="valor pago dos casos com reembolso" />
             <Kpi rotulo="Aceites pendentes" valor={String(k.aceitesPendentes)} pe={`${dinheiro(k.valorAceitesPendentes, k.moeda)} aguardando sua decisão — ainda não é reembolso`} />
@@ -215,11 +218,14 @@ export default function Central() {
                       <td style={{ whiteSpace: 'nowrap' }}>{l.valor != null ? dinheiro(l.valor, l.moeda) : '—'}</td>
                       <td>
                         {!c ? <span className="muted-sm">—</span> : c.percentual != null ? `${c.percentual}%` : c.desfecho === 'em_aberto' ? <span className="muted-sm">em aberto</span> : NOME_DESFECHO[c.desfecho]}
-                        {c?.situacaoReembolso && <div className="muted-sm" style={{ fontSize: 11 }}>{c.situacaoReembolso === 'efetivado' ? 'efetivado' : c.situacaoReembolso === 'aceite_pendente' ? 'aceite pendente' : 'no relatório, não processado'}</div>}
+                        {c?.situacaoReembolso && <div className="muted-sm" style={{ fontSize: 11 }}>{c.situacaoReembolso === 'efetivado' ? 'efetivado' : c.situacaoReembolso === 'aceite_pendente' ? 'aceite pendente' : c.situacaoReembolso === 'inferido' ? 'só inferido pela IA' : 'no relatório, não processado'}</div>}
                       </td>
                       <td style={{ maxWidth: 200 }}>{c?.motivo ?? <span className="muted-sm">—</span>}</td>
                       <td>
-                        <span className={'tag ' + (l.atendimento === 'confirmada' ? 'tag-green' : l.atendimento === 'manual' ? 'tag-amber' : 'tag-outro')} title="Origem da classificação">{NOME_ORIGEM[l.atendimento]}</span>
+                        <span className={'tag ' + (l.atendimento === 'confirmada' ? 'tag-green' : l.atendimento === 'manual' ? 'tag-amber' : 'tag-outro')}
+                          title={c?.inferidaPor === 'ia' ? 'Fase inferida pela IA a partir da conversa antiga (Parte 8) — não é estado do motor' : c?.inferidaPor === 'relatorio' ? 'Deduzida da linha do relatório manual' : 'Origem da classificação'}>
+                          {NOME_ORIGEM[l.atendimento]}{c?.inferidaPor === 'ia' ? ' (IA)' : c?.inferidaPor === 'relatorio' ? ' (relatório)' : ''}
+                        </span>
                         {c?.comVoce && <span className="tag tag-reembolso" style={{ marginLeft: 4 }}>com você</span>}
                         {c && c.tickets.length > 1 && <span className="muted-sm" style={{ marginLeft: 4 }} title="Conversas do mesmo pedido, contadas uma vez">{c.tickets.length} conversas</span>}
                       </td>
@@ -291,6 +297,47 @@ export default function Central() {
   )
 }
 
+/** Parte 8: migração dos casos históricos como "fase inferida" — só por clique, em lotes, nunca sozinha. */
+function PainelMigracao() {
+  const s = useStore()
+  const local = useMemo(() => statusMigracao(s.todosTickets), [s.todosTickets])
+  const [ultima, setUltima] = useState<{ em: string; lidos: number; custoIA: number; por: string } | null>(null)
+  const [iaOk, setIaOk] = useState<boolean | null>(null)
+  const [rodando, setRodando] = useState(false)
+  const [resultado, setResultado] = useState<string | null>(null)
+  const carregar = useCallback(() => { s.statusMigracaoCentral().then(r => { setUltima(r.ultima); setIaOk(r.iaConfigurada) }).catch(() => {}) }, [s])
+  useEffect(() => { carregar() }, [carregar, s.todosTickets.length])
+  if (local.candidatos === 0) return null
+  const rodar = async () => {
+    setRodando(true); setResultado(null)
+    try {
+      const r = await s.migrarCasosHistoricos({ limite: 40 })
+      if (r.erro) setResultado(r.erro)
+      else setResultado(`${r.lidos ?? 0} caso(s) inferido(s) agora · ${r.restantes ?? 0} ainda sem inferência · custo US$ ${(r.custoIA ?? 0).toFixed(4)}${r.aviso ? ` · ${r.aviso}` : ''}`)
+      carregar()
+    } finally { setRodando(false) }
+  }
+  return (
+    <div className="card mb-16" style={{ padding: '10px 14px' }}>
+      <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+          <b><History size={13} style={{ verticalAlign: -2, marginRight: 6 }} />Casos históricos (modo clássico)</b>
+          <span className="muted-sm"> · {local.candidatos} casos · {local.inferidos} com fase inferida pela IA · <b>{local.pendentes} pendentes</b></span>
+          <div className="muted-sm" style={{ fontSize: 11.5 }}>
+            A IA lê a conversa antiga e infere jornada, fase, desfecho, motivo e produtos só para a Central. Nada muda no atendimento: status, categoria, relatório e motor ficam como estão. Roda só quando você clicar, 40 por vez.
+            {ultima && <> Última rodada: {fmtQuando(ultima.em)} por {ultima.por}, {ultima.lidos} caso(s), US$ {ultima.custoIA.toFixed(4)}.</>}
+          </div>
+          {resultado && <div style={{ fontSize: 12, marginTop: 4 }}>{resultado}</div>}
+        </div>
+        <button className="btn btn-primary btn-sm" disabled={rodando || local.pendentes === 0 || iaOk === false} onClick={rodar}
+          title={iaOk === false ? 'Configure a ANTHROPIC_API_KEY' : 'Infere até 40 casos pendentes'}>
+          <Sparkles size={13} /> {rodando ? 'Inferindo…' : `Inferir fases dos casos antigos (${Math.min(40, local.pendentes)})`}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Kpi({ rotulo, valor, pe, destaque }: { rotulo: string; valor: string; pe?: string; destaque?: boolean }) {
   return (
     <div className="card" style={{ padding: '10px 12px', borderColor: destaque ? 'var(--purple-border)' : undefined }}>
@@ -337,6 +384,25 @@ function ModalCorrecao({ caso, onClose }: { caso: Registro; onClose: () => void 
         ) : <span className="muted-sm">Sem correção manual ativa</span>}
         <button className="btn btn-primary" onClick={() => { s.corrigirFaseCentral(caso.ticketId, { fase: fase || null, jornada, justificativa }); onClose() }}>Salvar correção</button>
       </div>
+      {caso.inferencia && (
+        <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 8, fontSize: 12.5 }}>
+          <div className="muted-sm mb-4"><b>Inferência da IA</b> (caso antigo, {fmtQuando(caso.inferencia.em)} · confiança {Math.round(caso.inferencia.confianca * 100)}%)</div>
+          <div className="muted-sm">
+            {jornadas[caso.inferencia.jornada] ?? caso.inferencia.jornada} · {nome(caso.inferencia.fase)} · {NOME_DESFECHO[caso.inferencia.desfecho] ?? caso.inferencia.desfecho}{caso.inferencia.percentual != null ? ` ${caso.inferencia.percentual}%` : ''}
+            {caso.inferencia.motivo ? ` · ${caso.inferencia.motivo}` : ''}{caso.inferencia.produtos.length ? ` · ${caso.inferencia.produtos.join('; ')}` : ''}
+          </div>
+          <div className="row gap-6" style={{ marginTop: 6 }}>
+            <button className="btn btn-sm" onClick={() => { s.migrarCasosHistoricos({ ticketId: caso.ticketId, forcar: true }); onClose() }}><Sparkles size={12} /> Inferir de novo</button>
+            <button className="btn btn-sm" onClick={() => { s.migrarCasosHistoricos({ ticketId: caso.ticketId, remover: true }); onClose() }}><X size={12} /> Remover inferência</button>
+          </div>
+          <div className="muted-sm" style={{ fontSize: 11.5, marginTop: 4 }}>A inferência só alimenta a Central. Ela não muda o status, a categoria, o relatório nem o motor desta conversa.</div>
+        </div>
+      )}
+      {!caso.inferencia && caso.origem !== 'confirmada' && (
+        <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+          <button className="btn btn-sm" onClick={() => { s.migrarCasosHistoricos({ ticketId: caso.ticketId }); onClose() }}><Sparkles size={12} /> Inferir fase com IA (só esta conversa)</button>
+        </div>
+      )}
       {historico.length > 0 && (
         <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
           <div className="muted-sm mb-4"><b>Histórico de correções</b> ({historico.length})</div>

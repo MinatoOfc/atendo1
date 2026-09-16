@@ -8,7 +8,7 @@ import {
   demoEmails, demoSpam, demoPedidos, bibliotecaEcommerce, politicasSugeridas,
   classificarLocal, detectarIdiomaLocal, pareceSpam, confirmacaoIndevida, textoProprio,
 } from './logic.js'
-import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso, CATEGORIAS_REEMBOLSO, classificarNovo, escreverNovo } from './ai.js'
+import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso, CATEGORIAS_REEMBOLSO, classificarNovo, escreverNovo, inferirFasesHistoricas } from './ai.js'
 import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
   horarioMinimoEnvio, promptClassificar, promptEscrever, FASES, JORNADAS, PERCENTUAIS_CUPOM,
@@ -16,7 +16,7 @@ import {
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS,
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
-import { calcularCentral } from '../shared/central.js'
+import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia } from '../shared/central.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
@@ -2422,6 +2422,61 @@ app.get('/api/central', (req, res) => {
   }
   const r = calcularCentral({ tickets: req.estado.tickets, pedidos: req.estado.pedidos ?? [], lojas: req.estado.lojas, fases: catalogoFases(), filtros })
   res.json({ filtros: r.filtros, registros: r.registros, linhas: r.linhas, metricas: r.metricas, indicadores: r.indicadores })
+})
+
+/* ---------------- Parte 8: migração dos casos históricos como "fase inferida" ----------------
+   A IA lê as conversas antigas (cliente e loja) e o resultado vai para
+   ticket.inferenciaCentral — campo só da Central. Nada mais no ticket muda:
+   status, categoria, relatório e motor ficam como estão. Só roda por clique
+   do dono, em lotes, e nunca sozinha. */
+
+// conversa inteira (os dois lados), porque a fase depende do que a LOJA ofereceu
+function textoParaInferencia(t) {
+  const partes = [`Assunto: ${t.assunto ?? ''}`, `Cliente: ${textoProprio(t.corpo) || ''}`]
+  for (const m of t.historico ?? []) partes.push(`${m.autor === 'atendo' ? 'Loja' : 'Cliente'}: ${m.autor === 'atendo' ? String(m.corpo || '') : textoProprio(m.corpo)}`)
+  if (t.resposta) partes.push(`Loja: ${t.resposta}`)
+  return partes.map(p => p.trim()).filter(Boolean).join('\n').replace(/\n{3,}/g, '\n\n').slice(0, 3500)
+}
+
+app.get('/api/central/migracao', (req, res) => {
+  res.json({ ...statusMigracao(req.estado.tickets), iaConfigurada, ultima: req.estado.migracaoCentral ?? null })
+})
+
+app.post('/api/central/migrar', async (req, res) => {
+  const { limite, forcar, ticketId, remover } = req.body ?? {}
+  if (ticketId && remover === true) {
+    const t = req.estado.tickets.find(x => x.id === ticketId)
+    if (!t) return res.status(404).json({ erro: 'Conversa não encontrada.', state: visao(req.wsId) })
+    t.inferenciaCentral = undefined
+    salvar(req.wsId); return ok(req, res)
+  }
+  if (!iaConfigurada) return res.status(400).json({ erro: 'A inferência dos casos antigos usa o Claude — configure a ANTHROPIC_API_KEY primeiro.', state: visao(req.wsId) })
+  const max = Math.max(1, Math.min(200, Number(limite) || 40))
+  const alvo = ticketId
+    ? req.estado.tickets.filter(t => t.id === ticketId && ehCandidatoMigracao(t))
+    : req.estado.tickets.filter(t => ehCandidatoMigracao(t) && (forcar === true || !t.inferenciaCentral)).slice(0, max)
+  if (ticketId && !alvo.length) return res.status(400).json({ erro: 'Esta conversa não é um caso histórico do modo clássico.', state: visao(req.wsId) })
+  const catalogo = Object.entries(FASES).filter(([, f]) => !f.confirmacao).map(([id, f]) => ({ id, titulo: f.titulo, jornada: f.jornada }))
+  const fases = catalogoFases()
+  let lidos = 0; let custoIA = 0; let aviso = null
+  for (let i = 0; i < alvo.length; i += 8) {
+    const lote = alvo.slice(i, i + 8)
+    const r = await inferirFasesHistoricas(lote.map(textoParaInferencia), catalogo)
+    if (r.erro) { aviso = `A IA não respondeu (${r.erro}); ${lidos} caso(s) inferido(s) antes disso.`; break }
+    custoIA += r.custo || 0
+    const porCaso = (r.custo || 0) / lote.length
+    for (const [j, t] of lote.entries()) {
+      const n = normalizarInferencia(r.inferencias[j], fases)
+      if (!n) continue
+      t.inferenciaCentral = { ...n, em: new Date().toISOString(), origem: 'ia' }
+      registrarGasto(req.estado, t.lojaId, porCaso)
+      lidos++
+    }
+  }
+  const st = statusMigracao(req.estado.tickets)
+  req.estado.migracaoCentral = { em: new Date().toISOString(), lidos, custoIA: Math.round(custoIA * 1e6) / 1e6, por: req.usuario?.nome || req.usuario?.email || 'lojista' }
+  salvar(req.wsId)
+  res.json({ ok: true, lidos, restantes: st.pendentes, custoIA: Math.round(custoIA * 1e6) / 1e6, aviso, ...st, state: visao(req.wsId) })
 })
 
 app.post('/api/tickets/:id/rascunho', (req, res) => {

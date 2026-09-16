@@ -438,8 +438,15 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   nova fase, jornada e justificativa; não mexe no motor nem deixa o envio
   automático pular etapas). O card da conversa tem "Abrir na Central".
 
-Ainda por fazer: a migração dos casos antigos sem relatório como "fase
-inferida" pela IA (item 8), sem alterar os tickets automaticamente.
+- **Casos históricos (Parte 8)**: na Central, o painel "Casos históricos"
+  conta os tickets do clássico (reembolso, troca, entrega, relatório) e, só
+  quando o dono clica, a IA lê cada conversa antiga e infere jornada, fase,
+  desfecho, motivo e produtos, gravados em `inferenciaCentral`. Nada mais no
+  ticket muda. A linha do relatório manual continua mandando; a inferência
+  aparece como "inferida (IA)", fora das métricas de fases enviadas e fora do
+  reembolsado de fato. Dá para inferir, refazer ou remover por caso.
+
+Piloto (item 9): ainda desligado.
 
 ---
 

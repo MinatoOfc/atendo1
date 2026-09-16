@@ -40,6 +40,13 @@ estado.lojas = [
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
 estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' })]
+const antigo = (id, extra) => ({ id, nome: 'Antigo ' + id, de: `${id}@web.de`, assunto: 'Bestellung #' + id.replace(/\D/g, ''), corpo: 'Hallo', data: '2026-07-01T10:00:00.000Z', lido: true, origem: 'cliente', status: 'enviado', idioma: 'de', lojaId: 'loja2', historico: [], ...extra })
+estado.tickets = [
+  antigo('h901', { categoria: 'troca', corpo: 'Das Polo ist zu klein, ich möchte umtauschen.', historico: [{ autor: 'atendo', corpo: 'Wir tauschen es gratis gegen Größe L um.', data: '2026-07-01T12:00:00.000Z' }], resposta: 'Wir tauschen es gratis gegen Größe L um.' }),
+  antigo('h902', { categoria: 'reembolso', corpo: 'Schlechte Qualität, ich will mein Geld zurück.', historico: [{ autor: 'atendo', corpo: 'Wir bieten 60% Rückerstattung an.', data: '2026-07-02T12:00:00.000Z' }, { autor: 'cliente', corpo: 'Ok, 60%.', data: '2026-07-02T13:00:00.000Z' }], resposta: 'Erledigt.' }),
+  antigo('h903', { categoria: 'entrega', corpo: 'Wo ist mein Paket?' }),
+  antigo('h904', { categoria: 'rastreio', corpo: 'Tracking bitte.' }), // não é caso
+]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
   segredo: 'segredo-de-teste-'.padEnd(64, 'x'),
@@ -68,6 +75,15 @@ globalThis.fetch = async (url, opts) => {
   if (!body.output_config) return responder('ok')
   const sys = String(body.system || '')
   const req = body.output_config.format.schema.required ?? []
+  if (req.includes('inferencias')) {
+    const user = String(body.messages?.[0]?.content || '')
+    const casos = user.split(/\[caso \d+\]/).slice(1)
+    return responder({ inferencias: casos.map(c => /zu klein|umtausch/i.test(c)
+      ? { jornada: 'tamanho', fase: 'tam_troca', desfecho: 'troca', percentual: 0, motivo: 'Cliente disse que ficou pequeno', categoria: 'tamanho', produtos: ['Polo'], confianca: 0.9 }
+      : /60%/.test(c)
+        ? { jornada: 'qualidade', fase: 'reemb_60', desfecho: 'reembolso', percentual: 60, motivo: 'Cliente não gostou da qualidade', categoria: 'qualidade', produtos: [], confianca: 0.85 }
+        : { jornada: 'nao_recebido', fase: '', desfecho: 'em_aberto', percentual: 0, motivo: 'não informado', categoria: 'nao_recebeu', produtos: [], confianca: 0.4 }) })
+  }
   if (req.includes('intencao')) {
     const c = fila.shift() ?? { intencao: 'outro' }
     return responder({ intencao: 'outro', motivo: 'nenhum', produtos: [], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false, ...c })
@@ -536,6 +552,41 @@ test('escritor no idioma errado: regenera uma vez; se insistir, vai ao dono sem 
   r = await api(`/api/tickets/${t.id}/regenerar`, { somenteTexto: true })
   assert.equal(r.status, 400); assert.match(r.erro, /idioma errado/)
   idiomaSabotado = null
+})
+
+test('Parte 8: migração dos casos históricos por clique, em lotes, sem alterar os tickets', async () => {
+  const foto = t => JSON.stringify({ status: t.status, categoria: t.categoria, relatorioDia: t.relatorioDia, relatorioTexto: t.relatorioTexto, atendimentoNovo: t.atendimentoNovo, resposta: t.resposta, historico: t.historico })
+  const antes = Object.fromEntries((await api('/api/state', null, 'GET')).state.tickets.filter(t => /^h90/.test(t.id)).map(t => [t.id, foto(t)]))
+  let st = await api('/api/central/migracao', null, 'GET')
+  assert.deepEqual([st.candidatos, st.inferidos, st.pendentes], [3, 0, 3], 'rastreio não é caso; nada inferido ainda')
+  // nada acontece sozinho: a Central mostra os casos sem fase
+  let c = await api('/api/central?loja=loja2', null, 'GET')
+  assert.ok(c.registros.filter(x => /^h90/.test(x.ticketId)).every(x => x.faseAtual === null && x.inferidaPor === null))
+  // lote de 2
+  let r = await api('/api/central/migrar', { limite: 2 })
+  assert.equal(r.status, 200, r.erro); assert.equal(r.lidos, 2); assert.equal(r.restantes, 1)
+  // lote seguinte só pega o pendente; depois, nada
+  r = await api('/api/central/migrar', { limite: 10 }); assert.equal(r.lidos, 1); assert.equal(r.restantes, 0)
+  r = await api('/api/central/migrar', { limite: 10 }); assert.equal(r.lidos, 0)
+  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [3, 0]); assert.equal(st.ultima.lidos, 0)
+  const depois = (await api('/api/state', null, 'GET')).state.tickets.filter(t => /^h90/.test(t.id))
+  for (const t of depois) assert.equal(foto(t), antes[t.id], `${t.id}: status, categoria, relatório, motor e mensagens intactos`)
+  const h901 = depois.find(t => t.id === 'h901'); const h902 = depois.find(t => t.id === 'h902'); const h904 = depois.find(t => t.id === 'h904')
+  assert.deepEqual([h901.inferenciaCentral.jornada, h901.inferenciaCentral.fase, h901.inferenciaCentral.desfecho, h901.inferenciaCentral.origem], ['tamanho', 'tam_troca', 'troca', 'ia'])
+  assert.deepEqual([h902.inferenciaCentral.desfecho, h902.inferenciaCentral.percentual], ['reembolso', 60])
+  assert.equal(h904.inferenciaCentral, undefined, 'quem não é caso não é lido')
+  // a Central usa a inferência: fase, jornada e "só inferido"; nada entra no reembolsado de fato
+  c = await api('/api/central?loja=loja2', null, 'GET')
+  const reg = id => c.registros.find(x => x.ticketId === id)
+  assert.deepEqual([reg('h901').inferidaPor, reg('h901').faseAtual, reg('h901').jornada, reg('h901').desfecho], ['ia', 'tam_troca', 'tamanho', 'troca'])
+  assert.deepEqual([reg('h902').situacaoReembolso, reg('h902').percentual], ['inferido', 60])
+  assert.equal(c.indicadores.find(k => k.moeda === 'EUR')?.reembolsadoEfetivo ?? 0, 0)
+  assert.equal(c.metricas.tam_troca.inferidos, 1); assert.equal(c.metricas.tam_troca.passaram, 0)
+  // refazer uma só (forçado) e remover
+  r = await api('/api/central/migrar', { ticketId: 'h903', forcar: true }); assert.equal(r.lidos, 1)
+  r = await api('/api/central/migrar', { ticketId: 'h903', remover: true }); assert.equal(r.status, 200)
+  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [2, 1])
+  r = await api('/api/central/migrar', { ticketId: 'h904' }); assert.equal(r.status, 400, 'fora dos casos')
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

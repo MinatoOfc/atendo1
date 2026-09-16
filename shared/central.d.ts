@@ -1,4 +1,4 @@
-import type { Ticket, Pedido, Loja, FaseNovo, AjusteCentral } from '../src/store'
+import type { Ticket, Pedido, Loja, FaseNovo, AjusteCentral, InferenciaCentral } from '../src/store'
 
 export type OrigemFase = 'confirmada' | 'inferida' | 'manual'
 export type Desfecho = 'em_aberto' | 'reembolso' | 'troca' | 'reenvio' | 'cupom' | 'cancelamento' | 'encerrado'
@@ -36,8 +36,11 @@ export interface Caso {
   acaoPendente: string | null
   escalouAoDono: boolean
   /** efetivado = confirmação enviada ou processado no relatório; aceite_pendente = com o dono; registrado = linha do relatório clássico */
-  situacaoReembolso: 'efetivado' | 'aceite_pendente' | 'registrado' | null
+  situacaoReembolso: 'efetivado' | 'aceite_pendente' | 'registrado' | 'inferido' | null
   confirmacaoEnviada: string | null
+  /** de onde veio a fase inferida: linha do relatório manual ou inferência da IA (Parte 8) */
+  inferidaPor: 'relatorio' | 'ia' | null
+  inferencia: InferenciaCentral | null
   dataMs: number
   ajuste: AjusteCentral | null
   historicoAjustes: AjusteCentral[]
@@ -85,6 +88,7 @@ export interface Indicadores {
   aceitesPendentes: number
   valorAceitesPendentes: number
   reembolsosRegistrados: number
+  reembolsosInferidos: number
   historicoSuficiente: boolean
   reembolsosConfirmados: number
   reembolsosParciais: number
@@ -103,6 +107,10 @@ export interface ResultadoCentral {
 }
 
 export const ORDEM_JORNADAS: readonly string[]
+export const DESFECHOS: readonly Desfecho[]
+export function ehCandidatoMigracao(t: Ticket): boolean
+export function statusMigracao(tickets: Ticket[]): { candidatos: number; inferidos: number; pendentes: number }
+export function normalizarInferencia(bruto: unknown, fases: Record<string, FaseNovo>): Omit<InferenciaCentral, 'em' | 'modelo'> | null
 export const JORNADA_DO_FLUXO: Record<string, string>
 export const NOME_MOTIVO: Record<string, string>
 export const FILTROS_PADRAO: Filtros

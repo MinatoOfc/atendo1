@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { FASES, FASES_HUMANAS } from '../server/atendimento.js'
-import { calcularCentral, montarCasos, consolidarPorPedido, metricasPorFase, relacaoComFase, filtrarRegistros, FILTROS_PADRAO } from '../shared/central.js'
+import { calcularCentral, montarCasos, consolidarPorPedido, metricasPorFase, relacaoComFase, filtrarRegistros, FILTROS_PADRAO, ehCandidatoMigracao, statusMigracao, normalizarInferencia } from '../shared/central.js'
 
 const fases = Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta, instrucao: f.instrucao, confirmacao: !!f.confirmacao, decisaoDono: FASES_HUMANAS.has(id) }]))
 const lojas = [
@@ -190,6 +190,43 @@ test('"Reembolsado de fato" só com confirmação enviada ou reembolso processad
   const t6Pendente = { ...tickets.find(t => t.id === 't6'), atendimentoNovo: an('reemb_25', ['qual_troca', 'qual_cupom_35', 'reemb_25'], { aguardando: 'envio', acaoAceita: 'reemb_25', transicaoPendente: { para: 'conf_reembolso', mensagem: 'aceite aprovado' } }) }
   const r2 = calcularCentral({ tickets: [t6Pendente], pedidos, lojas, fases, agora })
   assert.equal(r2.registros[0].situacaoReembolso, 'aceite_pendente'); assert.equal(r2.indicadores[0].reembolsadoEfetivo, 0); assert.equal(r2.indicadores[0].aceitesPendentes, 1)
+})
+
+test('Parte 8: casos antigos com inferência da IA entram como "inferida (IA)", abaixo do relatório manual e fora do reembolsado de fato', () => {
+  const infer = (extra = {}) => ({ jornada: 'tamanho', fase: 'tam_troca', desfecho: 'troca', percentual: null, motivo: 'Cliente disse que ficou pequeno', categoria: 'tamanho', produtos: ['Polo Premium'], confianca: 0.8, em: new Date(agora).toISOString(), origem: 'ia', ...extra })
+  const pedidosH = [ped('h1', 'l1', 100, dia(10), 'h1@x.de'), ped('h2', 'l1', 50, dia(12), 'h2@x.de'), ped('h3', 'l1', 80, dia(14), 'h3@x.de'), ped('h4', 'l1', 60, dia(16), 'h4@x.de')]
+  const ticketsH = [
+    // sem relatório: a IA infere troca por tamanho
+    tk('th1', 'h1@x.de', 'l1', { status: 'enviado', categoria: 'troca', inferenciaCentral: infer() }),
+    // sem relatório: a IA infere reembolso de 60% → "inferido", nunca efetivado
+    tk('th2', 'h2@x.de', 'l1', { status: 'enviado', inferenciaCentral: infer({ jornada: 'qualidade', fase: 'reemb_60', desfecho: 'reembolso', percentual: 60, categoria: 'qualidade', motivo: 'Cliente não gostou do material' }) }),
+    // COM relatório (REEMBOLSO 100%) e inferência divergente (troca): o relatório manda
+    tk('th3', 'h3@x.de', 'l1', { status: 'enviado', relatorioDia: dia(13), relatorioTexto: 'REEMBOLSO 100%', inferenciaCentral: infer() }),
+    // categoria entrega, sem relatório e sem inferência: candidato, ainda sem fase
+    tk('th4', 'h4@x.de', 'l1', { status: 'enviado', categoria: 'entrega' }),
+    // modo novo: nunca é candidato
+    tk('th5', 'c1@x.de', 'l1', { atendimentoNovo: an('qual_troca', ['qual_troca']) }),
+  ]
+  assert.deepEqual(ticketsH.map(ehCandidatoMigracao), [true, true, true, true, false])
+  assert.deepEqual(statusMigracao(ticketsH), { candidatos: 4, inferidos: 3, pendentes: 1 })
+  const r = calcularCentral({ tickets: ticketsH, pedidos: pedidosH, lojas, fases, agora })
+  const reg = id => r.registros.find(x => x.pedidoId === id)
+  assert.deepEqual([reg('h1').origem, reg('h1').inferidaPor, reg('h1').jornada, reg('h1').faseAtual, reg('h1').desfecho, reg('h1').motivo, reg('h1').produto], ['inferida', 'ia', 'tamanho', 'tam_troca', 'troca', 'Cliente disse que ficou pequeno', 'Polo Premium'])
+  assert.deepEqual([reg('h2').desfecho, reg('h2').percentual, reg('h2').reembolsado, reg('h2').situacaoReembolso, reg('h2').faseAtual], ['reembolso', 60, 30, 'inferido', 'reemb_60'])
+  assert.deepEqual([reg('h3').inferidaPor, reg('h3').desfecho, reg('h3').percentual, reg('h3').situacaoReembolso, reg('h3').faseAtual], ['relatorio', 'reembolso', 100, 'registrado', 'reemb_100'], 'relatório manual vence a inferência')
+  assert.equal(reg('h4').faseAtual, null); assert.equal(reg('h4').inferidaPor, null)
+  const eur = r.indicadores[0]
+  assert.equal(eur.reembolsadoEfetivo, 0, 'inferido e registrado não são efetivados'); assert.equal(eur.reembolsosInferidos, 1); assert.equal(eur.reembolsosRegistrados, 1)
+  assert.equal(r.metricas.tam_troca.passaram, 0); assert.equal(r.metricas.tam_troca.inferidos, 1, 'inferência não vira fase enviada')
+  assert.equal(r.metricas.reemb_60.inferidos, 1)
+  // normalização do que a IA devolve
+  assert.equal(normalizarInferencia(null, fases), null)
+  const n = normalizarInferencia({ jornada: 'lua', fase: 'inexistente', desfecho: 'reembolso', percentual: '40', motivo: 'Cliente x', categoria: 'zzz', produtos: ['A', '', 'B'], confianca: 7 }, fases)
+  assert.deepEqual(n, { jornada: 'entrada', fase: null, desfecho: 'reembolso', percentual: 40, motivo: 'Cliente x', categoria: 'outro', produtos: ['A', 'B'], confianca: 1 })
+  assert.equal(normalizarInferencia({ desfecho: 'troca', percentual: 30 }, fases).percentual, 30, 'troca com reembolso parcial mantém o percentual')
+  assert.equal(normalizarInferencia({ desfecho: 'cupom', percentual: 30 }, fases).percentual, null, 'cupom e encerrado não têm percentual')
+  assert.equal(normalizarInferencia({ desfecho: 'cancelamento' }, fases).percentual, 100)
+  assert.equal(normalizarInferencia({ desfecho: 'reembolso', percentual: 250 }, fases).percentual, null)
 })
 
 test('relação com a fase: recusou tudo e chegou ao 100% conta como avançou (o 100% está com o dono, não foi enviado)', () => {

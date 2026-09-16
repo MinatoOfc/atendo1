@@ -251,6 +251,22 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     zullen/graag/kosteloos, niet/nog niet/geen/helaas) além de de, fr, it,
     es, en, pt.
 
+33. **Parte 8 — migração dos casos históricos como "fase inferida" (16/09)**:
+    a IA lê a conversa antiga inteira (cliente e loja) e infere jornada, fase
+    (última que a loja de fato ofereceu, do catálogo), desfecho, percentual
+    (só se escrito), motivo, categoria e produtos. O resultado vai para
+    `ticket.inferenciaCentral` — um campo só da Central: status, categoria,
+    relatório, mensagens e motor nunca mudam. Roda apenas por clique do dono
+    (painel "Casos históricos" na Central ou "Inferir fase com IA" no modal de
+    um caso), em lotes de até 40 (8 por chamada), com custo registrado por
+    loja; nunca sozinha. Candidatos: tickets do clássico com categoria
+    reembolso/troca/entrega, relatório ou motivo lido. Na Central, a linha do
+    relatório manual tem prioridade sobre a inferência (desfecho, percentual,
+    fase); a inferência entra como "inferida (IA)", separada nas métricas
+    (contador inferidos, nunca passaram) e reembolso só inferido é
+    "inferido" — fora do reembolsado de fato. Dá para refazer ou remover a
+    inferência de um caso.
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.

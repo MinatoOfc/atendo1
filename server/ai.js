@@ -495,6 +495,75 @@ export async function extrairMotivosReembolso(casos) {
   }
 }
 
+/* ---------------- Parte 8: inferência das fases dos casos históricos ---------------- */
+
+const SCHEMA_INFERENCIA_HISTORICA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['inferencias'],
+  properties: {
+    inferencias: {
+      type: 'array',
+      description: 'Um item por caso, na MESMA ordem e quantidade dos casos numerados recebidos',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['jornada', 'fase', 'desfecho', 'percentual', 'motivo', 'categoria', 'produtos', 'confianca'],
+        properties: {
+          jornada: { type: 'string', enum: ['entrada', 'tamanho', 'qualidade', 'defeito_errado', 'nao_recebido', 'cancelamento'] },
+          fase: { type: 'string', description: 'id da última fase do catálogo que a LOJA de fato enviou/ofereceu na conversa; "" se nenhuma se aplica' },
+          desfecho: { type: 'string', enum: ['em_aberto', 'reembolso', 'troca', 'reenvio', 'cupom', 'cancelamento', 'encerrado'] },
+          percentual: { type: 'number', description: 'percentual reembolsado quando a conversa diz explicitamente (25, 40, 60, 100…); 0 quando não aparece' },
+          motivo: { type: 'string', description: 'Frase curta em português começando com "Cliente"; exatamente "não informado" quando ele não disse' },
+          categoria: { type: 'string', enum: Object.keys(CATEGORIAS_REEMBOLSO) },
+          produtos: { type: 'array', items: { type: 'string' }, description: 'produtos citados, com o nome como aparece na conversa' },
+          confianca: { type: 'number', description: '0 a 1' },
+        },
+      },
+    },
+  },
+}
+
+/**
+ * Lê conversas antigas (cliente E loja) e infere jornada, fase, desfecho,
+ * percentual, motivo e produtos — só a partir do que está escrito. Retorna
+ * { inferencias, custo } ou { erro }. Não altera nada: quem grava é o servidor.
+ */
+export async function inferirFasesHistoricas(casos, catalogo) {
+  if (!client) return { erro: 'A inferência dos casos antigos usa o Claude — configure a ANTHROPIC_API_KEY primeiro.' }
+  try {
+    const conteudo = casos.map((c, i) => `[caso ${i + 1}]\n${String(c).slice(0, 3500)}`).join('\n\n')
+    const resp = await client.messages.create({
+      model: MODEL,
+      max_tokens: 2500,
+      system: [
+        'Você lê conversas antigas entre clientes e uma loja de roupas online e classifica cada caso para a Central operacional.',
+        'Devolva um item por caso, na mesma ordem e quantidade dos casos recebidos. Use SOMENTE o que está escrito — nunca invente percentual, oferta ou desfecho.',
+        '',
+        'jornada: pelo motivo que o CLIENTE alegou — tamanho (ficou pequeno/grande), qualidade (material, não gostou), defeito_errado (defeito, dano, produto errado), nao_recebido (não chegou, atraso), cancelamento (quer cancelar antes de receber); entrada quando não dá para saber.',
+        'fase: o id da ÚLTIMA fase do catálogo abaixo que a LOJA de fato enviou ou ofereceu (a oferta mais avançada que aparece nas mensagens da loja). Se a loja não ofereceu nada do catálogo, "".',
+        'desfecho: o que ficou combinado no fim — reembolso (com percentual se o texto diz), troca, reenvio, cupom, cancelamento, encerrado (resolvido sem concessão) ou em_aberto (sem conclusão visível).',
+        'percentual: só quando a conversa diz explicitamente (ex.: "60%", "reembolso integral" = 100); senão 0.',
+        'motivo: frase curta em português começando com "Cliente"; exatamente "não informado" quando ele não disse por quê.',
+        'categoria: uma destas — ' + Object.entries(CATEGORIAS_REEMBOLSO).map(([k, v]) => `${k} (${v})`).join(', ') + '.',
+        'produtos: os itens citados, com o nome como aparece. confianca: 0 a 1.',
+        '',
+        'Catálogo de fases (id — título — jornada):',
+        ...catalogo.map(f => `- ${f.id} — ${f.titulo} — ${f.jornada}`),
+      ].join('\n'),
+      messages: [{ role: 'user', content: conteudo }],
+      output_config: { format: { type: 'json_schema', schema: SCHEMA_INFERENCIA_HISTORICA } },
+    })
+    if (resp.stop_reason === 'refusal') return { erro: 'O Claude recusou ler estas conversas.' }
+    const texto = resp.content.find(b => b.type === 'text')?.text
+    const r = texto ? JSON.parse(texto) : null
+    if (!r?.inferencias?.length) return { erro: 'A IA não devolveu as inferências.' }
+    return { inferencias: r.inferencias.slice(0, casos.length), custo: custoDeUso(resp.usage) }
+  } catch (err) {
+    return { erro: traduzirErro(err) }
+  }
+}
+
 /* ---------------- Atendimento novo: duas chamadas curtas ---------------- */
 
 const SCHEMA_CLASSIFICACAO_NOVO = {
