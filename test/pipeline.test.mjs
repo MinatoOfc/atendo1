@@ -40,6 +40,16 @@ estado.lojas = [
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
 estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' })]
+// blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
+const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
+const LIMITE = {
+  inicio1: encher('Die Qualität ist schlecht, ich will mein Geld zurück.', 380),
+  inicio2: encher('Nein, 25% ist zu wenig.', 400),
+  penultimoCliente: encher('Ich bin immer noch nicht zufrieden und erwarte ein besseres Angebot.', 500),
+  ultimaOferta: 'Als letztes Angebot: 70% Rückerstattung, Sie behalten das Produkt. ' + encher('Begründung:', 1100),
+  mensagemAtual: encher('Ja, 70% nehme ich an, bitte veranlassen.', 600),
+  ultimaResposta: 'Erledigt: 70% werden in 3 bis 14 Tagen erstattet. Vielen Dank!',
+}
 const antigo = (id, extra) => ({ id, nome: 'Antigo ' + id, de: `${id}@web.de`, assunto: 'Bestellung #' + id.replace(/\D/g, ''), corpo: 'Hallo', data: '2026-07-01T10:00:00.000Z', lido: true, origem: 'cliente', status: 'enviado', idioma: 'de', lojaId: 'loja2', historico: [], ...extra })
 estado.tickets = [
   antigo('h901', { categoria: 'troca', corpo: 'Das Polo ist zu klein, ich möchte umtauschen.', historico: [{ autor: 'atendo', corpo: 'Wir tauschen es gratis gegen Größe L um.', data: '2026-07-01T12:00:00.000Z' }], resposta: 'Wir tauschen es gratis gegen Größe L um.' }),
@@ -47,6 +57,15 @@ estado.tickets = [
   antigo('h903', { categoria: 'entrega', corpo: 'Wo ist mein Paket?' }),
   antigo('h904', { categoria: 'rastreio', corpo: 'Tracking bitte.' }), // não é caso
   antigo('h905', { categoria: 'reembolso', relatorioDia: '2026-07-10', relatorioTexto: 'REEMBOLSO 100%', corpo: 'Geld zurück bitte.' }), // já tem relatório: fora do lote
+  // conversa NO LIMITE: início ≈ 900, fim ≈ 2.600, última resposta relevante no extremo final
+  antigo('h908', { categoria: 'reembolso', corpo: LIMITE.mensagemAtual, historico: [
+    { autor: 'cliente', corpo: LIMITE.inicio1, data: '2026-07-06T10:00:00.000Z' },
+    { autor: 'atendo', corpo: 'Wir bieten 25% Rückerstattung an.', data: '2026-07-06T11:00:00.000Z' },
+    { autor: 'cliente', corpo: LIMITE.inicio2, data: '2026-07-06T12:00:00.000Z' },
+    ...Array.from({ length: 6 }, (_, i) => ({ autor: i % 2 ? 'atendo' : 'cliente', corpo: 'Zwischennachricht ' + (i + 1) + ' ' + 'blabla '.repeat(90), data: `2026-07-07T${String(10 + i).padStart(2, '0')}:00:00.000Z` })),
+    { autor: 'cliente', corpo: LIMITE.penultimoCliente, data: '2026-07-08T09:00:00.000Z' },
+    { autor: 'atendo', corpo: LIMITE.ultimaOferta, data: '2026-07-08T10:00:00.000Z' },
+  ], resposta: LIMITE.ultimaResposta }),
   antigo('h906', { categoria: 'reembolso', status: 'aprovacao', atendimentoNovo: { versao: 1, fluxo: null, etapa: null, historicoEtapas: [], produtosAfetados: [] }, corpo: 'Geld zurück.' }), // modo novo em coleta: nunca
   // conversa LONGA (> 3.500 caracteres): 25% no começo, 60% perto do fim
   antigo('h907', { categoria: 'reembolso', corpo: 'Ja, 60% ist ok.', historico: [
@@ -571,18 +590,28 @@ test('Parte 8: migração dos casos históricos por clique, em lotes, sem altera
   const foto = t => JSON.stringify({ status: t.status, categoria: t.categoria, relatorioDia: t.relatorioDia, relatorioTexto: t.relatorioTexto, atendimentoNovo: t.atendimentoNovo, resposta: t.resposta, historico: t.historico })
   const antes = Object.fromEntries((await api('/api/state', null, 'GET')).state.tickets.filter(t => /^h90/.test(t.id)).map(t => [t.id, foto(t)]))
   let st = await api('/api/central/migracao', null, 'GET')
-  assert.deepEqual([st.candidatos, st.inferidos, st.pendentes], [4, 0, 4], 'rastreio não é caso; quem tem relatório (h905) e quem está no modo novo (h906) ficam fora; nada inferido ainda')
+  assert.deepEqual([st.candidatos, st.inferidos, st.pendentes], [5, 0, 5], 'rastreio não é caso; quem tem relatório (h905) e quem está no modo novo (h906) ficam fora; nada inferido ainda')
   // nada acontece sozinho: a Central mostra os casos sem fase
   let c = await api('/api/central?loja=loja2', null, 'GET')
-  assert.ok(c.registros.filter(x => /^h90[1237]$/.test(x.ticketId)).every(x => x.faseAtual === null && x.inferidaPor === null), 'candidatos sem fase antes do clique')
+  assert.ok(c.registros.filter(x => /^h90[12378]$/.test(x.ticketId)).every(x => x.faseAtual === null && x.inferidaPor === null), 'candidatos sem fase antes do clique')
   assert.equal(c.registros.find(x => x.ticketId === 'h905').inferidaPor, 'relatorio', 'quem tem relatório já aparece pela linha do relatório')
   // lote de 2
   let r = await api('/api/central/migrar', { limite: 2 })
-  assert.equal(r.status, 200, r.erro); assert.equal(r.lidos, 2); assert.equal(r.restantes, 2)
+  assert.equal(r.status, 200, r.erro); assert.equal(r.lidos, 2); assert.equal(r.restantes, 3)
   // lote seguinte pega os pendentes; depois, nada
-  r = await api('/api/central/migrar', { limite: 10 }); assert.equal(r.lidos, 2); assert.equal(r.restantes, 0)
+  r = await api('/api/central/migrar', { limite: 10 }); assert.equal(r.lidos, 3); assert.equal(r.restantes, 0)
   r = await api('/api/central/migrar', { limite: 10 }); assert.equal(r.lidos, 0)
-  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [4, 0]); assert.equal(st.ultima.lidos, 0)
+  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [5, 0]); assert.equal(st.ultima.lidos, 0)
+  // conversa no limite: o texto que CHEGA à chamada da IA respeita o limite e traz o fim inteiro
+  const h908 = (await api('/api/state', null, 'GET')).state.tickets.find(t => t.id === 'h908')
+  assert.deepEqual([h908.inferenciaCentral.desfecho, h908.inferenciaCentral.percentual, h908.inferenciaCentral.fase], ['reembolso', 70, 'reemb_70'], 'escolhe 70% (fim), nunca 25% (início)')
+  const trechoLimite = (ultimoPromptInferencia.split(/\[caso \d+\]\n/).find(c => c.includes(LIMITE.ultimaResposta)) ?? '').replace(/\n+$/, '')
+  assert.ok(trechoLimite.length > 3000 && trechoLimite.length <= 3500, `dentro do limite (${trechoLimite.length})`)
+  assert.ok(trechoLimite.includes('Loja: ' + LIMITE.ultimaOferta), 'última oferta presente por inteiro')
+  assert.ok(trechoLimite.includes('Cliente (mensagem atual): ' + LIMITE.mensagemAtual), 'mensagem atual presente')
+  assert.ok(trechoLimite.endsWith('Loja (última resposta): ' + LIMITE.ultimaResposta), 'última resposta presente por inteiro, no extremo final')
+  assert.match(trechoLimite, /^Assunto: Bestellung #908\nCliente: Die Qualität/); assert.match(trechoLimite, /Wir bieten 25%/)
+  assert.match(trechoLimite, /omitida\(s\)/); assert.match(trechoLimite, /FINAL DA CONVERSA/)
   // conversa longa: o trecho enviado preserva assunto, mensagem atual e o FIM (a oferta de 60%), e a inferência escolhe 60%, nunca 25%
   const h907 = (await api('/api/state', null, 'GET')).state.tickets.find(t => t.id === 'h907')
   assert.deepEqual([h907.inferenciaCentral.desfecho, h907.inferenciaCentral.percentual, h907.inferenciaCentral.fase], ['reembolso', 60, 'reemb_60'])
@@ -612,7 +641,7 @@ test('Parte 8: migração dos casos históricos por clique, em lotes, sem altera
   // refazer uma só (forçado) e remover
   r = await api('/api/central/migrar', { ticketId: 'h903', forcar: true }); assert.equal(r.lidos, 1)
   r = await api('/api/central/migrar', { ticketId: 'h903', remover: true }); assert.equal(r.status, 200)
-  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [3, 1])
+  st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [4, 1])
   r = await api('/api/central/migrar', { ticketId: 'h904' }); assert.equal(r.status, 400, 'fora dos casos')
 })
 

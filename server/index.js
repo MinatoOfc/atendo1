@@ -2434,9 +2434,11 @@ app.get('/api/central', (req, res) => {
 // LOJA ofereceu por último. Em conversa longa, mantém o INÍCIO (assunto e primeiras
 // mensagens, para contexto) e o FIM (últimas mensagens do cliente e da loja — a
 // última oferta e o encerramento), nunca só os primeiros caracteres.
-const LIMITE_INFERENCIA = 3500
-const LIMITE_INICIO = 900
-function textoParaInferencia(t) {
+export const LIMITE_INFERENCIA = 3500 // tamanho máximo do texto FINAL de um caso, já com marcadores e quebras
+const LIMITE_INICIO = 900               // orçamento do início (assunto + primeiras mensagens)
+const MARCA_FINAL = '[FINAL DA CONVERSA — as últimas mensagens são as que valem para a fase e o desfecho]'
+const marcaOmissao = n => `[... ${n} mensagem(ns) intermediária(s) omitida(s) ...]`
+export function textoParaInferencia(t) {
   const blocos = [`Assunto: ${t.assunto ?? ''}`]
   for (const m of t.historico ?? []) blocos.push(`${m.autor === 'atendo' ? 'Loja' : 'Cliente'}: ${m.autor === 'atendo' ? String(m.corpo || '') : textoProprio(m.corpo)}`)
   blocos.push(`Cliente (mensagem atual): ${textoProprio(t.corpo) || ''}`)
@@ -2444,24 +2446,37 @@ function textoParaInferencia(t) {
   const limpos = blocos.map(b => b.replace(/\n{3,}/g, '\n\n').trim()).filter(Boolean)
   const inteiro = limpos.join('\n')
   if (inteiro.length <= LIMITE_INFERENCIA) return inteiro
-  // fim primeiro (prioridade), depois o início; o assunto entra sempre
+  // orçamento do FIM = limite − início − marcadores (com folga para o número) − quebras de linha
+  const reservaMarcadores = marcaOmissao(9999).length + MARCA_FINAL.length + 4
+  const orcamentoFim = LIMITE_INFERENCIA - LIMITE_INICIO - reservaMarcadores
+  // fim primeiro (prioridade): última resposta da loja, mensagem atual, última oferta… blocos inteiros do fim para trás
   const fim = []
   let tam = 0
   for (let i = limpos.length - 1; i >= 1; i--) {
     const b = limpos[i]
-    if (tam + b.length > LIMITE_INFERENCIA - LIMITE_INICIO) { if (!fim.length) fim.unshift('…' + b.slice(-(LIMITE_INFERENCIA - LIMITE_INICIO))); break }
+    if (tam + b.length + 1 > orcamentoFim) {
+      // só se nem o último bloco couber inteiro: fica com o final dele (nunca o começo)
+      if (!fim.length) fim.unshift('…' + b.slice(-(orcamentoFim - 2)))
+      break
+    }
     fim.unshift(b); tam += b.length + 1
   }
-  const inicio = [limpos[0]]
-  let tamIni = limpos[0].length
+  // início: o assunto sempre (cortado se for absurdo) e as primeiras mensagens que couberem
   const primeiroDoFim = limpos.length - fim.length
+  const assunto = limpos[0].length > LIMITE_INICIO ? limpos[0].slice(0, LIMITE_INICIO - 1) + '…' : limpos[0]
+  const inicio = [assunto]
+  let tamIni = assunto.length
   for (let i = 1; i < primeiroDoFim; i++) {
     const b = limpos[i]
-    if (tamIni + b.length > LIMITE_INICIO) break
+    if (tamIni + b.length + 1 > LIMITE_INICIO) break
     inicio.push(b); tamIni += b.length + 1
   }
-  const omitidas = primeiroDoFim - inicio.length
-  return [...inicio, `[... ${omitidas} mensagem(ns) intermediária(s) omitida(s) ...]`, '[FINAL DA CONVERSA — as últimas mensagens são as que valem para a fase e o desfecho]', ...fim].join('\n')
+  const montar = () => [...inicio, marcaOmissao(primeiroDoFim - inicio.length), MARCA_FINAL, ...fim].join('\n')
+  let texto = montar()
+  // garantia final: o texto entregue nunca passa do limite — se passar, cai o início, nunca o fim
+  while (texto.length > LIMITE_INFERENCIA && inicio.length > 1) { inicio.pop(); texto = montar() }
+  if (texto.length > LIMITE_INFERENCIA) texto = texto.slice(texto.length - LIMITE_INFERENCIA)
+  return texto
 }
 
 app.get('/api/central/migracao', (req, res) => {

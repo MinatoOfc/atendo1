@@ -534,7 +534,8 @@ const SCHEMA_INFERENCIA_HISTORICA = {
 export async function inferirFasesHistoricas(casos, catalogo) {
   if (!client) return { erro: 'A inferência dos casos antigos usa o Claude — configure a ANTHROPIC_API_KEY primeiro.' }
   try {
-    const conteudo = casos.map((c, i) => `[caso ${i + 1}]\n${String(c).slice(0, 3500)}`).join('\n\n')
+    // nenhum corte aqui: o servidor já entrega cada caso compactado dentro do limite (início + fim)
+    const conteudo = casos.map((c, i) => `[caso ${i + 1}]\n${String(c)}`).join('\n\n')
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 2500,

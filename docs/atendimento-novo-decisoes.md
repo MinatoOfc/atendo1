@@ -267,7 +267,7 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     `FASES_MIGRAVEIS` (schema da IA, normalização e testes); confirmações
     nunca. O trecho enviado à IA é a conversa em ordem cronológica e, quando
     longa, início (assunto e primeiras mensagens) + fim (últimas mensagens,
-    última oferta e encerramento), nunca só os primeiros caracteres. Na Central, a linha do
+    última oferta e encerramento), nunca só os primeiros caracteres; o texto FINAL de cada caso, já com marcadores e quebras, respeita o limite de 3.500 caracteres dentro de textoParaInferencia, e o inferidor não aplica nenhum corte adicional. Na Central, a linha do
     relatório manual tem prioridade sobre a inferência (desfecho, percentual,
     fase); a inferência entra como "inferida (IA)", separada nas métricas
     (contador inferidos, nunca passaram) e reembolso só inferido é
