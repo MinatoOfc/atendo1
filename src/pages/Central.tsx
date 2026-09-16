@@ -8,6 +8,7 @@ import { Modal } from '../components/Shared'
 import { calcularCentral, relacaoComFase, ORDEM_JORNADAS, FILTROS_PADRAO } from '../../shared/central.js'
 import type { Registro, Filtros, MetricaFase } from '../../shared/central.js'
 import { statusMigracao } from '../../shared/central.js'
+import { LinkPipeline } from '../components/LinkPipeline'
 
 const NOME_DESFECHO: Record<string, string> = {
   em_aberto: 'Em aberto', reembolso: 'Reembolso', troca: 'Troca', reenvio: 'Reenvio', cupom: 'Cupom', cancelamento: 'Cancelamento', encerrado: 'Encerrado',
@@ -94,6 +95,8 @@ export default function Central() {
           <button className={'chip' + (visao === 'pedidos' ? ' active' : '')} onClick={() => setVisao('pedidos')}>Todos os pedidos ({linhas.length})</button>
         </div>
       </div>
+
+      <LinkPipeline compacto />
 
       {/* filtros: agem ao mesmo tempo sobre cartões, jornadas, fases, painel e lista */}
       <div className="card mb-16" style={{ padding: '10px 14px' }}>
