@@ -88,7 +88,13 @@ export interface AtendimentoNovo {
   proximoEnvioMinimo?: string
   rascunhoGerado?: string
 }
-export interface FaseNovo { titulo: string; jornada: string; aoAceitar: string | null; aoRecusar: string | null; oferta: OfertaNovo | null; instrucao?: string | null }
+export interface FaseNovo {
+  titulo: string; jornada: string; aoAceitar: string | null; aoRecusar: string | null; oferta: OfertaNovo | null; instrucao?: string | null
+  /** fase escrita só depois de você aprovar um aceite (única em que a IA confirma de fato) */
+  confirmacao?: boolean
+  /** 100% e cancelamento: chegam a você sem aceite do cliente */
+  decisaoDono?: boolean
+}
 
 export interface Politica { id: string; titulo: string; conteudo: string; ativa: boolean }
 export interface Comportamento { id: string; situacao: string; instrucao: string; ativa: boolean }
@@ -360,6 +366,8 @@ interface Store extends ServerState {
   aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual', confirmarAlteracao?: boolean) => void
   /** modo novo: você confirma se a imagem recebida comprova o defeito */
   validarFotoNovo: (id: string, valida: boolean) => void
+  /** aceite aprovado por você: gera a confirmação ao cliente (troca/reenvio com prazo e endereço; reembolso 3–14 dias) */
+  confirmarAceiteNovo: (id: string) => void
   /** Central operacional: correção manual da classificação de um caso */
   corrigirFaseCentral: (id: string, patch: { fase?: string | null; jornada?: string | null; justificativa?: string; remover?: boolean }) => void
   /** listas completas, sem o filtro de loja da barra lateral (Central operacional) */
@@ -639,6 +647,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       })
     },
     validarFotoNovo: (id, valida) => api(`/tickets/${id}/novo/foto`, 'POST', { valida }).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
+    confirmarAceiteNovo: id => api(`/tickets/${id}/novo/confirmar`, 'POST', {}).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     corrigirFaseCentral: (id, patch) => api(`/tickets/${id}/central/fase`, 'POST', patch).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     todosTickets: state.tickets,
     todosPedidos: state.pedidos,

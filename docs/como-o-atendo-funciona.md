@@ -344,9 +344,16 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   produto errado (produto correto + cupom 15% → escada da qualidade); não
   recebido (prazo decide: acalmar / cupom 25% / cupom 40% / 100%; ou, se já
   chegou pedindo reembolso, reenvio + cupom 30% → reenvio + 20% → reenvio + 35%
-  → 100%); cancelamento de pedido não processado (direto ao dono).
+  → 100%; marcado como entregue sem receber: aguardar 2 dias → reenvio + 35%);
+  na fase de 50% o frete de retorno é dito só em dinheiro; cancelamento de pedido não processado (direto ao dono).
 - **Todo aceite vai para o dono** (troca e reenvio pedem o endereço completo
-  antes). Reembolso de 100% e cancelamento também.
+  antes). Reembolso de 100% e cancelamento também. Ao aprovar ("Aprovar e
+  gerar a confirmação", no card da conversa), a IA escreve a confirmação:
+  troca/reenvio com o prazo do envio expresso e o endereço confirmado;
+  reembolso/cancelamento com 3 a 14 dias para o dinheiro voltar ao método de
+  pagamento; cupom com o código. Só nessa fase a IA pode falar de fato
+  consumado, e só com os números da opção aceita. Enviada, o caso fecha e
+  mensagem nova vai ao dono.
 - **Bloqueios no servidor** (valem em todo caminho que gera ou envia texto —
   chegada de mensagem, "Gerar nova resposta", "Aprovar e enviar", auto-envio):
   ação proposta fora da fase, percentual ou cupom de outra etapa, e linguagem

@@ -30,7 +30,7 @@ estado.lojas = [
   { id: 'loja3', nome: 'Loja Nova Automática', ativa: true, moeda: 'EUR', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: true },
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1')]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
   segredo: 'segredo-de-teste-'.padEnd(64, 'x'),
@@ -267,6 +267,36 @@ test('imagem inadequada: imagem não é prova; troca só depois da validação d
   assert.equal(t.status, 'aprovacao'); assert.equal(an(t).transicaoPendente.para, 'def_troca'); assert.equal(an(t).fotoValidada, true)
   assert.match(ultimoPromptEscrita, /5 a 11 dias/); assert.match(t.rascunho, /5 a 11 dias/)
   assert.ok(an(t).historicoEtapas.some(h => h.evento === 'foto_validada'))
+})
+
+test('aceite aprovado pelo dono: a confirmação nasce só do clique, com os números da opção aceita, e encerra o caso', async () => {
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c11@web.de', nome: 'C11', corpo: 'Schlecht.', lojaId: 'loja1' })
+  let r = await api(`/api/tickets/${t.id}/novo/confirmar`)
+  assert.equal(r.status, 400, 'sem aceite não há confirmação')
+  for (const cls of [null, { intencao: 'recusa' }, { intencao: 'recusa' }]) {
+    if (cls) t = await cliente(cls, { de: 'c11@web.de', corpo: 'Nein.', ticketId: t.id })
+    r = await comEnvio('ok', () => aprovar(t)); assert.equal(r.status, 200, r.erro); t = await ticket(t.id)
+  }
+  assert.equal(an(t).etapa, 'reemb_25')
+  t = await cliente({ intencao: 'aceita' }, { de: 'c11@web.de', corpo: 'Ok, 25%.', ticketId: t.id })
+  assert.equal(t.status, 'humano'); assert.equal(an(t).acaoAceita, 'reemb_25'); assert.equal(t.rascunho, undefined, 'nada é escrito antes do clique do dono')
+  r = await api(`/api/tickets/${t.id}/novo/confirmar`)
+  assert.equal(r.status, 200, r.erro)
+  t = await ticket(t.id)
+  assert.equal(t.status, 'aprovacao'); assert.equal(an(t).transicaoPendente.para, 'conf_reembolso'); assert.match(t.rascunho, /25%/)
+  assert.match(ultimoPromptEscrita, /CONFIRMAÇÃO/); assert.match(ultimoPromptEscrita, /3 a 14 dias/)
+  // outro percentual continua barrado, mesmo na confirmação
+  r = await comEnvio('ok', () => aprovar(t, { texto: 'Rückerstattung von 40% veranlasst.' }))
+  assert.equal(r.status, 400); assert.match(r.erro, /40%/)
+  // fato consumado é permitido AQUI
+  r = await comEnvio('ok', () => aprovar(t, { texto: 'Ihre Rückerstattung von 25% (25,00 €) wurde veranlasst — 3 bis 14 Tage.' }))
+  assert.equal(r.status, 200, r.erro)
+  t = await ticket(t.id)
+  assert.equal(t.status, 'enviado'); assert.equal(an(t).etapa, 'conf_reembolso'); assert.equal(an(t).aguardando, null)
+  assert.ok(an(t).historicoEtapas.some(h => h.evento === 'aceite_aprovado'))
+  // mensagem nova depois da confirmação vai ao dono, sem reabrir a escada
+  t = await cliente({ intencao: 'informa', resumo: 'e agora?' }, { de: 'c11@web.de', corpo: 'Und jetzt?', ticketId: t.id })
+  assert.equal(t.status, 'humano'); assert.match(t.motivoEscalada, /confirmad/); assert.equal(an(t).etapa, 'conf_reembolso')
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

@@ -182,8 +182,35 @@ function LinhaFase({ rotulo, children }: { rotulo: string; children: React.React
   )
 }
 
+/* o que a confirmação vai dizer, conforme o tipo da opção aceita (mapa, seção 9) */
+function descreverConfirmacao(tipo?: string | null) {
+  if (!tipo) return ''
+  if (/troca|reenvio/.test(tipo)) return ' (aprovado, prazo do envio expresso e o endereço confirmado)'
+  if (/reembolso|cancelamento/.test(tipo)) return ' (aprovado e 3 a 14 dias para o dinheiro voltar ao método de pagamento)'
+  if (tipo === 'cupom') return ' (código do cupom liberado)'
+  return ''
+}
+
+/* linha sugerida para o relatório manual a partir da opção aceita — só entra se o dono clicar */
+function sugestaoRelatorio(t: Ticket, fasesNovo?: Record<string, { oferta: { tipo: string; pct: number | null; cupom: number | null } | null }>): string | null {
+  const an = t.atendimentoNovo
+  const o = an?.acaoAceita ? fasesNovo?.[an.acaoAceita]?.oferta : null
+  if (!an || !o) return null
+  const partes: string[] = []
+  if (o.tipo === 'cancelamento') partes.push('CANCELAMENTO')
+  else if (o.tipo === 'reembolso') partes.push(`REEMBOLSO ${o.pct}%`)
+  else if (o.tipo === 'cupom') partes.push(`CUPOM ${o.cupom}%`)
+  else {
+    partes.push(/reenvio/.test(o.tipo) ? 'REENVIO' : 'TROCA')
+    if (o.pct) partes.push(`+ REEMBOLSO ${o.pct}%`)
+    if (o.cupom) partes.push(`+ CUPOM ${o.cupom}%`)
+    if (an.enderecoConfirmado) partes.push(`— ENDEREÇO: ${an.enderecoConfirmado}`)
+  }
+  return partes.join(' ')
+}
+
 function PainelFaseNovo({ t }: { t: Ticket }) {
-  const { fasesNovo, jornadasNovo, lojas, validarFotoNovo } = useStore()
+  const { fasesNovo, jornadasNovo, lojas, validarFotoNovo, confirmarAceiteNovo } = useStore()
   const an = t.atendimentoNovo
   if (!an || !fasesNovo) return null
   const titulo = (id?: string | null) => (id ? fasesNovo[id]?.titulo ?? id : '')
@@ -201,7 +228,7 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
   let proxima: React.ReactNode
   if (an.aguardando === 'humano') {
     proxima = an.acaoAceita
-      ? <>Decisão sua — o cliente aceitou <b>{titulo(an.acaoAceita)}</b>{an.enderecoConfirmado ? ` (endereço: ${an.enderecoConfirmado})` : ''}</>
+      ? <>Decisão sua — {fasesNovo[an.acaoAceita]?.decisaoDono ? 'chegou a' : 'o cliente aceitou'} <b>{titulo(an.acaoAceita)}</b>{an.enderecoConfirmado ? ` (endereço: ${an.enderecoConfirmado})` : ''}</>
       : <>Decisão sua — {t.motivoEscalada || 'sem próxima etapa automática'}</>
   } else if (pendente) {
     proxima = <>Rascunho pronto para <b>{titulo(pendente.para)}</b></>
@@ -257,6 +284,18 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
             <button className="btn btn-sm btn-primary" onClick={() => validarFotoNovo(t.id, true)}><Check size={13} /> Sim, comprova</button>
             <button className="btn btn-sm" onClick={() => validarFotoNovo(t.id, false)}><X size={13} /> Não — pedir outra foto</button>
           </div>
+        </div>
+      )}
+      {an.aguardando === 'humano' && an.acaoAceita && (
+        <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--panel-soft)', borderRadius: 8 }}>
+          <div style={{ fontSize: 12.5, marginBottom: 6 }}>
+            {fasesNovo[an.acaoAceita]?.decisaoDono
+              ? <>O caso chegou a <b>{titulo(an.acaoAceita)}</b>. Se você conceder, gere a confirmação ao cliente.</>
+              : <>O cliente aceitou <b>{titulo(an.acaoAceita)}</b>. Ao aprovar, a IA escreve a confirmação{descreverConfirmacao(fasesNovo[an.acaoAceita]?.oferta?.tipo)} — ela passa pela Aprovações antes de sair.</>}
+          </div>
+          <button className="btn btn-sm btn-primary" onClick={() => confirmarAceiteNovo(t.id)}>
+            <CheckCheck size={13} /> Aprovar e gerar a confirmação
+          </button>
         </div>
       )}
       <div style={{ marginTop: 8 }}>
@@ -418,14 +457,23 @@ function PainelPedidos({ t }: { t: Ticket }) {
 /* Popup do "Adicionar ao relatório": o lojista escolhe (e configura) o texto
    pré-definido que vira a linha do caso no relatório manual do dia */
 function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
-  const { opcoesRelatorio = [], alternarRelatorio, salvarOpcoesRelatorio } = useStore()
+  const { opcoesRelatorio = [], alternarRelatorio, salvarOpcoesRelatorio, fasesNovo } = useStore()
   const [novo, setNovo] = useState('')
   const escolher = (texto?: string) => { alternarRelatorio(t.id, true, texto); onClose() }
+  const sugestao = sugestaoRelatorio(t, fasesNovo)
   return (
     <Modal title="Adicionar ao relatório de hoje" onClose={onClose}>
       <p className="muted-sm" style={{ marginBottom: 12, lineHeight: 1.5 }}>
         Escolha como este caso aparece no relatório manual — a linha sai como <b>PEDIDO Nº - texto escolhido</b>.
       </p>
+      {sugestao && (
+        <button className={'btn mb-8' + (t.relatorioDia && t.relatorioTexto === sugestao ? ' btn-primary' : '')}
+          style={{ width: '100%', justifyContent: 'flex-start', textAlign: 'left' }}
+          title="Sugestão do atendimento novo, a partir da opção aceita — só entra se você clicar"
+          onClick={() => escolher(sugestao)}>
+          <Sparkles size={13} /> Sugestão: {sugestao}
+        </button>
+      )}
       {opcoesRelatorio.map(o => (
         <div key={o} className="row gap-8 mb-8">
           <button className={'btn' + (t.relatorioDia && t.relatorioTexto === o ? ' btn-primary' : '')}

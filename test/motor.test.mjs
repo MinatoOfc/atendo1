@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {
   novoEstado, decidir, confirmarTransicao, validarProposta, prazoDoPedido, somarDiasUteis,
   horarioMinimoEnvio, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
-  instrucaoAlteraOferta, assinaturaOferta,
+  instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever,
 } from '../server/atendimento.js'
 
 const loja = { id: 'l1', nome: 'Von Alder', moeda: 'EUR', cupons: { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }, prazoEntrega: { min: 5, max: 12, processamento: 3 } }
@@ -140,7 +140,7 @@ test('não recebido: prazo decide; seção 7 quando já chega pedindo reembolso'
   const entregue = { ...pedido1, status: 'entregue' }
   r = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'nao_recebido' }, { pedido: entregue })
   assert.equal(r.fase, 'nr_entregue_aguardar')
-  r = rodada(r.an, { intencao: 'pede_reembolso' }, { pedido: entregue }); assert.equal(r.fase, 'nr_reenvio_20')
+  r = rodada(r.an, { intencao: 'pede_reembolso' }, { pedido: entregue }); assert.equal(r.fase, 'nr_reenvio_35', '7.2: a seta do mapa entra no 35%')
 })
 
 test('cancelamento de pedido não processado, agradecimento e fora do mapa', () => {
@@ -155,7 +155,8 @@ test('bloqueios: percentual, cupom e ação fora da fase; confirmação como fat
   assert.equal(validarProposta('reemb_40', { acao_proposta: 'reemb_40', resposta: 'Ofereço 40% agora e 50% depois.' }, loja).ok, false)
   assert.equal(validarProposta('reemb_40', { acao_proposta: 'reemb_40', resposta: 'Posso oferecer 40% (52,00 €).' }, loja).ok, true)
   assert.equal(validarProposta('reemb_40', { acao_proposta: 'reemb_70', resposta: 'ok' }, loja).ok, false)
-  assert.equal(validarProposta('reemb_50', { acao_proposta: 'reemb_50', resposta: 'Frete de devolução ≈ 25% (17,50 €). Ofereço 50%.' }, loja).ok, true)
+  assert.equal(validarProposta('reemb_50', { acao_proposta: 'reemb_50', resposta: 'Frete de devolução ≈ 25% (17,50 €). Ofereço 50%.' }, loja).ok, false, 'mapa 5.9: o frete só em dinheiro, nunca a porcentagem')
+  assert.equal(validarProposta('reemb_50', { acao_proposta: 'reemb_50', resposta: 'Frete de devolução ≈ 17,50 €. Ofereço 50% (35,00 €).' }, loja).ok, true)
   assert.equal(validarProposta('qual_troca', { acao_proposta: 'qual_troca', resposta: 'Use DANKE15 ou KEEP35.' }, loja).ok, false)
   assert.equal(conferirTextoDaFase('reemb_25', 'Wir haben die Rückerstattung von 25% bereits veranlasst.', loja).ok, false, 'confirmação como fato consumado')
   assert.equal(conferirTextoDaFase('reemb_25', 'Wir bieten 25% (17,50 €) an — möchten Sie das annehmen?', loja).ok, true)
@@ -187,8 +188,40 @@ test('cadência e dias úteis', () => {
   assert.equal(somarDiasUteis(new Date('2026-09-18T12:00:00Z'), 1).toISOString().slice(0, 10), '2026-09-21')
 })
 
+test('confirmação: só depois do aceite; fato consumado só ali e só com os números da opção aceita; depois, mensagem nova vai ao dono', () => {
+  let r = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'qualidade' })
+  r = rodada(r.an, { intencao: 'recusa' }); r = rodada(r.an, { intencao: 'recusa' })
+  r = rodada(r.an, { intencao: 'aceita' })
+  assert.equal(r.an.acaoAceita, 'reemb_25'); assert.equal(faseDeConfirmacao(r.an.acaoAceita), 'conf_reembolso')
+  const an = r.an
+  assert.equal(conferirTextoDaFase('conf_reembolso', 'Ihre Rückerstattung von 25% (17,50 €) wurde veranlasst — 3 bis 14 Tage.', loja, an).ok, true, 'na confirmação pode falar de fato consumado')
+  assert.equal(conferirTextoDaFase('conf_reembolso', 'Rückerstattung von 40% veranlasst.', loja, an).ok, false, 'mas só com o percentual aceito')
+  assert.equal(conferirTextoDaFase('reemb_25', 'Ihre Rückerstattung von 25% wurde veranlasst.', loja, an).ok, false, 'fora da confirmação continua proibido')
+  assert.equal(faseDeConfirmacao(null), null); assert.equal(faseDeConfirmacao('coleta'), null)
+  // o prompt da confirmação leva os prazos do mapa
+  const ticket = { nome: 'X', corpo: 'ok', historico: [] }
+  const q = promptEscrever({ loja, config: {}, faseId: 'conf_reembolso', an, pedido: pedido1, ticket })
+  assert.match(q.system, /CONFIRMAÇÃO/); assert.match(q.system, /3 a 14 dias/); assert.match(q.system, /25% = 17,50 €/)
+  const anTroca = { ...novoEstado(), acaoAceita: 'tam_troca', enderecoConfirmado: 'Hauptstr. 5, 10115 Berlin', produtosAfetados: ['Polo'] }
+  const p = promptEscrever({ loja, config: {}, faseId: 'conf_troca', an: anTroca, pedido: pedido1, ticket })
+  assert.match(p.system, /5 a 11 dias/); assert.match(p.system, /Hauptstr\. 5/); assert.doesNotMatch(p.system, /Prazo para o dinheiro voltar/)
+  // enviada a confirmação, o caso fecha: mensagem nova vai ao dono sem reabrir a escada
+  confirmarTransicao(an, { para: 'conf_reembolso', mensagem: 'aceite aprovado', agora })
+  assert.equal(an.aguardando, null)
+  const depois = decidir({ an, cls: { intencao: 'informa', resumo: 'e agora?' }, pedido: pedido1, loja, agora })
+  assert.match(depois.humano, /confirmad/); assert.equal(depois.fase, null)
+  // cada tipo de opção tem a sua confirmação; 100% e cancelamento chegam ao dono com a ação pendente registrada
+  assert.equal(faseDeConfirmacao('tam_troca'), 'conf_troca'); assert.equal(faseDeConfirmacao('nr_reenvio_20'), 'conf_troca')
+  assert.equal(faseDeConfirmacao('qual_cupom_35'), 'conf_cupom'); assert.equal(faseDeConfirmacao('reemb_100'), 'conf_reembolso')
+  assert.equal(faseDeConfirmacao('cancel_nao_processado'), 'conf_cancelamento')
+  const h = rodada(novoEstado(), { intencao: 'pede_cancelamento' }, { pedido: { ...pedido1, status: 'aguardando', despachadoEm: null } })
+  assert.equal(h.an.acaoAceita, 'cancel_nao_processado')
+})
+
 test('mapa de fases consistente', () => {
   for (const [id, f] of Object.entries(FASES)) {
     if (f.aoRecusar) assert.ok(FASES[f.aoRecusar], `${id}.aoRecusar aponta para fase inexistente`)
+    if (f.confirmacao) assert.ok(!f.oferta && !f.aoAceitar && !f.aoRecusar, `${id}: confirmação não oferece nem leva a lugar nenhum`)
+    if (f.oferta && !['endereco'].includes(id)) assert.ok(faseDeConfirmacao(id), `${id}: toda oferta precisa de uma confirmação`)
   }
 })

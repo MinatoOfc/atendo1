@@ -47,6 +47,7 @@ export const JORNADAS = {
  *                'endereco' = pedir endereço completo antes de ir ao dono)
  *  aoRecusar     próxima fase se o cliente recusar (null = não há próxima)
  *  instrucao     o que a IA deve escrever — só esta ação, nada de outras etapas
+ *  confirmacao   true nas fases que só existem depois de o dono aprovar um aceite
  */
 export const FASES = {
   /* ---- coleta ---- */
@@ -139,7 +140,7 @@ export const FASES = {
     oferta: { tipo: 'reembolso', pct: 50, cupom: null, prazo: null, semDevolucao: true },
     requer: ['produtos'],
     aoAceitar: 'humano', aoRecusar: 'reemb_60',
-    instrucao: 'Explique que o frete de devolução seria pago pelo cliente e custaria aproximadamente o valor indicado abaixo (diga o valor em dinheiro, não só a porcentagem). Para evitar a devolução, ofereça 50% do valor pago (informe o valor) ficando com o produto. Pergunte se aceita.',
+    instrucao: 'Explique que, numa devolução, o frete de retorno ficaria por conta do cliente e custaria aproximadamente o valor indicado abaixo — diga SOMENTE esse valor em dinheiro; NUNCA diga a porcentagem que o frete representa. Para evitar a devolução, ofereça 50% do valor pago (informe o valor) ficando com o produto. Pergunte se aceita.',
   },
   reemb_60: {
     jornada: 'qualidade', titulo: 'Reembolso de 60%',
@@ -195,7 +196,7 @@ export const FASES = {
   nr_entregue_aguardar: {
     jornada: 'nao_recebido', titulo: 'Marcado como entregue — aguardar 2 dias',
     oferta: null, requer: [],
-    aoAceitar: null, aoRecusar: 'nr_reenvio_20',
+    aoAceitar: null, aoRecusar: 'nr_reenvio_35',
     instrucao: 'Explique que a transportadora às vezes marca como entregue enquanto o pacote ainda está a caminho. Peça que aguarde mais dois dias e que verifique com vizinhos ou na portaria se alguém recebeu na ausência dele. Não ofereça nada ainda.',
   },
   nr_reenvio_20: {
@@ -228,10 +229,49 @@ export const FASES = {
     aoAceitar: null, aoRecusar: null,
     instrucao: 'Confirme que a opção aceita será providenciada e peça o endereço de entrega COMPLETO (rua, número, complemento, CEP/código postal, cidade, país) para o envio. Não prometa data nem diga que já foi despachado.',
   },
+
+  /* ---- confirmação depois de o dono aprovar o aceite (9) ---- */
+  // Únicas fases em que a IA pode falar de fato consumado. O motor nunca entra
+  // nelas sozinho: só o clique do lojista ("Aprovar e gerar a confirmação").
+  conf_troca: {
+    jornada: 'entrada', titulo: 'Confirmação — troca/reenvio aprovado', confirmacao: true,
+    oferta: null, requer: [], aoAceitar: null, aoRecusar: null,
+    instrucao: 'Confirme ao cliente que a opção aceita foi APROVADA e já está sendo processada: o envio sai com frete expresso e chega no prazo indicado abaixo. Repita o endereço de entrega confirmado e peça que avise imediatamente se algo nele estiver errado. Se a opção incluir reembolso parcial, informe o valor e que ele volta ao método de pagamento original em 3 a 14 dias. Se incluir cupom, repita o código. Não ofereça nada além disso.',
+  },
+  conf_reembolso: {
+    jornada: 'entrada', titulo: 'Confirmação — reembolso aprovado', confirmacao: true,
+    oferta: null, requer: [], aoAceitar: null, aoRecusar: null,
+    instrucao: 'Confirme ao cliente que o reembolso aceito foi APROVADO e será processado: informe o percentual e o valor em dinheiro, e que o dinheiro volta ao método de pagamento original em 3 a 14 dias. Se a opção previa que ele fica com o produto, diga isso. Se ele questionar o prazo, explique que a loja segue a lei do país. Não ofereça nada além disso.',
+  },
+  conf_cupom: {
+    jornada: 'entrada', titulo: 'Confirmação — cupom liberado', confirmacao: true,
+    oferta: null, requer: [], aoAceitar: null, aoRecusar: null,
+    instrucao: 'Confirme ao cliente que o acordo foi APROVADO: repita o código do cupom, diga que vale para qualquer pedido na loja e, quando for o caso, que ele fica com o produto. Se o combinado era aguardar a entrega, reforce que a loja acompanha o pedido. Não ofereça nada além disso.',
+  },
+  conf_cancelamento: {
+    jornada: 'entrada', titulo: 'Confirmação — pedido cancelado', confirmacao: true,
+    oferta: null, requer: [], aoAceitar: null, aoRecusar: null,
+    instrucao: 'Confirme ao cliente que o pedido foi CANCELADO, como é direito dele, e que o valor pago volta ao método de pagamento original em 3 a 14 dias. Se ele questionar o prazo, explique que a loja segue a lei do país. Não ofereça nada além disso.',
+  },
 }
 
 /** Fases que fecham a rodada da IA mandando o caso para o dono. */
-const FASES_HUMANAS = new Set(['reemb_100', 'cancel_nao_processado'])
+export const FASES_HUMANAS = new Set(['reemb_100', 'cancel_nao_processado'])
+
+/**
+ * Fase de confirmação que corresponde à opção aceita (ou decidida pelo dono).
+ * Mapa, seção 9: troca/reenvio → prazo e endereço; reembolso/cancelamento →
+ * 3 a 14 dias para o dinheiro voltar; cupom → código liberado.
+ */
+export function faseDeConfirmacao(faseAceitaId) {
+  const tipo = FASES[faseAceitaId]?.oferta?.tipo
+  if (!tipo) return null
+  if (/troca|reenvio/.test(tipo)) return 'conf_troca'
+  if (tipo === 'reembolso') return 'conf_reembolso'
+  if (tipo === 'cupom') return 'conf_cupom'
+  if (tipo === 'cancelamento') return 'conf_cancelamento'
+  return null
+}
 
 /* ------------------------------------------------------------------ */
 /* Estado gravado no ticket                                            */
@@ -492,6 +532,9 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
 
   const atual = FASES[an.etapa]
 
+  // --- já confirmado ao cliente: o caso está encerrado; quem responde é o dono ---
+  if (atual?.confirmacao) { saida.humano = 'Caso já confirmado ao cliente — ele escreveu de novo; responda você'; return saida }
+
   // --- fase de coleta: o cliente respondeu o que faltava? ---
   if (an.etapa === 'coleta' || an.etapa === 'tam_ajuste' || an.etapa === 'def_foto') {
     const alvo = an.proximaAposColeta ?? faseInicialDoFluxo(an.fluxo)
@@ -505,7 +548,7 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
   }
   if (an.etapa === 'nr_entregue_aguardar') {
     if (cls.intencao === 'informa' && /receb|chegou|arriv|erhalten|angekommen|ricevut|reçu|ontvangen/i.test(cls.resumo ?? '')) { saida.encerrar = true; return saida }
-    return irPara(saida, 'nr_reenvio_20', agora)
+    return irPara(saida, atual.aoRecusar, agora)
   }
 
   // --- resposta a uma oferta ---
@@ -536,6 +579,7 @@ function irPara(saida, alvo, agora) {
   if (!alvo) { saida.humano = 'Sem próxima etapa definida'; return saida }
   if (FASES_HUMANAS.has(alvo)) {
     an.aguardando = 'humano'
+    an.acaoAceita = alvo // ação pendente da decisão do dono (a confirmação parte dela)
     saida.humano = alvo === 'reemb_100'
       ? 'Cliente recusou todas as alternativas — reembolso de 100% é decisão sua'
       : 'Cancelamento de pedido não processado — decisão sua'
@@ -584,7 +628,8 @@ export function confirmarTransicao(an, { para, mensagem, observacao = null, agor
   an.etapa = para
   // fases sem oferta (coleta, endereço) não apagam a oferta que está em jogo
   if (fase?.oferta) { an.ofertaAtual = fase.oferta; an.ofertaEnviadaEm = new Date(agora).toISOString() }
-  an.aguardando = 'cliente'
+  // confirmação enviada: o caso fecha; qualquer mensagem nova vai ao dono
+  an.aguardando = fase?.confirmacao ? null : 'cliente'
   an.transicaoPendente = null
   return an
 }
@@ -593,24 +638,32 @@ export function confirmarTransicao(an, { para, mensagem, observacao = null, agor
 /* Bloqueios contra salto de etapa (11)                                */
 /* ------------------------------------------------------------------ */
 
+/** Oferta que rege uma fase: a própria, ou — numa confirmação — a opção aceita. */
+export function ofertaDaFase(faseId, an = null) {
+  const fase = FASES[faseId]
+  if (!fase) return null
+  return fase.confirmacao ? (FASES[an?.acaoAceita]?.oferta ?? null) : fase.oferta
+}
+
 const PCT_RE = /(\d{1,3})\s?%/g
 
 /**
  * Confere o resultado da IA contra a fase permitida: ação proposta, percentuais
  * e cupons citados no texto. Retorna { ok, motivo }.
  */
-export function validarProposta(faseId, resultado, loja) {
+export function validarProposta(faseId, resultado, loja, an = null) {
   const fase = FASES[faseId]
   if (!fase) return { ok: false, motivo: `fase desconhecida (${faseId})` }
   if (resultado.acao_proposta && resultado.acao_proposta !== faseId) {
     return { ok: false, motivo: `a IA propôs "${resultado.acao_proposta}" mas a etapa permitida era "${faseId}"` }
   }
   const texto = String(resultado.resposta || '')
+  // confirmação: os números permitidos são os da opção que o cliente aceitou
+  const oferta = ofertaDaFase(faseId, an)
   const permitidos = new Set()
-  if (fase.oferta?.pct) permitidos.add(fase.oferta.pct)
-  if (fase.oferta?.cupom) permitidos.add(fase.oferta.cupom)
-  // o percentual do frete de devolução (fase de 50%) pode ser citado
-  if (faseId === 'reemb_50') permitidos.add(25)
+  if (oferta?.pct) permitidos.add(oferta.pct)
+  if (oferta?.cupom) permitidos.add(oferta.cupom)
+  // o frete de devolução da fase de 50% NÃO pode ser citado em percentual — só em dinheiro (mapa 5.9)
   for (const m of texto.matchAll(PCT_RE)) {
     const n = Number(m[1])
     if (!permitidos.has(n)) return { ok: false, motivo: `o texto cita ${n}%, que não pertence à etapa "${fase.titulo}"` }
@@ -618,7 +671,7 @@ export function validarProposta(faseId, resultado, loja) {
   // cupom: só o código da fase pode aparecer
   const codigos = Object.entries(loja?.cupons ?? {})
   for (const [pct, codigo] of codigos) {
-    if (codigo && texto.includes(codigo) && Number(pct) !== fase.oferta?.cupom) {
+    if (codigo && texto.includes(codigo) && Number(pct) !== oferta?.cupom) {
       return { ok: false, motivo: `o texto cita o cupom de ${pct}% (${codigo}), que não pertence à etapa "${fase.titulo}"` }
     }
   }
@@ -626,8 +679,8 @@ export function validarProposta(faseId, resultado, loja) {
 }
 
 /** Código do cupom exigido pela fase, ou null se a loja não cadastrou. */
-export function cupomDaFase(faseId, loja) {
-  const pct = FASES[faseId]?.oferta?.cupom
+export function cupomDaFase(faseId, loja, an = null) {
+  const pct = ofertaDaFase(faseId, an)?.cupom
   if (!pct) return { precisa: false, codigo: null }
   const codigo = loja?.cupons?.[String(pct)] || null
   return { precisa: true, pct, codigo }
@@ -710,6 +763,7 @@ function descreverOferta(o) {
   if (o.tipo === 'reenvio_reembolso') partes.push(`reenvio expresso + reembolso de ${o.pct}%`)
   if (o.tipo === 'reembolso') partes.push(`reembolso de ${o.pct}%`)
   if (o.tipo === 'cupom') partes.push(`cupom de ${o.cupom}%`)
+  if (o.tipo === 'cancelamento') partes.push('cancelamento do pedido')
   if (o.cupom && o.tipo !== 'cupom') partes.push(`cupom de ${o.cupom}%`)
   if (o.semDevolucao) partes.push('sem devolução')
   return partes.join(', ')
@@ -725,12 +779,21 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
   const moeda = loja?.moeda ?? 'EUR'
   const idiomaFixo = loja?.idioma && loja.idioma !== 'auto' ? (NOMES_IDIOMA[loja.idioma] ?? loja.idioma) : null
   const valor = Number(pedido?.valor || 0)
+  const conf = !!fase.confirmacao
+  const aceita = conf ? FASES[an.acaoAceita] : null
+  const oferta = conf ? (aceita?.oferta ?? null) : fase.oferta
   const dados = []
-  if (fase.oferta?.pct && fase.oferta.pct < 100) dados.push(`Reembolso de ${fase.oferta.pct}% = ${dinheiro(valor * fase.oferta.pct / 100, moeda)} (sobre ${dinheiro(valor, moeda)} pagos).`)
-  if (faseId === 'reemb_50') dados.push(`Frete de devolução estimado (25% do valor pago): ${dinheiro(valor * 0.25, moeda)}.`)
-  const cupom = cupomDaFase(faseId, loja)
+  if (conf) dados.push(`Opção aceita pelo cliente e aprovada pelo lojista: ${aceita?.titulo ?? an.acaoAceita} (${descreverOferta(oferta)}).`)
+  if (oferta?.pct && (conf || oferta.pct < 100)) dados.push(`Reembolso de ${oferta.pct}% = ${dinheiro(valor * oferta.pct / 100, moeda)} (sobre ${dinheiro(valor, moeda)} pagos).`)
+  if (faseId === 'reemb_50') dados.push(`Frete de devolução estimado: ${dinheiro(valor * 0.25, moeda)} — informe só este valor em dinheiro; não diga a porcentagem que ele representa.`)
+  const cupom = cupomDaFase(faseId, loja, an)
   if (cupom.precisa) dados.push(`Cupom de ${cupom.pct}%: código ${cupom.codigo}. Use EXATAMENTE este código.`)
-  if (fase.oferta?.prazo) dados.push(`Prazo do envio expresso: ${fase.oferta.prazo}.`)
+  if (oferta?.prazo) dados.push(`Prazo do envio expresso: ${oferta.prazo}.`)
+  if (conf && /troca|reenvio/.test(oferta?.tipo ?? '')) {
+    if (!oferta?.prazo) dados.push(`Prazo do envio expresso: 4 a 11 dias.`)
+    if (an.enderecoConfirmado) dados.push(`Endereço de entrega confirmado: ${an.enderecoConfirmado}.`)
+  }
+  if (conf && (oferta?.pct || oferta?.tipo === 'cancelamento')) dados.push(`Prazo para o dinheiro voltar ao método de pagamento original: 3 a 14 dias. Se o cliente questionar esse prazo, a loja segue a lei do país.`)
   if (an.produtosAfetados.length) dados.push(`Produtos envolvidos: ${an.produtosAfetados.join('; ')}.`)
   if (an.ajusteTamanho && Object.keys(an.ajusteTamanho).length) dados.push(`Ajuste informado: ${Object.entries(an.ajusteTamanho).map(([p, a]) => `${p} ficou ${a}`).join('; ')}.`)
   if (faltando.length) {
@@ -751,10 +814,16 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
     `Escreva a resposta ao cliente ${idiomaFixo ? `em ${idiomaFixo}` : 'no idioma em que ele escreveu'}, cordial, direta, humana, sem parecer robô.`,
     ``,
     `Regras invioláveis:`,
-    `- Você executa SOMENTE a ação abaixo. Não mencione, não insinue e não prometa nenhuma outra opção, percentual, cupom ou etapa — nem "se não aceitar, podemos…".`,
-    `- Você NUNCA confirma reembolso, troca, reenvio ou cancelamento como fato consumado. Você OFERECE e PERGUNTA se o cliente aceita; quem confirma depois é o lojista.`,
-    `- Só cite valores, percentuais e códigos que estejam nos dados abaixo. Nunca invente prazo, valor, política ou código.`,
-    `- Não escreva "aprovado", "confirmado", "já está em andamento", "enviaremos", "o dinheiro chegará".`,
+    ...(conf ? [
+      `- Esta resposta é uma CONFIRMAÇÃO: a opção listada nos dados abaixo já foi aprovada pelo lojista. Confirme-a exatamente como está — e nada mais.`,
+      `- Não ofereça, não insinue e não prometa nenhuma outra opção, percentual, cupom ou etapa.`,
+      `- Só cite valores, percentuais, prazos e códigos que estejam nos dados abaixo. Nunca invente prazo, valor, política ou código.`,
+    ] : [
+      `- Você executa SOMENTE a ação abaixo. Não mencione, não insinue e não prometa nenhuma outra opção, percentual, cupom ou etapa — nem "se não aceitar, podemos…".`,
+      `- Você NUNCA confirma reembolso, troca, reenvio ou cancelamento como fato consumado. Você OFERECE e PERGUNTA se o cliente aceita; quem confirma depois é o lojista.`,
+      `- Só cite valores, percentuais e códigos que estejam nos dados abaixo. Nunca invente prazo, valor, política ou código.`,
+      `- Não escreva "aprovado", "confirmado", "já está em andamento", "enviaremos", "o dinheiro chegará".`,
+    ]),
     ``,
     `AÇÃO DESTA RESPOSTA — ${fase.titulo}:`,
     fase.instrucao,
@@ -820,9 +889,11 @@ export function validarEndereco(texto) {
 /* ------------------------------------------------------------------ */
 
 /** O texto pode sair nesta fase? (ação, percentuais, cupons e linguagem de confirmação) */
-export function conferirTextoDaFase(faseId, texto, loja) {
-  const v = validarProposta(faseId, { acao_proposta: faseId, resposta: texto }, loja)
+export function conferirTextoDaFase(faseId, texto, loja, an = null) {
+  const v = validarProposta(faseId, { acao_proposta: faseId, resposta: texto }, loja, an)
   if (!v.ok) return v
+  // só a fase de confirmação (depois do clique do dono) pode falar de fato consumado
+  if (FASES[faseId]?.confirmacao) return { ok: true, motivo: null }
   const indevida = confirmacaoIndevida(texto)
   if (indevida) return { ok: false, motivo: `o texto confirma ${indevida} como fato consumado — a oferta tem de ser apresentada como pergunta` }
   return { ok: true, motivo: null }

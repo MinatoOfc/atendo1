@@ -12,7 +12,7 @@ import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, ex
 import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
   horarioMinimoEnvio, promptClassificar, promptEscrever, FASES, JORNADAS, PERCENTUAIS_CUPOM,
-  faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta,
+  faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
@@ -246,7 +246,7 @@ function visao(wsId) {
     resumosDiarios: estado.resumosDiarios ?? [],
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
     // catálogo do modo novo: a conversa mostra fase, oferta e próximos passos por ele
-    fasesNovo: Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta, instrucao: f.instrucao }])),
+    fasesNovo: Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta, instrucao: f.instrucao, confirmacao: !!f.confirmacao, decisaoDono: FASES_HUMANAS.has(id) }])),
     jornadasNovo: JORNADAS,
     gastosIA: estado.gastosIA ?? {},
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
@@ -541,7 +541,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   const an = t.atendimentoNovo
   const falhar = motivo => { if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo); return { ok: false, motivo } }
 
-  const cup = cupomDaFase(faseId, loja)
+  const cup = cupomDaFase(faseId, loja, an)
   if (cup.precisa && !cup.codigo) {
     return falhar(`A etapa "${FASES[faseId].titulo}" usa o cupom de ${cup.pct}%, que não está cadastrado nesta loja (Configurações → Loja)`)
   }
@@ -555,7 +555,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   if (e.r.acao_proposta && e.r.acao_proposta !== faseId) {
     return falhar(`A IA saiu da etapa permitida: propôs "${e.r.acao_proposta}" em vez de "${faseId}"`)
   }
-  const v = conferirTextoDaFase(faseId, e.r.resposta, loja)
+  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an)
   if (!v.ok) return falhar(`A IA saiu da etapa permitida: ${v.motivo}`)
 
   t.rascunho = String(e.r.resposta || '').trim()
@@ -1003,7 +1003,7 @@ setInterval(async () => {
         const anL = t.atendimentoNovo
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL)
+          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL)
           const dif = v.ok ? diferencaDeOferta(anL.rascunhoGerado ?? t.rascunho, t.rascunho, lojaL) : null
           if (!v.ok || dif) {
             t.status = 'humano'
@@ -2295,6 +2295,29 @@ app.post('/api/tickets/:id/novo/foto', async (req, res) => {
   salvar(req.wsId); ok(req, res)
 })
 
+// Aceite aprovado pelo lojista: gera a CONFIRMAÇÃO ao cliente (mapa, seção 9):
+// troca/reenvio com prazo e endereço; reembolso/cancelamento com 3 a 14 dias
+// para o dinheiro voltar; cupom com o código. É a única fase em que a IA pode
+// falar de fato consumado — e só depois deste clique. O rascunho passa pela
+// Aprovações e pelos mesmos bloqueios (só os números da opção aceita).
+app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  const an = t.atendimentoNovo
+  if (!an || an.aguardando !== 'humano' || !an.acaoAceita) {
+    return res.status(400).json({ erro: 'Esta conversa não tem aceite aguardando a sua aprovação.', state: visao(req.wsId) })
+  }
+  const faseId = faseDeConfirmacao(an.acaoAceita)
+  if (!faseId) {
+    return res.status(400).json({ erro: `Não há confirmação prevista para "${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}".`, state: visao(req.wsId) })
+  }
+  an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: `Aceite aprovado pelo lojista: ${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}`, em: new Date().toISOString(), evento: 'aceite_aprovado' })
+  an.aguardando = null
+  const r = await prepararRascunhoNovo(req.estado, t, { faseId, resumo: 'aceite aprovado pelo lojista' })
+  salvar(req.wsId)
+  if (!r.ok) return res.status(400).json({ erro: r.motivo, state: visao(req.wsId) })
+  ok(req, res)
+})
+
 // Central operacional: correção manual da classificação (jornada/fase). Fica
 // registrada com quem, quando, a anterior e a justificativa. NÃO mexe no estado
 // do motor: o envio automático continua preso às ligações do mapa.
@@ -2350,7 +2373,7 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
       const e = await escreverNovo(p.system, p.user)
       if (e.erro) return res.status(400).json({ erro: e.erro, state: visao(req.wsId) })
       somarCusto(t, e.custo); registrarGasto(req.estado, t.lojaId, e.custo)
-      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR)
+      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR)
       if (!v.ok || (e.r.acao_proposta && e.r.acao_proposta !== faseId)) {
         return res.status(400).json({ erro: `A IA saiu da etapa permitida: ${v.motivo || 'ação diferente da permitida'}. Tente de novo.`, state: visao(req.wsId) })
       }
@@ -2466,7 +2489,7 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     if (anA?.transicaoPendente?.para) {
       const faseId = anA.transicaoPendente.para
       const lojaA = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-      const v = conferirTextoDaFase(faseId, textoFinal, lojaA)
+      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA)
       if (!v.ok) {
         return res.status(400).json({ erro: `Não enviado — o texto não pertence à etapa "${FASES[faseId].titulo}": ${v.motivo}.`, state: visao(req.wsId) })
       }

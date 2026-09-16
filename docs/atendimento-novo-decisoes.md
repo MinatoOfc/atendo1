@@ -81,6 +81,36 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     3). Os rascunhos ficam em Aprovações com o horário mínimo da cadência
     registrado; ligar o automático é uma chave por loja.
 
+16. **Frete de devolução (5.9, revisão pelo mapa em 16/09)**: na fase de 50% a
+    IA informa o custo estimado do frete de retorno só em dinheiro (25% do
+    valor pago, calculado pelo servidor) — nunca a porcentagem. Texto que cite
+    "25%" nessa fase é derrubado pelo bloqueio.
+
+17. **Marcado como entregue e não recebido (7.2)**: passados os 2 dias sem o
+    pacote, o próximo passo é reenvio + 35% (a seta do mapa entra no post-it
+    de 35%, não no de 20%; o texto digitado da especificação dizia 20%).
+
+18. **Confirmação depois do aceite (seção 9 / nota do mapa)**: todo aceite — e
+    o 100% ou cancelamento decididos pelo dono — fica com o dono. Ao clicar
+    "Aprovar e gerar a confirmação" na conversa, o servidor escreve a fase de
+    confirmação correspondente: troca/reenvio → aprovado, frete expresso no
+    prazo da oferta aceita (5 a 11 ou 4 a 11 dias) e o endereço confirmado
+    repetido; reembolso e cancelamento → aprovado, valor em dinheiro e 3 a 14
+    dias para o dinheiro voltar ao método de pagamento (se questionar, a loja
+    segue a lei do país); cupom → código liberado. É a única fase em que a IA
+    pode falar de fato consumado, e mesmo ali só com os números da opção
+    aceita. O rascunho passa pela Aprovações; enviado, o caso fecha e qualquer
+    mensagem nova vai ao dono.
+
+19. **Relatório**: continua 100% manual. O popup "Adicionar ao relatório"
+    mostra uma sugestão de linha a partir da opção aceita (ex.: "REENVIO —
+    ENDEREÇO: …", "REEMBOLSO 40%"), que só entra se o dono clicar.
+
+20. **Seção 6 → 8.2 (mantido, a confirmar com o dono)**: quem só perguntou o
+    status e está atrasado já recebe desculpas + cupom de 25%; se recusar, a
+    seta do mapa entra em 8.2 no mesmo post-it de desculpas + 25%. O motor não
+    repete essa mensagem e segue para o cupom de 40% (decisão 6).
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.
