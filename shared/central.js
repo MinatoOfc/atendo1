@@ -250,7 +250,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       lojaId: t.lojaId ?? 'loja1', lojaNome: loja?.nome ?? (t.lojaId ?? 'loja1'), moeda: loja?.moeda ?? 'EUR',
       cliente: t.nome || t.de,
       pedidoNumero: pedido ? String(pedido.numero).replace('#', '') : null, pedidoValor: valor,
-      produto, produtoIdentificado: !!(an?.produtosAfetados?.length) || (!!pedido && (pedido.itens?.length ?? 0) === 1),
+      produto, produtoIdentificado: !!(an?.produtosAfetados?.length), // só o que o cliente informou; pedido de item único não conta
       motivo, jornada,
       faseAtual, faseTitulo: titulo(faseAtual) ?? (origem === 'confirmada' ? 'Triagem' : 'sem fase'),
       faseConfirmada, faseInferida, faseManual, origem, trilha,

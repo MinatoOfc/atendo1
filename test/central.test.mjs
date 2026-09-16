@@ -257,3 +257,16 @@ test('relação com a fase: recusou tudo e chegou ao 100% conta como avançou (o
   const m = metricasPorFase([r], fases)
   assert.equal(m.reemb_100.passaram, 0); assert.equal(m.reemb_70.avancaram, 1)
 })
+
+test('"produto identificado" só quando o cliente informou: pedido de item único NÃO conta como identificado', () => {
+  // t9: caso do modo novo em pedido de UM item, sem produto informado pelo cliente
+  const p9 = ped('p9', 'l1', 60, dia(1), 'c9@x.de')
+  const t9 = tk('t9', 'c9@x.de', 'l1', { atendimentoNovo: an('coleta', ['coleta'], { produtosAfetados: [], proximaAposColeta: 'qual_troca' }) })
+  const t9b = tk('t9b', 'c9b@x.de', 'l1', { atendimentoNovo: an('qual_troca', ['qual_troca']) }) // produto informado ('Polo (M)')
+  const p9b = ped('p9b', 'l1', 60, dia(1), 'c9b@x.de')
+  assert.equal(p9.itens.length, 1)
+  const r = calcularCentral({ tickets: [t9, t9b], pedidos: [p9, p9b], lojas, fases, agora })
+  const c9 = r.registros.find(x => x.pedidoId === 'p9'); const c9b = r.registros.find(x => x.pedidoId === 'p9b')
+  assert.equal(c9.produtoIdentificado, false, 'item único não é prova: o cliente não informou'); assert.equal(c9b.produtoIdentificado, true)
+  assert.equal(r.indicadores[0].pctProdutoIdentificado, 50)
+})

@@ -43,7 +43,7 @@ estado.lojas = [
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -130,7 +130,8 @@ globalThis.fetch = async (url, opts) => {
   }
   if (req.includes('intencao')) {
     const c = fila.shift() ?? { intencao: 'outro' }
-    return responder({ intencao: 'outro', motivo: 'nenhum', produtos: [], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false, ...c })
+    // o cliente informa o produto (regra do mapa); um teste passa produtos: [] para exercitar a trava
+    return responder({ intencao: 'outro', motivo: 'nenhum', produtos: ['Polo Premium'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false, ...c })
   }
   if (req.includes('acao_proposta')) {
     ultimoPromptEscrita = sys
@@ -888,6 +889,21 @@ test('ponta a ponta — marcado como entregue: aguardar 2 dias (48 h reais do en
   assert.equal(ext.porItem['delivery-delivered-reship20'].passaram, 2); assert.equal(ext.porItem['delivery-delivered-reship35'].passaram, 1)
   assert.equal(ext.porItem['delivery-refused-20'].passaram, 0); assert.equal(ext.porItem['delivery-returned-reship20'].passaram, 0); assert.equal(ext.porItem['delivery-refused-35'].passaram, 0)
   await api('/api/pipeline-link', { acao: 'revogar' })
+})
+
+test('ponta a ponta — produto obrigatório: pedido de um item sem o cliente dizer o produto → só a coleta (sem oferta), depois retoma a fase pendente', async () => {
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: [], resumo: 'qualidade ruim, quero reembolso' }, { de: 'c44@web.de', nome: 'C44', corpo: 'Schlechte Qualität, Geld zurück.', lojaId: 'loja1' })
+  assert.equal(t.status, 'aprovacao'); assert.equal(an(t).transicaoPendente.para, 'coleta', 'pedido de UM item: ainda assim só a coleta'); assert.deepEqual(an(t).transicaoPendente.faltando, ['produtos'])
+  assert.deepEqual(an(t).produtosAfetados, [], 'nada preenchido pelo catálogo'); assert.equal(an(t).proximaAposColeta, 'qual_troca', 'fase pendente gravada')
+  assert.match(t.rascunho, /Welchen Artikel/); for (const proibido of [/Umtausch/, /DANKE15/, /Gutschein/, /erstatt/i, /d+%/]) assert.doesNotMatch(t.rascunho, proibido, 'a coleta não traz oferta')
+  let r = await comEnvio('ok', () => aprovar(t)); assert.equal(r.status, 200, r.erro); t = await ticket(t.id); assert.equal(an(t).etapa, 'coleta')
+  // o cliente informa o produto: retoma exatamente a fase pendente (a primeira oferta da qualidade), sem pular
+  t = await cliente({ intencao: 'informa', produtos: ['Polo Premium'], resumo: 'é o polo' }, { de: 'c44@web.de', corpo: 'Das Polo Premium.', ticketId: t.id })
+  assert.equal(an(t).transicaoPendente.para, 'qual_troca'); assert.deepEqual(an(t).produtosAfetados, ['Polo Premium (Schwarz / L)']); assert.equal(an(t).produtosInformados, true)
+  r = await comEnvio('ok', () => aprovar(t)); assert.equal(r.status, 200, r.erro); t = await ticket(t.id)
+  assert.equal(an(t).historicoEtapas.map(h => h.para).join(' → '), 'coleta → qual_troca')
+  // a Central/página externa: produto identificado só a partir da informação do cliente
+  const c = await api('/api/central', null, 'GET'); const reg = c.registros.find(x => x.pedidoNumero === '44'); assert.equal(reg.produtoIdentificado, true)
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

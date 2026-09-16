@@ -2,13 +2,12 @@
 // Sobe o servidor de ensaio determinístico (test/visual/servidor.mjs) e compara a
 // implementação com as capturas de referência em test/visual/capturas, mascarando
 // só números e datas dinâmicos; diferença máxima de 0,5% dos pixels.
-import { defineConfig, chromium } from '@playwright/test'
-import { existsSync } from 'node:fs'
+import { defineConfig } from '@playwright/test'
 
-// Navegador: o Chromium empacotado do Playwright quando estiver instalado; senão o
-// Google Chrome da máquina (canal "chrome"). PW_CANAL força um canal específico.
-const empacotado = (() => { try { return existsSync(chromium.executablePath()) } catch { return false } })()
-const canal = process.env.PW_CANAL || (empacotado ? undefined : 'chrome')
+// Navegador: as capturas de test/visual/capturas foram geradas no Google Chrome
+// (canal "chrome"), que é o padrão. PW_CANAL=chromium usa o Chromium empacotado
+// do Playwright (as capturas NÃO batem nele — só para diagnóstico).
+const canal = process.env.PW_CANAL === 'chromium' ? undefined : (process.env.PW_CANAL || 'chrome')
 
 export default defineConfig({
   testDir: 'test/visual',

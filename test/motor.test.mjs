@@ -5,7 +5,7 @@ import {
   novoEstado, decidir, confirmarTransicao, validarProposta, prazoDoPedido, somarDiasUteis,
   horarioMinimoEnvio, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
   instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados, mencionaData, ofertaIndevida, acoesDaOferta,
-  normalizarIdioma, idiomaConfiavel, definirIdioma, detectarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, mensagemEhDados,
+  normalizarIdioma, idiomaConfiavel, definirIdioma, detectarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, mensagemEhDados, casarProdutos,
 } from '../server/atendimento.js'
 
 const loja = { id: 'l1', nome: 'Von Alder', moeda: 'EUR', cupons: { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }, prazoEntrega: { min: 5, max: 12, processamento: 3 } }
@@ -15,6 +15,7 @@ const agora = Date.parse('2026-09-15T12:00:00Z')
 
 // cliente escreve → motor decide → e-mail sai → transição confirmada
 function rodada(an, cls, extra = {}) {
+  cls = { produtos: ['Polo Premium'], ...cls } // o cliente informa o produto (regra do mapa); produtos: [] testa a trava
   const r = decidir({ an, cls, pedido: 'pedido' in extra ? extra.pedido : pedido1, loja, temFoto: !!extra.temFoto, agora: extra.agora ?? agora })
   if (r.fase) confirmarTransicao(r.an, { para: r.fase, mensagem: cls.resumo ?? '', agora: extra.agora ?? agora })
   return r
@@ -177,7 +178,7 @@ test('7.2 marcado como entregue: 48 h reais do envio → 20% → 35% → 100%; r
     e = rodada(e.an, { intencao: 'informa', resumo: 'Paket ist angekommen, erhalten' }, { pedido: entregue, agora: agora + h * H }); assert.equal(e.encerrar, true, h + ' h')
   }
   // sem horário confiável do envio: não avança sozinho
-  const semHora = { ...novoEstado(), etapa: 'nr_entregue_aguardar', fluxo: 'entregue_nao_recebido', aguardando: 'cliente', historicoEtapas: [{ de: null, para: 'nr_entregue_aguardar', mensagem: '', em: 'inválido' }] }
+  const semHora = { ...novoEstado(), etapa: 'nr_entregue_aguardar', fluxo: 'entregue_nao_recebido', aguardando: 'cliente', produtosAfetados: ['Polo Premium (Marine / M)'], produtosInformados: true, historicoEtapas: [{ de: null, para: 'nr_entregue_aguardar', mensagem: '', em: 'inválido' }] }
   const h = decidir({ an: semHora, cls: { intencao: 'pede_reembolso', resumo: 'nichts' }, pedido: entregue, loja, agora: agora + 100 * H })
   assert.equal(h.fase, null); assert.match(h.humano, /horário confiável/)
   // os outros cenários de não recebido não mudam
@@ -637,4 +638,77 @@ test('mapa de fases consistente', () => {
     if (f.confirmacao) assert.ok(!f.oferta && !f.aoAceitar && !f.aoRecusar, `${id}: confirmação não oferece nem leva a lugar nenhum`)
     if (f.oferta && !['endereco'].includes(id)) assert.ok(faseDeConfirmacao(id), `${id}: toda oferta precisa de uma confirmação`)
   }
+})
+
+/* ---------- trava global de produto: "O CLIENTE TEM QUE INFORMAR QUAIS PRODUTOS SEMPRE" ---------- */
+test('produto obrigatório: pedido de um item e de vários itens exigem que o CLIENTE diga o produto; nada é preenchido pelo catálogo', () => {
+  for (const ped of [pedido1, pedido2]) {
+    const r = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'qualidade', produtos: [] }, { pedido: ped })
+    assert.equal(r.fase, 'coleta', `${ped.itens.length} item(ns): só a coleta`); assert.deepEqual(r.faltando, ['produtos'])
+    assert.deepEqual(r.an.produtosAfetados, [], 'nada preenchido pelo catálogo'); assert.equal(r.an.proximaAposColeta, 'qual_troca', 'fase pendente gravada')
+    assert.equal(r.humano, null); assert.equal(r.aceite, null)
+  }
+  // citação que não casa com item real do pedido não vira produto
+  const r = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Meias Xpto'] }, { pedido: pedido1 })
+  assert.equal(r.fase, 'coleta'); assert.deepEqual(r.an.produtosAfetados, [])
+  assert.deepEqual(casarProdutos(['Meias Xpto', 'polo premium'], pedido1), ['Polo Premium (Marine / M)'])
+})
+
+test('produto obrigatório: as oito jornadas param na coleta antes da primeira ação, e retomam exatamente a fase pendente sem salto', () => {
+  const entregue = { ...pedido1, status: 'entregue' }
+  const atrasado = { ...pedido1, despachadoEm: '2026-08-01', status: 'transito' }
+  const naoProcessado = { ...pedido1, status: 'aguardando', despachadoEm: null }
+  const cenarios = [
+    // [nome, mensagem, pedido, fase pendente gravada, fase que sai depois do produto (a pendente, ou a coleta própria dela: ajuste / foto)]
+    ['tamanho', { intencao: 'pede_reembolso', motivo: 'tamanho' }, pedido1, 'tam_troca', 'tam_ajuste'],
+    ['qualidade', { intencao: 'pede_reembolso', motivo: 'qualidade' }, pedido1, 'qual_troca', 'qual_troca'],
+    ['defeito', { intencao: 'pede_reembolso', motivo: 'defeito' }, pedido1, 'def_troca', 'def_foto'],
+    ['produto errado', { intencao: 'pede_reembolso', motivo: 'errado' }, pedido1, 'err_envio', 'err_envio'],
+    ['status / atraso', { intencao: 'pergunta_status', motivo: 'nao_recebido' }, atrasado, 'nc_atrasado_25', 'nc_atrasado_25'],
+    ['não recebido', { intencao: 'pede_reembolso', motivo: 'nao_recebido', situacaoEntrega: 'nao_chegou' }, atrasado, 'nr_reenvio_30', 'nr_reenvio_30'],
+    ['marcado como entregue', { intencao: 'pede_reembolso', motivo: 'nao_recebido' }, entregue, 'nr_entregue_aguardar', 'nr_entregue_aguardar'],
+    ['cancelamento', { intencao: 'pede_cancelamento' }, naoProcessado, 'cancel_nao_processado', null],
+  ]
+  for (const [nome, cls, ped, primeira, retomada] of cenarios) {
+    let r = rodada(novoEstado(), { ...cls, produtos: [] }, { pedido: ped })
+    assert.equal(r.fase, 'coleta', `${nome}: para na coleta`); assert.deepEqual(r.faltando, ['produtos'], nome)
+    assert.equal(r.an.proximaAposColeta, primeira, `${nome}: fase pendente = primeira ação`); assert.notEqual(r.an.aguardando, 'humano', `${nome}: nada vai ao dono`)
+    assert.equal(r.humano, null, nome); assert.equal(r.aceite, null, nome)
+    // sem produto de novo: continua na coleta (não prossegue)
+    r = rodada(r.an, { intencao: 'informa', produtos: [], resumo: 'ainda sem dizer o produto' }, { pedido: ped })
+    assert.equal(r.fase, 'coleta', `${nome}: ainda sem produto, ainda coleta`); assert.equal(r.an.proximaAposColeta, primeira, nome)
+    // o cliente informa o produto: retoma EXATAMENTE a fase pendente
+    r = rodada(r.an, { intencao: 'informa', produtos: ['polo premium'], resumo: 'é o polo' }, { pedido: ped })
+    assert.deepEqual(r.an.produtosAfetados, ['Polo Premium (Marine / M)'], nome)
+    if (primeira === 'cancel_nao_processado') { assert.equal(r.an.aguardando, 'humano', nome); assert.equal(r.an.acaoAceita, 'cancel_nao_processado', nome); assert.equal(trilha(r), 'coleta → coleta', `${nome}: cancelamento só ao dono depois do produto`) }
+    else { assert.equal(r.fase, retomada, `${nome}: retoma a fase pendente`); assert.equal(trilha(r), `coleta → coleta → ${retomada}`, `${nome}: sem repetir, adiantar ou pular`) }
+  }
+})
+
+test('produto obrigatório: reembolso de 100%, cancelamento e aceite não chegam ao dono sem produto; estado antigo sem produto para na coleta', () => {
+  // estado antigo do modo novo no 70% (produto nunca informado): a recusa NÃO vai ao dono — pede o produto e guarda o 100% como pendente
+  const antigo = { ...novoEstado(), fluxo: 'qualidade', etapa: 'reemb_70', aguardando: 'cliente', ofertaAtual: FASES.reemb_70.oferta, historicoEtapas: [{ de: 'reemb_60', para: 'reemb_70', mensagem: '', em: new Date(agora).toISOString() }] }
+  let r = rodada(antigo, { intencao: 'recusa', produtos: [], resumo: 'quero 100%' })
+  assert.equal(r.fase, 'coleta'); assert.deepEqual(r.faltando, ['produtos']); assert.notEqual(r.an.aguardando, 'humano'); assert.equal(r.humano, null); assert.equal(r.an.proximaAposColeta, 'reemb_100')
+  r = rodada(r.an, { intencao: 'informa', produtos: ['polo premium'] })
+  assert.equal(r.an.aguardando, 'humano'); assert.equal(r.an.acaoAceita, 'reemb_100'); assert.match(r.humano, /100%/)
+  // aceite de oferta sem produto: pede o produto e depois conclui o aceite (endereço), sem repetir a oferta
+  const naOferta = { ...novoEstado(), fluxo: 'tamanho', etapa: 'tam_troca', aguardando: 'cliente', ofertaAtual: FASES.tam_troca.oferta, historicoEtapas: [{ de: null, para: 'tam_troca', mensagem: '', em: new Date(agora).toISOString() }] }
+  let a = rodada(naOferta, { intencao: 'aceita', produtos: [] })
+  assert.equal(a.fase, 'coleta'); assert.equal(a.aceite, null); assert.notEqual(a.an.aguardando, 'humano'); assert.equal(a.an.proximaAposColeta, '__aceite__')
+  a = rodada(a.an, { intencao: 'informa', produtos: ['polo premium'] })
+  assert.equal(a.fase, 'endereco', 'aceite retomado: pede o endereço'); assert.equal(a.an.acaoAceita, 'tam_troca'); assert.equal(trilha(a), 'tam_troca → coleta → endereco', 'a oferta não é repetida')
+  // cancelamento de pedido não processado
+  const naoProcessado = { ...pedido1, status: 'aguardando', despachadoEm: null }
+  const c = rodada(novoEstado(), { intencao: 'pede_cancelamento', produtos: [] }, { pedido: naoProcessado })
+  assert.equal(c.fase, 'coleta'); assert.notEqual(c.an.aguardando, 'humano'); assert.equal(c.humano, null)
+})
+
+test('produto obrigatório: a mensagem de coleta nunca traz oferta, cupom, reembolso, troca ou reenvio', () => {
+  const b = (texto, re) => { const v = conferirTextoDaFase('coleta', texto, loja, novoEstado(), pedido1, { faltando: ['produtos'], idioma: 'de' }); assert.equal(v.ok, false, texto); assert.match(v.motivo, re) }
+  b('Welchen Artikel meinen Sie? Wir bieten Ihnen einen kostenlosen Umtausch an.', /troca/)
+  b('Welchen Artikel meinen Sie? Hier ein Gutschein: DANKE15.', /cupom/)
+  b('Welchen Artikel meinen Sie? Wir erstatten 40%.', /reembolso|40/)
+  b('Welchen Artikel meinen Sie? Wir senden das Paket erneut.', /reenvio/)
+  assert.equal(conferirTextoDaFase('coleta', 'Welchen Artikel aus Ihrer Bestellung meinen Sie?', loja, novoEstado(), pedido1, { faltando: ['produtos'], idioma: 'de' }).ok, true)
 })

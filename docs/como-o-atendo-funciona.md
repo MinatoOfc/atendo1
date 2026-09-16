@@ -347,6 +347,10 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   → 100%; marcado como entregue sem receber: aguardar 2 dias (48 h contadas do
   envio real do e-mail) → reenvio + 20% → reenvio + 35% → 100% com o dono);
   na fase de 50% o frete de retorno é dito só em dinheiro; cancelamento de pedido não processado (direto ao dono).
+- **Produto sempre informado pelo cliente**: nenhuma fase, oferta, aceite,
+  escalada, reembolso de 100% ou cancelamento sai sem o cliente dizer quais
+  produtos do pedido estão envolvidos — nem em pedido de um item só. Sem isso,
+  o motor manda apenas a pergunta do produto e retoma a fase pendente depois.
 - **Todo aceite vai para o dono** (troca e reenvio pedem o endereço completo
   antes). Reembolso de 100% e cancelamento também. Ao aprovar ("Aprovar e
   gerar a confirmação", no card da conversa), a IA escreve a confirmação:

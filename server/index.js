@@ -201,6 +201,30 @@ function neutralizarAutoEnvioNoPiloto() {
   }
 }
 
+/**
+ * Estados antigos do modo novo: o motor preenchia produtosAfetados sozinho quando o
+ * pedido tinha um único item. Isso viola o mapa ("o cliente tem que informar quais
+ * produtos sempre"). Em conversas ainda abertas sem a marca produtosInformados, o
+ * produto preenchido pelo catálogo é apagado — na próxima interação o motor para
+ * na coleta e pergunta o produto. Conversas já concluídas não são tocadas.
+ */
+function desfazerProdutoAutomaticoAntigo() {
+  for (const [wsId, estado] of workspaces) {
+    let mudou = false
+    for (const t of estado.tickets ?? []) {
+      const an = t.atendimentoNovo
+      if (!an || an.produtosInformados === true || !an.produtosAfetados?.length) continue
+      if (an.etapa && FASES[an.etapa]?.confirmacao) continue // caso encerrado com confirmação enviada
+      const pedido = pedidoDoTicket(estado, t)
+      if ((pedido?.itens?.length ?? 0) !== 1) { an.produtosInformados = true; continue } // vários itens: só o cliente podia ter informado
+      an.produtosAfetados = []
+      an.produtosInformados = false
+      mudou = true
+    }
+    if (mudou) { console.log(`[produto] ${wsId}: produto preenchido pelo catálogo apagado em conversas abertas — o cliente terá de informar`); salvar(wsId) }
+  }
+}
+
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
 function prontidaoModoNovo(wsId, loja) {
   const faltando = []
@@ -3080,6 +3104,7 @@ async function iniciar() {
   segredo = await db.obterSegredo()
   await carregarWorkspaces()
   neutralizarAutoEnvioNoPiloto()
+  desfazerProdutoAutomaticoAntigo()
 
   servidorHttp = app.listen(PORT, async () => {
     console.log(`atendo servidor na porta ${PORT}`)

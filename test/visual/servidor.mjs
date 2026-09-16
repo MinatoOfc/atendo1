@@ -93,5 +93,11 @@ estado.tickets[14].motivoEscalada = 'Cancelamento de pedido não processado — 
 writeFileSync(path.join(DIR, `ws-${WS}.json`), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({ segredo: 'segredo-visual-'.padEnd(64, 'x'), usuarios: [], sessoes: [] }))
 
+// o processo termina sozinho quando quem o iniciou (o Playwright / o shell) some — nunca deixa a porta aberta
+const pai = process.ppid
+setInterval(() => { try { process.kill(pai, 0) } catch { process.exit(0) } }, 1000).unref()
+process.stdin.on('end', () => process.exit(0)); process.stdin.on('close', () => process.exit(0)); process.stdin.resume()
+for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sinal, () => process.exit(0))
+
 await import('../../server/index.js')
 console.log(`[visual] servidor de ensaio em http://localhost:${process.env.PORT}${LINK}`)

@@ -284,6 +284,7 @@ export function novoEstado() {
     subfluxo: null,          // não recebido: 'status' | 'cancelamento' | 'nao_chegou' | 'recusado' | 'entregue'
     etapa: null,
     produtosAfetados: [],
+    produtosInformados: false, // true só quando o CLIENTE informou e o produto casou com um item real do pedido
     motivo: null,
     ajusteTamanho: null,
     fotoSolicitada: false,
@@ -388,7 +389,8 @@ export function casarProdutos(citados, pedido) {
       const t = norm(`${i.titulo} ${i.variante ?? ''}`)
       return t === n || t.includes(n) || n.includes(norm(i.titulo))
     })
-    const rotulo = item ? `${item.titulo}${item.variante ? ` (${item.variante})` : ''}` : String(c)
+    if (!item) continue // "o CLIENTE tem que informar quais produtos": só vale o que casa com um item real do pedido
+    const rotulo = `${item.titulo}${item.variante ? ` (${item.variante})` : ''}`
     if (!achados.includes(rotulo)) achados.push(rotulo)
   }
   return achados
@@ -503,6 +505,34 @@ export function prazoAguardarEntregue(an, agora = Date.now()) {
   return { confiavel: true, desde: new Date(desdeMs).toISOString(), ate: new Date(ateMs).toISOString(), vencido: agora >= ateMs }
 }
 
+/** O cliente ainda não informou os produtos (regra global do mapa). */
+export const semProduto = an => !(an?.produtosAfetados?.length)
+/**
+ * TRAVA GLOBAL DE PRODUTO: nenhuma fase, oferta, aceite, encaminhamento ao dono,
+ * reembolso de 100%, cancelamento ou confirmação sai enquanto o cliente não
+ * informar os produtos. Sai só a coleta perguntando o produto; a fase pendente
+ * fica em proximaAposColeta e é retomada EXATAMENTE quando o produto chegar.
+ * Pendências especiais: '__aceite__' (aceite de oferta) e '__humano__' (escalada).
+ */
+function travaProduto(saida, pendente, extra = {}) {
+  const { an } = saida
+  Object.assign(an, extra)
+  an.proximaAposColeta = pendente
+  saida.fase = 'coleta'; saida.faltando = ['produtos']; saida.humano = null; saida.aceite = null
+  return saida
+}
+/** Conclui o aceite de uma oferta (endereço ou decisão do dono) — só com produto informado. */
+function concluirAceite(saida, agora) {
+  const { an } = saida
+  const fase = FASES[an.acaoAceita]
+  if (!fase) { saida.humano = 'Aceite sem fase registrada — confira'; return saida }
+  if (fase.aoAceitar === 'endereco') return irPara(saida, 'endereco', agora)
+  an.aguardando = 'humano'
+  saida.aceite = { fase: an.acaoAceita, oferta: fase.oferta }
+  saida.humano = `Cliente aceitou "${fase.titulo}" — aprovar e confirmar`
+  return saida
+}
+
 export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora = Date.now() }) {
   const an = { ...anAntes, produtosAfetados: [...(anAntes.produtosAfetados ?? [])], historicoEtapas: [...(anAntes.historicoEtapas ?? [])] }
   const saida = { an, fase: null, faltando: [], humano: null, encerrar: false, aceite: null }
@@ -510,9 +540,10 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
   // --- dados novos trazidos pela mensagem ---
   if (cls.motivo && !an.motivo) an.motivo = cls.motivo
   if (cls.produtos?.length) {
-    for (const p of casarProdutos(cls.produtos, pedido)) if (!an.produtosAfetados.includes(p)) an.produtosAfetados.push(p)
+    for (const p of casarProdutos(cls.produtos, pedido)) { if (!an.produtosAfetados.includes(p)) an.produtosAfetados.push(p); an.produtosInformados = true }
   }
-  if (!an.produtosAfetados.length && rotulosDoPedido(pedido).length === 1) an.produtosAfetados = rotulosDoPedido(pedido)
+  // NUNCA preencher pelo catálogo do pedido: "O CLIENTE TEM QUE INFORMAR QUAIS PRODUTOS SEMPRE,
+  // NÃO PROSSEGUIR SEM ESSA INFO" — vale para pedidos de um item e de vários itens
   if (cls.ajustes?.length) {
     an.ajusteTamanho = { ...(an.ajusteTamanho ?? {}) }
     for (const a of cls.ajustes) if (a?.produto && (a.ajuste === 'pequeno' || a.ajuste === 'grande')) an.ajusteTamanho[a.produto] = a.ajuste
@@ -546,7 +577,10 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
     // sem pedido localizado não há valor, itens nem prazo: pede o número primeiro
     if (!pedido) { saida.fase = 'coleta'; saida.faltando = ['pedido']; an.proximaAposColeta = null; return saida }
     const fluxo = escolherFluxo(cls, pedido, loja, agora)
-    if (!fluxo) { saida.humano = 'Fora do mapa do atendimento novo — responda você'; return saida }
+    if (!fluxo) {
+      if (semProduto(an)) return travaProduto(saida, '__humano__', { humanoPendente: 'Fora do mapa do atendimento novo — responda você' })
+      saida.humano = 'Fora do mapa do atendimento novo — responda você'; return saida
+    }
     an.fluxo = fluxo
     // cenário do mapa dentro de "não recebido" (o mapa visual separa os caminhos)
     an.subfluxo = fluxo === 'nao_recebido_status' ? (cls.intencao === 'pergunta_status' ? 'status' : 'cancelamento')
@@ -565,6 +599,9 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
   // --- fase de coleta: o cliente respondeu o que faltava? ---
   if (an.etapa === 'coleta' || an.etapa === 'tam_ajuste' || an.etapa === 'def_foto') {
     const alvo = an.proximaAposColeta ?? faseInicialDoFluxo(an.fluxo)
+    // retoma EXATAMENTE o que ficou pendente na trava de produto (sem repetir, adiantar ou pular)
+    if (alvo === '__aceite__') { if (semProduto(an)) return travaProduto(saida, '__aceite__'); an.proximaAposColeta = undefined; return concluirAceite(saida, agora) }
+    if (alvo === '__humano__') { if (semProduto(an)) return travaProduto(saida, '__humano__'); an.proximaAposColeta = undefined; saida.humano = an.humanoPendente || 'Decida você'; an.humanoPendente = undefined; return saida }
     return irPara(saida, alvo, agora)
   }
 
@@ -579,7 +616,11 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
     // os 2 dias (48 h) contam do envio REAL do e-mail desta fase; a resposta antecipada
     // repete a fase ("o período ainda não terminou") e NÃO reinicia o relógio
     const pz = prazoAguardarEntregue(an, agora)
-    if (!pz.confiavel) { saida.humano = 'Sem horário confiável do envio de "aguardar 2 dias" — o motor não avança sozinho; decida você'; return saida }
+    if (!pz.confiavel) {
+      const msg = 'Sem horário confiável do envio de "aguardar 2 dias" — o motor não avança sozinho; decida você'
+      if (semProduto(an)) return travaProduto(saida, '__humano__', { humanoPendente: msg })
+      saida.humano = msg; return saida
+    }
     an.aguardarEntregue = { desde: pz.desde, ate: pz.ate }
     if (!pz.vencido) return irPara(saida, 'nr_entregue_aguardar', agora)
     // única saída após os 2 dias: reenvio + 20% (nenhuma mensagem leva direto ao 35%)
@@ -588,22 +629,29 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
 
   // --- resposta a uma oferta ---
   if (cls.intencao === 'aceita') {
-    if (!atual?.aoAceitar) { saida.humano = 'Cliente concordou, mas esta fase não tem oferta — confira'; return saida }
+    if (!atual?.aoAceitar) {
+      const msg = 'Cliente concordou, mas esta fase não tem oferta — confira'
+      if (semProduto(an)) return travaProduto(saida, '__humano__', { humanoPendente: msg })
+      saida.humano = msg; return saida
+    }
     an.acaoAceita = an.etapa
-    if (atual.aoAceitar === 'endereco') return irPara(saida, 'endereco', agora)
-    an.aguardando = 'humano'
-    saida.aceite = { fase: an.etapa, oferta: atual.oferta }
-    saida.humano = `Cliente aceitou "${atual.titulo}" — aprovar e confirmar`
-    return saida
+    // aceite sem produto informado: pede o produto antes e retoma o aceite depois (nada vai ao dono)
+    if (semProduto(an)) return travaProduto(saida, '__aceite__')
+    return concluirAceite(saida, agora)
   }
   if (cls.intencao === 'recusa' || cls.intencao === 'pede_reembolso' || cls.intencao === 'pede_cancelamento') {
-    if (!atual?.aoRecusar) { saida.humano = `Cliente recusou "${atual?.titulo ?? an.etapa}" e não há próxima etapa — decida você`; return saida }
+    if (!atual?.aoRecusar) {
+      const msg = `Cliente recusou "${atual?.titulo ?? an.etapa}" e não há próxima etapa — decida você`
+      if (semProduto(an)) return travaProduto(saida, '__humano__', { humanoPendente: msg })
+      saida.humano = msg; return saida
+    }
     return irPara(saida, atual.aoRecusar, agora)
   }
   if (cls.intencao === 'informa' || cls.intencao === 'pergunta_status') {
     // informou algo sem aceitar nem recusar: repete a MESMA fase (não avança)
     return irPara(saida, an.etapa, agora)
   }
+  if (semProduto(an)) return travaProduto(saida, '__humano__', { humanoPendente: 'Não deu para entender se o cliente aceitou ou recusou — responda você' })
   saida.humano = 'Não deu para entender se o cliente aceitou ou recusou — responda você'
   return saida
 }
@@ -612,6 +660,8 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
 function irPara(saida, alvo, agora) {
   const { an } = saida
   if (!alvo) { saida.humano = 'Sem próxima etapa definida'; return saida }
+  // TRAVA GLOBAL: antes de fase, oferta, endereço, 100% ou cancelamento — sem produto, só a coleta
+  if (semProduto(an) && alvo !== 'coleta') return travaProduto(saida, alvo)
   if (FASES_HUMANAS.has(alvo)) {
     an.aguardando = 'humano'
     an.acaoAceita = alvo // ação pendente da decisão do dono (a confirmação parte dela)

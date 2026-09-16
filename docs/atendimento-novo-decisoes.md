@@ -400,6 +400,31 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     comportamento; cores ignoradas de propósito) e capturas lado a lado em
     test/visual/saida.
 
+41. **Produto informado pelo cliente é obrigatório em TODO o motor (16/09)**: o
+    mapa diz "o cliente tem que informar quais produtos sempre, não prosseguir
+    sem essa info". O motor não preenche mais o produto pelo catálogo do pedido
+    (pedido de um item não é o cliente informando) e só aceita citação que casa
+    com um item real do pedido (`casarProdutos`). Trava global antes de qualquer
+    saída (`travaProduto`, em `irPara` e nos demais desfechos de `decidir`):
+    sem produto, nenhuma fase, oferta, aceite, endereço, escalada ao dono,
+    reembolso de 100%, cancelamento ou confirmação sai — só a coleta perguntando
+    o produto, com a fase pendente gravada em `proximaAposColeta` (`__aceite__`
+    e `__humano__` para aceite e escalada). Quando o produto chega, o motor
+    retoma exatamente a pendência, sem repetir, adiantar ou pular. Vale para as
+    oito jornadas e para estados antigos: no arranque, conversas abertas do
+    modo novo sem a marca `produtosInformados` e com pedido de item único têm o
+    produto preenchido automaticamente apagado e voltam a pedir o produto. Na
+    Central, "produto identificado" passa a ser só o informado pelo cliente.
+    Testes: motor (um item, vários itens, oito jornadas, 100% e cancelamento
+    sem produto, aceite sem produto, retomada exata, coleta sem oferta),
+    Central (item único não identifica) e ponta a ponta pelo pipeline real.
+
+42. **Testes visuais: navegador padrão = Chrome**: as capturas base foram geradas
+    no Google Chrome, então `npm run test:visual` usa o canal "chrome" por
+    padrão; `PW_CANAL=chromium` força o Chromium empacotado (só diagnóstico —
+    as capturas não batem nele). O servidor de ensaio (porta 8798) encerra
+    sozinho quando o processo que o iniciou termina.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o
