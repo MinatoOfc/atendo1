@@ -4,6 +4,7 @@
 // historicoEtapas), duas lojas em moedas diferentes (EUR e GBP) e um token
 // fixo do link externo. Nada aqui toca o workspace real.
 import { mkdtempSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -55,7 +56,7 @@ const caso = (n, lojaId, seg, trilha, { motivo = 'qualidade', humano = false, pe
     resposta: 'Antwort der Loja.', respondidoEm: new Date(base + trilha.length * 26 * 3600_000).toISOString(),
     ...(humano ? { motivoEscalada: 'Cliente recusou todas as alternativas — reembolso de 100% é decisão sua' } : {}),
     atendimentoNovo: {
-      versao: 1, fluxo: FLUXO[seg], subfluxo: SUB[seg] ?? null, etapa: trilha[trilha.length - 1] ?? null, produtosAfetados: [PRODUTOS[n % 4][0]], motivo,
+      versao: 1, fluxo: FLUXO[seg], subfluxo: SUB[seg] ?? null, etapa: trilha[trilha.length - 1] ?? null, produtosAfetados: [PRODUTOS[n % 4][0]], produtosInformados: true, motivo,
       historicoEtapas, transicaoPendente: null, aguardando: humano ? 'humano' : 'cliente', acaoAceita: humano ? 'reemb_100' : null, idioma,
       ...(percentual != null ? { percentualAceito: percentual } : {}),
     },
@@ -93,11 +94,17 @@ estado.tickets[14].motivoEscalada = 'Cancelamento de pedido não processado — 
 writeFileSync(path.join(DIR, `ws-${WS}.json`), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({ segredo: 'segredo-visual-'.padEnd(64, 'x'), usuarios: [], sessoes: [] }))
 
-// o processo termina sozinho quando quem o iniciou (o Playwright / o shell) some — nunca deixa a porta aberta
-const pai = process.ppid
-setInterval(() => { try { process.kill(pai, 0) } catch { process.exit(0) } }, 1000).unref()
-process.stdin.on('end', () => process.exit(0)); process.stdin.on('close', () => process.exit(0)); process.stdin.resume()
-for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sinal, () => process.exit(0))
-
-await import('../../server/index.js')
+const servidor = await import('../../server/index.js')
 console.log(`[visual] servidor de ensaio em http://localhost:${process.env.PORT}${LINK}`)
+
+// Encerramento DETERMINÍSTICO: o globalTeardown do Playwright chama POST /encerrar na
+// porta de controle; o servidor fecha o HTTP (8798) e sai com código 0. Rede de
+// segurança: vida máxima de 20 minutos e sinais do sistema — nunca fica escutando.
+const CONTROLE = Number(process.env.PORT_VISUAL_CONTROLE || 8796)
+async function sair() { try { await servidor.encerrar() } catch {} process.exit(0) }
+createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/encerrar') { res.end('encerrando'); setTimeout(sair, 20) } else { res.statusCode = 404; res.end() }
+}).listen(CONTROLE, '127.0.0.1')
+setTimeout(sair, 20 * 60_000).unref()
+for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sinal, sair)
+process.stdin.on('end', sair); process.stdin.on('close', sair); try { process.stdin.resume() } catch {}

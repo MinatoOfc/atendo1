@@ -425,6 +425,31 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     as capturas não batem nele). O servidor de ensaio (porta 8798) encerra
     sozinho quando o processo que o iniciou termina.
 
+43. **Prova de produto: regra única e trava em todas as saídas (16/09)**:
+    `produtoFoiInformado(an)` (shared/produto.js) = `produtosInformados === true`
+    E lista não vazia — texto em `produtosAfetados` sem a marca não é prova. É a
+    fonte para o motor (`semProduto`), a Central (`produtoIdentificado`) e o
+    servidor. A trava vale antes de `aguardando = "humano"`, do processamento
+    do endereço, de `/api/tickets/:id/novo/confirmar`, de `/api/tickets/:id/aprovar`,
+    do envio automático, de `prepararRascunhoNovo` (todo rascunho que não seja a
+    coleta vira a pergunta do produto, com a fase pendente preservada) e do
+    envio real (`enviarResposta`). Casos antigos sem prova são migrados no
+    arranque (`migrarCasosSemProduto`) e no laço de envio: a fase ou decisão
+    pendente é preservada em `proximaAposColeta` (`__aceite__`, `__humano__`
+    ou a fase), o rascunho antigo de oferta é removido com o agendamento, o caso
+    sai da mão do dono (nada é confirmado nem aprovado) e só a pergunta do
+    produto é gerada (`gerarColetasDeProduto`). Estados com vários itens NÃO
+    são marcados automaticamente como informados: sem prova, perguntam de novo.
+    Com o produto informado, `retomarPendencia` retoma exatamente o que estava
+    pendente. Testes de rota no pipeline real: rascunho antigo (manual e
+    automático), aceite aguardando o dono, fase endereço, vários itens sem marca,
+    escalada antiga, Central não identificando, retomada exata.
+
+44. **Testes visuais encerram sozinhos**: o servidor de ensaio abre uma porta de
+    controle (8796) e o `globalTeardown` do Playwright chama `POST /encerrar`;
+    o servidor fecha o HTTP e sai com código 0, e o teardown espera a porta 8798
+    fechar. Rede de segurança: vida máxima de 20 min e sinais do sistema.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

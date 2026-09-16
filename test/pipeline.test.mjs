@@ -43,7 +43,7 @@ estado.lojas = [
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -56,7 +56,18 @@ const LIMITE = {
 }
 const antigo = (id, extra) => ({ id, nome: 'Antigo ' + id, de: `${id}@web.de`, assunto: 'Bestellung #' + id.replace(/\D/g, ''), corpo: 'Hallo', data: '2026-07-01T10:00:00.000Z', lido: true, origem: 'cliente', status: 'enviado', idioma: 'de', lojaId: 'loja2', historico: [], ...extra })
 const VAZAMENTO = ['fulano@example.com', '+55 11 99999-9999', '99999-9999', 'Rua das Acácias', '01310-100', 'https://exemplo.test', 'exemplo.test', 'Fulano da Silva Sauro', 'Ich möchte mein Geld zurück', 'Sie erreichen mich', 'Hauptstraße 5', 'Deutschland', 'ik wil mijn geld terug']
+const semProva = (id, n, lojaId, an, extra = {}) => ({ id, nome: 'Cliente ' + n, de: `c${n}@web.de`, assunto: 'Bestellung #' + n, corpo: 'Nachricht.', data: '2026-09-01T10:00:00.000Z', lido: true, origem: 'cliente', categoria: 'reembolso', status: 'enviado', idioma: 'de', lojaId, historico: [], motor: 'novo', resposta: 'Antwort.', respondidoEm: '2026-09-01T12:00:00.000Z',
+  atendimentoNovo: { versao: 1, fluxo: 'qualidade', produtosAfetados: ['Polo Premium (Schwarz / L)'], produtosInformados: false, motivo: 'qualidade', historicoEtapas: [], transicaoPendente: null, aguardando: 'cliente', acaoAceita: null, idioma: 'de', ...an }, ...extra })
+const hist = ids => ids.map((para, i) => ({ de: ids[i - 1] ?? null, para, mensagem: 'x', em: new Date(Date.parse('2026-09-01T10:00:00Z') + i * 3600e3).toISOString() }))
+const TEXTO40 = 'Hallo! Wir bieten eine Rückerstattung von 40% (40,00 €) an. Möchten Sie das annehmen?'
 estado.tickets = [
+  // casos ANTIGOS do modo novo com texto em produtosAfetados mas SEM prova de que o cliente informou (produtosInformados: false)
+  semProva('sp1', 51, 'loja1', { etapa: 'reemb_25', historicoEtapas: hist(['qual_troca', 'qual_cupom_35', 'reemb_25']), aguardando: 'envio', transicaoPendente: { para: 'reemb_40', mensagem: 'nein', faltando: [] }, rascunhoGerado: TEXTO40 }, { status: 'aprovacao', rascunho: TEXTO40, geradoPorIA: true }),
+  semProva('sp2', 52, 'loja1', { etapa: 'reemb_25', historicoEtapas: hist(['qual_troca', 'qual_cupom_35', 'reemb_25']), aguardando: 'humano', acaoAceita: 'reemb_25' }, { status: 'humano', motivoEscalada: 'Cliente aceitou "Reembolso de 25% sem devolução" — aprovar e confirmar' }),
+  semProva('sp3', 53, 'loja1', { fluxo: 'tamanho', motivo: 'tamanho', etapa: 'endereco', historicoEtapas: hist(['tam_ajuste', 'tam_troca', 'endereco']), acaoAceita: 'tam_troca', ajusteTamanho: { 'Polo Premium (Schwarz / L)': 'pequeno' } }),
+  semProva('sp4', 54, 'loja1', { etapa: 'qual_troca', historicoEtapas: hist(['qual_troca']) }), // pedido com DOIS itens, sem marca de origem
+  semProva('sp5', 55, 'loja1', { etapa: 'qual_troca', historicoEtapas: hist(['qual_troca']), aguardando: 'humano' }, { status: 'humano', motivoEscalada: 'Não deu para entender se o cliente aceitou ou recusou — responda você' }),
+  semProva('sp6', 56, 'loja3', { etapa: 'reemb_25', historicoEtapas: hist(['qual_troca', 'qual_cupom_35', 'reemb_25']), aguardando: 'envio', transicaoPendente: { para: 'reemb_40', mensagem: 'nein', faltando: [] }, rascunhoGerado: TEXTO40 }, { status: 'aprovacao', rascunho: TEXTO40, geradoPorIA: true, enviaEm: Date.now() - 1000 }), // envio AUTOMÁTICO vencido
   // modo novo com produtos "afetados" e endereço contaminados de propósito (nada pode vazar)
   { id: 'n909', nome: 'Fulano da Silva Sauro', de: 'c16@web.de', assunto: 'Bestellung #16', corpo: 'ik wil mijn geld terug, Hauptstraße 5, 10115 Berlin, Deutschland', data: '2026-08-01T10:00:00.000Z', lido: true, origem: 'cliente', categoria: 'reembolso', status: 'aprovacao', idioma: 'nl', lojaId: 'loja1', historico: [], motor: 'novo',
     atendimentoNovo: { versao: 1, fluxo: 'qualidade', etapa: 'qual_troca', produtosAfetados: ['Polo do Fulano da Silva Sauro fulano@example.com +55 11 99999-9999'], motivo: 'qualidade', ajusteTamanho: null, fotoSolicitada: false, fotoRecebida: false, fotoValidada: null, ofertaAtual: null, ofertaEnviadaEm: '2026-08-01T12:00:00.000Z', aguardando: 'cliente', acaoAceita: null, enderecoInformado: 'Rua das Acácias 123, CEP 01310-100', enderecoConfirmado: 'Rua das Acácias 123, 01310-100 São Paulo', historicoEtapas: [{ de: null, para: 'qual_troca', mensagem: 'ik wil mijn geld terug', em: '2026-08-01T12:00:00.000Z' }], transicaoPendente: null, idioma: 'nl' } },
@@ -904,6 +915,54 @@ test('ponta a ponta — produto obrigatório: pedido de um item sem o cliente di
   assert.equal(an(t).historicoEtapas.map(h => h.para).join(' → '), 'coleta → qual_troca')
   // a Central/página externa: produto identificado só a partir da informação do cliente
   const c = await api('/api/central', null, 'GET'); const reg = c.registros.find(x => x.pedidoNumero === '44'); assert.equal(reg.produtoIdentificado, true)
+})
+
+test('rotas — casos antigos sem prova de produto: oferta antiga não sai (manual nem automático), dono não confirma, endereço espera, vários itens também; Central não identifica; depois retoma exato', async () => {
+  const st = (await api('/api/state', null, 'GET')).state
+  const g = id => st.tickets.find(t => t.id === id)
+  const dentro = (t, re) => assert.match(t.rascunho || '', re)
+  // sp1: rascunho antigo de 40% → removido; no lugar, a pergunta do produto; o 40% fica preservado como pendência
+  const s1 = g('sp1'); assert.equal(an(s1).transicaoPendente.para, 'coleta'); assert.deepEqual(an(s1).transicaoPendente.faltando, ['produtos']); assert.equal(an(s1).proximaAposColeta, 'reemb_40'); assert.equal(an(s1).etapa, 'reemb_25'); assert.equal(s1.enviaEm, undefined)
+  dentro(s1, /Welchen Artikel/); assert.doesNotMatch(s1.rascunho, /40|%|erstatt/i)
+  // aprovação manual do texto de oferta antigo → 400 (só a pergunta do produto pode sair)
+  let r = await api('/api/tickets/sp1/aprovar', { texto: TEXTO40, origem: 'manual', confirmarAlteracao: true }); assert.equal(r.status, 400); assert.match(r.erro, /produto|etapa/i)
+  // sp6: rascunho antigo com envio AUTOMÁTICO vencido → não saiu; agendamento removido; etapa e histórico intactos
+  // (a loja3 é automática e o envio está liberado neste arquivo: no máximo a PERGUNTA DO PRODUTO saiu sozinha — nunca a oferta)
+  const s6 = g('sp6'); const seq6 = an(s6).historicoEtapas.map(h => h.para)
+  assert.deepEqual(seq6.slice(0, 3), ['qual_troca', 'qual_cupom_35', 'reemb_25']); assert.ok(!seq6.includes('reemb_40'), 'a oferta antiga de 40% nunca saiu'); assert.ok(seq6.length === 3 || (seq6.length === 4 && seq6[3] === 'coleta'), 'só a pergunta do produto pode ter saído: ' + seq6.join(' → '))
+  assert.notEqual(an(s6).transicaoPendente?.para, 'reemb_40'); assert.equal(an(s6).proximaAposColeta, 'reemb_40'); assert.doesNotMatch((s6.rascunho || '') + ' ' + (s6.resposta || ''), /40%/); assert.match((s6.rascunho || '') + ' ' + (s6.resposta || ''), /Welchen Artikel/)
+  // sp2: aceite aguardando o dono sem prova → o dono não confirma; o caso volta ao cliente com o aceite preservado
+  r = await api('/api/tickets/sp2/novo/confirmar'); assert.equal(r.status, 400); assert.equal(r.produtoNaoInformado, true)
+  const s2 = g('sp2'); assert.equal(s2.status, 'aprovacao'); assert.notEqual(an(s2).aguardando, 'humano', 'saiu da mão do dono'); assert.equal(an(s2).proximaAposColeta, '__aceite__'); assert.equal(an(s2).acaoAceita, 'reemb_25'); assert.equal(an(s2).transicaoPendente.para, 'coleta'); dentro(s2, /Welchen Artikel/)
+  // sp5: escalada antiga sem prova → pergunta do produto; o motivo fica preservado
+  const s5 = g('sp5'); assert.equal(s5.status, 'aprovacao'); assert.equal(an(s5).proximaAposColeta, '__humano__'); assert.match(an(s5).humanoPendente, /Não deu para entender/); assert.equal(an(s5).transicaoPendente.para, 'coleta')
+  // Central: nenhum deles tem produto identificado (texto sem prova não conta; vários itens também não)
+  let c = await api('/api/central', null, 'GET')
+  for (const n of ['51', '52', '53', '54', '55', '56']) assert.equal(c.registros.find(x => x.pedidoNumero === n).produtoIdentificado, false, 'pedido ' + n)
+  // sp3: o endereço chega sem prova de produto → não processa o endereço; pede o produto e guarda 'endereco'
+  const t3 = await cliente({ intencao: 'informa', produtos: [], endereco: 'Hauptstr. 5, 10115 Berlin', resumo: 'endereço' }, { de: 'c53@web.de', corpo: 'Hauptstr. 5, 10115 Berlin', ticketId: 'sp3' })
+  assert.equal(an(t3).transicaoPendente.para, 'coleta'); assert.deepEqual(an(t3).transicaoPendente.faltando, ['produtos']); assert.equal(an(t3).proximaAposColeta, 'endereco'); assert.notEqual(an(t3).aguardando, 'humano'); assert.equal(t3.status, 'aprovacao')
+  // sp4: pedido com dois itens e texto sem marca → a recusa não avança para o cupom; pede o produto
+  const t4 = await cliente({ intencao: 'recusa', produtos: [], resumo: 'nein' }, { de: 'c54@web.de', corpo: 'Nein.', ticketId: 'sp4' })
+  assert.equal(an(t4).transicaoPendente.para, 'coleta'); assert.equal(an(t4).proximaAposColeta, 'qual_cupom_35'); assert.doesNotMatch(t4.rascunho, /KEEP35|35%/)
+  // retomada exata — sp1: a pergunta sai, o cliente informa o produto, e o 40% (não o 25 de novo, não o 50) é retomado
+  r = await comEnvio('ok', () => aprovar(s1)); assert.equal(r.status, 200, r.erro)
+  let t1 = await cliente({ intencao: 'informa', produtos: ['Polo Premium'], resumo: 'polo' }, { de: 'c51@web.de', corpo: 'Das Polo Premium.', ticketId: 'sp1' })
+  assert.equal(an(t1).transicaoPendente.para, 'reemb_40'); assert.equal(an(t1).produtosInformados, true); assert.match(t1.rascunho, /40%/)
+  r = await comEnvio('ok', () => aprovar(t1)); assert.equal(r.status, 200, r.erro); t1 = await ticket('sp1')
+  assert.equal(an(t1).historicoEtapas.map(h => h.para).join(' → '), 'qual_troca → qual_cupom_35 → reemb_25 → coleta → reemb_40', 'sem repetir, adiantar ou pular')
+  // retomada exata — sp2: produto informado → o aceite do 25% volta ao dono e agora a confirmação sai
+  r = await comEnvio('ok', () => aprovar(s2)); assert.equal(r.status, 200, r.erro)
+  let t2 = await cliente({ intencao: 'informa', produtos: ['Polo Premium'], resumo: 'polo' }, { de: 'c52@web.de', corpo: 'Das Polo Premium.', ticketId: 'sp2' })
+  assert.equal(t2.status, 'humano'); assert.equal(an(t2).aguardando, 'humano'); assert.equal(an(t2).acaoAceita, 'reemb_25'); assert.match(t2.motivoEscalada, /aceitou/)
+  r = await api('/api/tickets/sp2/novo/confirmar'); assert.equal(r.status, 200, r.erro); t2 = await ticket('sp2'); assert.equal(an(t2).transicaoPendente.para, 'conf_reembolso')
+  // retomada exata — sp5: produto informado → volta ao dono com o mesmo motivo
+  r = await comEnvio('ok', () => aprovar(s5)); assert.equal(r.status, 200, r.erro)
+  const t5 = await cliente({ intencao: 'informa', produtos: ['Polo Premium'], resumo: 'polo' }, { de: 'c55@web.de', corpo: 'Das Polo Premium.', ticketId: 'sp5' })
+  assert.equal(t5.status, 'humano'); assert.match(t5.motivoEscalada, /Não deu para entender/)
+  // Central agora identifica só os que informaram
+  c = await api('/api/central', null, 'GET')
+  for (const [n, esperado] of [['51', true], ['52', true], ['55', true], ['53', false], ['54', false], ['56', false]]) assert.equal(c.registros.find(x => x.pedidoNumero === n).produtoIdentificado, esperado, 'pedido ' + n)
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

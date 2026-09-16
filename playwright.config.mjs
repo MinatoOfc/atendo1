@@ -20,6 +20,8 @@ export default defineConfig({
   reporter: [['list']],
   expect: { toHaveScreenshot: { maxDiffPixelRatio: 0.005, animations: 'disabled', caret: 'hide', scale: 'css' } },
   use: { headless: true, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', deviceScaleFactor: 1, colorScheme: 'dark', viewport: { width: 1280, height: 720 } },
+  // o servidor de ensaio é encerrado pelo globalTeardown (POST /encerrar na porta de controle 8796) — nunca fica escutando
+  globalTeardown: './test/visual/encerrar.mjs',
   webServer: { command: 'node test/visual/servidor.mjs', port: 8798, reuseExistingServer: false, timeout: 60_000 },
   projects: [{ name: 'chromium', use: { browserName: 'chromium', ...(canal ? { channel: canal } : {}) } }],
 })

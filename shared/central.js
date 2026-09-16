@@ -26,6 +26,8 @@
  *    inferido é "inferido", nunca "efetivado".
  */
 
+import { produtoFoiInformado } from './produto.js'
+
 export const DESFECHOS = ['em_aberto', 'reembolso', 'troca', 'reenvio', 'cupom', 'cancelamento', 'encerrado']
 const CATEGORIAS_MOTIVO = ['qualidade', 'tamanho', 'defeito', 'nao_recebeu', 'atraso', 'errado', 'nao_gostou', 'alergia', 'arrependimento', 'outro', 'nao_informado']
 
@@ -250,7 +252,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       lojaId: t.lojaId ?? 'loja1', lojaNome: loja?.nome ?? (t.lojaId ?? 'loja1'), moeda: loja?.moeda ?? 'EUR',
       cliente: t.nome || t.de,
       pedidoNumero: pedido ? String(pedido.numero).replace('#', '') : null, pedidoValor: valor,
-      produto, produtoIdentificado: !!(an?.produtosAfetados?.length), // só o que o cliente informou; pedido de item único não conta
+      produto, produtoIdentificado: produtoFoiInformado(an), // regra única (shared/produto.js): só com a marca do cliente
       motivo, jornada,
       faseAtual, faseTitulo: titulo(faseAtual) ?? (origem === 'confirmada' ? 'Triagem' : 'sem fase'),
       faseConfirmada, faseInferida, faseManual, origem, trilha,

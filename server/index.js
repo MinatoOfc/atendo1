@@ -17,6 +17,7 @@ import {
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
+import { produtoFoiInformado } from '../shared/produto.js'
 import { paginaPipeline, dadosPipeline, filtrosDaConsulta } from './pipeline-externo.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
@@ -208,21 +209,70 @@ function neutralizarAutoEnvioNoPiloto() {
  * produto preenchido pelo catálogo é apagado — na próxima interação o motor para
  * na coleta e pergunta o produto. Conversas já concluídas não são tocadas.
  */
-function desfazerProdutoAutomaticoAntigo() {
-  for (const [wsId, estado] of workspaces) {
-    let mudou = false
-    for (const t of estado.tickets ?? []) {
-      const an = t.atendimentoNovo
-      if (!an || an.produtosInformados === true || !an.produtosAfetados?.length) continue
-      if (an.etapa && FASES[an.etapa]?.confirmacao) continue // caso encerrado com confirmação enviada
-      const pedido = pedidoDoTicket(estado, t)
-      if ((pedido?.itens?.length ?? 0) !== 1) { an.produtosInformados = true; continue } // vários itens: só o cliente podia ter informado
-      an.produtosAfetados = []
-      an.produtosInformados = false
-      mudou = true
-    }
-    if (mudou) { console.log(`[produto] ${wsId}: produto preenchido pelo catálogo apagado em conversas abertas — o cliente terá de informar`); salvar(wsId) }
+/** Caso aberto do modo novo sem prova de produto (regra única em shared/produto.js). */
+const casoSemProvaDeProduto = t => {
+  const an = t.atendimentoNovo
+  if (!an || produtoFoiInformado(an)) return false
+  if (!['inbox', 'aprovacao', 'humano', 'enviado'].includes(t.status)) return false
+  if (an.etapa && FASES[an.etapa]?.confirmacao) return false // confirmação já enviada: caso fechado
+  return true
+}
+/**
+ * Migra UM caso antigo sem prova de produto: preserva a fase ou decisão pendente,
+ * bloqueia e remove o agendamento de qualquer oferta antiga, tira o caso da mão do
+ * dono (nada pode ser confirmado nem aprovado) e marca que só a pergunta do
+ * produto pode sair. Devolve true se algo mudou.
+ */
+function migrarCasoSemProduto(t) {
+  const an = t.atendimentoNovo
+  if (!casoSemProvaDeProduto(t)) return false
+  an.produtosInformados = false // sem prova de origem, texto em produtosAfetados não vale — inclusive com vários itens
+  let mudou = false
+  const pendenteDoDraft = an.transicaoPendente?.para && an.transicaoPendente.para !== 'coleta' ? an.transicaoPendente.para : null
+  if (pendenteDoDraft) {
+    // rascunho de oferta/confirmação antigo: nunca sai — a fase fica preservada como pendência
+    an.proximaAposColeta = pendenteDoDraft; an.aguardandoProduto = true
+    an.transicaoPendente = null; an.rascunhoGerado = undefined
+    t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined
+    an.pedirProduto = true; mudou = true
+  } else if (an.aguardando === 'humano') {
+    // decisão pendente antiga (aceite, 100%, cancelamento, escalada): preservada; o dono não decide sem produto
+    an.proximaAposColeta = an.aguardandoComprovacao ? '__humano__' : an.acaoAceita ? (FASES_HUMANAS.has(an.acaoAceita) ? an.acaoAceita : '__aceite__') : '__humano__'
+    an.humanoPendente = t.motivoEscalada || an.humanoPendente || 'Caso estava com você — decida'
+    an.aguardandoProduto = true; an.aguardando = 'cliente'
+    t.enviaEm = undefined; t.decisaoPendente = undefined
+    an.pedirProduto = true; mudou = true
+  } else if (an.transicaoPendente?.para === 'coleta' && !(an.transicaoPendente.faltando ?? []).includes('produtos')) {
+    // coleta antiga de outra coisa (motivo/ajuste): passa a pedir o produto junto, preservando o alvo
+    an.transicaoPendente.faltando = ['produtos', ...(an.transicaoPendente.faltando ?? [])]
+    an.aguardandoProduto = true; t.enviaEm = undefined; an.pedirProduto = true; mudou = true
   }
+  // caso só aguardando a resposta do cliente: a trava do motor pede o produto na próxima mensagem
+  return mudou
+}
+function migrarCasosSemProduto() {
+  for (const [wsId, estado] of workspaces) {
+    let n = 0
+    for (const t of estado.tickets ?? []) if (migrarCasoSemProduto(t)) n++
+    if (n) { console.log(`[produto] ${wsId}: ${n} caso(s) antigo(s) sem prova de produto — oferta/decisão preservada, só a pergunta do produto pode sair`); salvar(wsId) }
+  }
+}
+/** Gera a pergunta do produto (fase coleta) nos casos migrados; nada mais sai deles. */
+async function gerarColetasDeProduto(wsId) {
+  const estado = workspaces.get(wsId); if (!estado) return
+  let mudou = false
+  for (const t of estado.tickets ?? []) {
+    const an = t.atendimentoNovo
+    if (!an?.pedirProduto) continue
+    try {
+      if (!(an.transicaoPendente?.para === 'coleta' && (an.transicaoPendente.faltando ?? []).includes('produtos'))) {
+        await prepararRascunhoNovo(estado, t, { faseId: 'coleta', faltando: ['produtos'], resumo: 'produto não informado pelo cliente — a regra do mapa exige perguntar antes de continuar', aoFalhar: 'manter' })
+      }
+      t.status = 'aprovacao'; t.motivoEscalada = undefined; t.motivoTraducao = undefined
+    } catch (e) { console.error('[produto] coleta não gerada', t.id, e.message) }
+    an.pedirProduto = false; mudou = true
+  }
+  if (mudou) salvar(wsId)
 }
 
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
@@ -640,6 +690,14 @@ function mandarParaHumanoNovo(t, motivo) {
  * aoFalhar: 'humano' manda o caso para o lojista; 'manter' não mexe no ticket.
  */
 async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo = '', instrucaoEstilo = null, aoFalhar = 'humano' }) {
+  // TRAVA GLOBAL DE PRODUTO em toda saída de rascunho: sem prova, só a coleta do produto pode nascer
+  if (faseId !== 'coleta' && !produtoFoiInformado(t.atendimentoNovo)) {
+    const anP = t.atendimentoNovo
+    anP.aguardandoProduto = true; anP.proximaAposColeta = faseId
+    faseId = 'coleta'; faltando = ['produtos']; resumo = 'produto não informado pelo cliente'
+  } else if (faseId === 'coleta' && !produtoFoiInformado(t.atendimentoNovo) && !faltando.includes('produtos')) {
+    faltando = ['produtos', ...faltando]
+  }
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
   const an = t.atendimentoNovo
@@ -1091,6 +1149,9 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   if (modoNovo && !canal) {
     throw new Error(`A loja desta conversa (${lojaId}) não tem caixa de e-mail configurada — no modo novo a resposta só sai pela conta da própria loja, nunca pela de outra`)
   }
+  if (modoNovo && an.transicaoPendente.para !== 'coleta' && !produtoFoiInformado(an)) {
+    throw new Error('Produto não informado pelo cliente — nenhuma oferta, confirmação ou decisão sai antes; só a pergunta do produto')
+  }
   // canal simulado só nos testes (ATENDO_SIMULAR=1): 'ok' envia, 'falha' quebra
   const simulado = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_SMTP_FAKE : null
   let enviou = false
@@ -1148,6 +1209,13 @@ agendar(async () => {
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
           if (anL.aprovacaoObrigatoria) { t.enviaEm = undefined; continue }
+          // sem prova de produto: o rascunho antigo de oferta nunca sai — vira a pergunta do produto
+          if (anL.transicaoPendente.para !== 'coleta' && !produtoFoiInformado(anL)) {
+            t.enviaEm = undefined
+            if (migrarCasoSemProduto(t)) await gerarColetasDeProduto(wsId)
+            anL.envioBloqueado = 'produto não informado pelo cliente — só a pergunta do produto pode sair'
+            continue
+          }
           // reconfere a liberação no momento do envio: bloqueado → fica em Aprovações, sem enviar
           if (!envioAutomaticoLiberado()) { t.enviaEm = undefined; anL.envioBloqueado = 'envio automático bloqueado durante o piloto'; continue }
           const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t), { faltando: anL.transicaoPendente.faltando ?? [], idioma: anL.idioma ?? null })
@@ -2521,6 +2589,7 @@ app.post('/api/tickets/:id/novo/foto', async (req, res) => {
   if (!an || an.fluxo !== 'defeito' || !an.aguardandoComprovacao || !an.fotoRecebida || an.aguardando !== 'humano' || an.fotoValidada === true) {
     return res.status(400).json({ erro: 'A validação de foto só existe no fluxo de defeito, com uma imagem aguardando a sua comprovação.', state: visao(req.wsId) })
   }
+  if (!produtoFoiInformado(an)) return res.status(400).json({ erro: 'Produto não informado pelo cliente — a validação da foto espera ele dizer qual produto.', produtoNaoInformado: true, state: visao(req.wsId) })
   const alvo = an.proximaAposColeta
   if (!alvo || !FASES[alvo]) {
     return res.status(400).json({ erro: 'Esta conversa não tem uma próxima etapa esperando a comprovação da imagem.', state: visao(req.wsId) })
@@ -2554,6 +2623,9 @@ app.post('/api/tickets/:id/novo/foto', async (req, res) => {
 app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   const an = t.atendimentoNovo
+  if (an && !produtoFoiInformado(an)) {
+    return res.status(400).json({ erro: 'Produto não informado pelo cliente — nada pode ser confirmado antes de ele dizer qual produto (regra do mapa).', produtoNaoInformado: true, state: visao(req.wsId) })
+  }
   if (!an || an.aguardando !== 'humano' || !an.acaoAceita) {
     return res.status(400).json({ erro: 'Esta conversa não tem aceite aguardando a sua aprovação.', state: visao(req.wsId) })
   }
@@ -2855,6 +2927,11 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     const anA = t.atendimentoNovo
     if (anA?.transicaoPendente?.para) {
       const faseId = anA.transicaoPendente.para
+      if (faseId !== 'coleta' && !produtoFoiInformado(anA)) {
+        // rascunho de oferta/confirmação sem prova de produto (caso antigo): não sai — vira a pergunta do produto
+        if (migrarCasoSemProduto(t)) await gerarColetasDeProduto(req.wsId)
+        return res.status(400).json({ erro: 'Não enviado — o cliente ainda não informou qual produto; só a pergunta do produto pode sair (regra do mapa).', produtoNaoInformado: true, state: visao(req.wsId) })
+      }
       const lojaA = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
       const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t), { faltando: anA.transicaoPendente.faltando ?? [], idioma: anA.idioma ?? null })
       if (!v.ok) {
@@ -3104,10 +3181,12 @@ async function iniciar() {
   segredo = await db.obterSegredo()
   await carregarWorkspaces()
   neutralizarAutoEnvioNoPiloto()
-  desfazerProdutoAutomaticoAntigo()
+  migrarCasosSemProduto()
 
   servidorHttp = app.listen(PORT, async () => {
     console.log(`atendo servidor na porta ${PORT}`)
+    // casos migrados sem prova de produto: a única saída é a pergunta do produto
+    for (const wsId of workspaces.keys()) await gerarColetasDeProduto(wsId)
     console.log(`  banco:   ${db.usandoPostgres ? 'PostgreSQL' : 'arquivos locais (defina DATABASE_URL para usar o Postgres)'}`)
     console.log(`  workspaces: ${workspaces.size}`)
     console.log(`  oauth shopify: ${oauthDisponivel ? 'pronto' : 'não configurado'}`)

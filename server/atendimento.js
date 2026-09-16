@@ -13,6 +13,7 @@
  */
 
 import { confirmacaoIndevida } from './logic.js'
+import { produtoFoiInformado } from '../shared/produto.js'
 
 export const MODOS_ATENDIMENTO = {
   classico: 'Clássico — o atendimento atual',
@@ -505,8 +506,8 @@ export function prazoAguardarEntregue(an, agora = Date.now()) {
   return { confiavel: true, desde: new Date(desdeMs).toISOString(), ate: new Date(ateMs).toISOString(), vencido: agora >= ateMs }
 }
 
-/** O cliente ainda não informou os produtos (regra global do mapa). */
-export const semProduto = an => !(an?.produtosAfetados?.length)
+/** O cliente ainda não informou os produtos (regra global do mapa) — fonte única: shared/produto.js. */
+export const semProduto = an => !produtoFoiInformado(an)
 /**
  * TRAVA GLOBAL DE PRODUTO: nenhuma fase, oferta, aceite, encaminhamento ao dono,
  * reembolso de 100%, cancelamento ou confirmação sai enquanto o cliente não
@@ -517,9 +518,20 @@ export const semProduto = an => !(an?.produtosAfetados?.length)
 function travaProduto(saida, pendente, extra = {}) {
   const { an } = saida
   Object.assign(an, extra)
+  an.aguardandoProduto = true // pendência de produto: nada sai além da coleta até o cliente informar
   an.proximaAposColeta = pendente
   saida.fase = 'coleta'; saida.faltando = ['produtos']; saida.humano = null; saida.aceite = null
   return saida
+}
+/** Retoma EXATAMENTE a pendência guardada pela trava de produto (fase, aceite ou escalada). */
+function retomarPendencia(saida, agora) {
+  const { an } = saida
+  const alvo = an.proximaAposColeta
+  an.aguardandoProduto = false
+  an.proximaAposColeta = undefined
+  if (alvo === '__aceite__') return concluirAceite(saida, agora)
+  if (alvo === '__humano__') { saida.humano = an.humanoPendente || 'Decida você'; an.humanoPendente = undefined; an.aguardando = 'humano'; return saida }
+  return irPara(saida, alvo, agora)
 }
 /** Conclui o aceite de uma oferta (endereço ou decisão do dono) — só com produto informado. */
 function concluirAceite(saida, agora) {
@@ -552,14 +564,27 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
   // endereço se acumula entre mensagens; só vira "confirmado" depois de validado
   if (cls.endereco) an.enderecoInformado = [an.enderecoInformado, cls.endereco].filter(Boolean).join('\n')
 
-  // --- já está com o dono: não mexe ---
-  if (an.aguardando === 'humano') { saida.humano = 'Caso já está com você — o cliente escreveu de novo'; return saida }
+  // --- pendência de produto (trava ou caso antigo migrado): sem prova, só a coleta; com prova, retoma a pendência exata ---
+  if (an.aguardandoProduto && an.proximaAposColeta && pedido) {
+    if (semProduto(an)) return travaProduto(saida, an.proximaAposColeta)
+    return retomarPendencia(saida, agora)
+  }
+
+  // --- já está com o dono: não mexe (mas sem produto informado, nem o dono decide: pede o produto antes) ---
+  if (an.aguardando === 'humano') {
+    if (semProduto(an) && pedido) {
+      const pendente = an.aguardandoComprovacao ? '__humano__' : an.acaoAceita ? (FASES_HUMANAS.has(an.acaoAceita) ? an.acaoAceita : '__aceite__') : '__humano__'
+      return travaProduto(saida, pendente, { aguardando: 'cliente', humanoPendente: an.humanoPendente || 'Caso estava com você — decida' })
+    }
+    saida.humano = 'Caso já está com você — o cliente escreveu de novo'; return saida
+  }
 
   // --- agradecimento puro: encerra ---
   if (cls.intencao === 'agradece') { saida.encerrar = true; return saida }
 
-  // --- aguardando endereço (aceite de troca/reenvio) ---
+  // --- aguardando endereço (aceite de troca/reenvio) — sem produto informado, o endereço espera ---
   if (an.etapa === 'endereco') {
+    if (semProduto(an) && pedido) return travaProduto(saida, 'endereco')
     const v = validarEndereco(an.enderecoInformado)
     if (v.ok) {
       an.enderecoConfirmado = v.normalizado
