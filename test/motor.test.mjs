@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {
   novoEstado, decidir, confirmarTransicao, validarProposta, prazoDoPedido, somarDiasUteis,
   horarioMinimoEnvio, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
-  instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados,
+  instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados, mencionaData,
 } from '../server/atendimento.js'
 
 const loja = { id: 'l1', nome: 'Von Alder', moeda: 'EUR', cupons: { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }, prazoEntrega: { min: 5, max: 12, processamento: 3 } }
@@ -267,6 +267,80 @@ test('valor em dinheiro obrigatório, ação composta completa, percentual do cu
   v = conferir('conf_cancelamento', 'Ihre Bestellung wurde storniert, 3 bis 14 Tage.', anCancel)
   assert.equal(v.ok, false); assert.match(v.motivo, /falta o valor em dinheiro/)
   assert.equal(conferir('conf_cancelamento', 'Ihre Bestellung wurde storniert; 70,00 € kommen in 3 bis 14 Tagen zurück.', anCancel).ok, true)
+})
+
+test('fases sem oferta e ofertas compostas: nenhuma informação do mapa pode ser omitida', () => {
+  const an0 = novoEstado()
+  const c = (fase, txt, extra = {}) => conferirTextoDaFase(fase, txt, loja, extra.an ?? an0, 'pedido' in extra ? extra.pedido : pedido1, { faltando: extra.faltando })
+  const bloqueia = (fase, txt, re, extra) => { const v = c(fase, txt, extra); assert.equal(v.ok, false, `${fase} devia bloquear: ${txt}`); assert.match(v.motivo, re) }
+  const passa = (fase, txt, extra) => { const v = c(fase, txt, extra); assert.equal(v.ok, true, `${fase} devia passar: ${txt} — ${v.motivo}`) }
+
+  // conf_troca: endereço confirmado por inteiro + prazo exato da troca
+  const anTroca = { ...novoEstado(), acaoAceita: 'tam_troca', enderecoConfirmado: 'Hauptstraße 5, 10115 Berlin' }
+  bloqueia('conf_troca', 'Ihr Umtausch ist bestätigt und kommt in 5 bis 11 Tagen an.', /endereço/, { an: anTroca })
+  bloqueia('conf_troca', 'Ihr Umtausch ist bestätigt und geht an Hauptstraße 5, 10115 Berlin.', /prazo obrigatório/, { an: anTroca })
+  bloqueia('conf_troca', 'Ihr Umtausch (5 bis 11 Tage) geht an Hauptstraße 5.', /faltou "10115 berlin"/, { an: anTroca })
+  passa('conf_troca', 'Ihr Umtausch ist bestätigt und kommt in 5 bis 11 Tagen an: Hauptstraße 5, 10115 Berlin.', { an: anTroca })
+  bloqueia('conf_troca', 'Umtausch bestätigt, 5 bis 11 Tage.', /não há endereço confirmado/, { an: { ...novoEstado(), acaoAceita: 'tam_troca' } })
+  // conf_troca com reembolso parcial (troca + 20%): percentual, valor (14,00) e 3 a 14 dias
+  const anTroca20 = { ...anTroca, acaoAceita: 'troca_20' }
+  bloqueia('conf_troca', 'Umtausch bestätigt (5 bis 11 Tage) plus Rückerstattung von 20% (14,00 €): Hauptstraße 5, 10115 Berlin.', /3 a 14 dias/, { an: anTroca20 })
+  bloqueia('conf_troca', 'Umtausch bestätigt (5 bis 11 Tage) plus Rückerstattung von 20% in 3 bis 14 Tagen: Hauptstraße 5, 10115 Berlin.', /falta o valor em dinheiro/, { an: anTroca20 })
+  passa('conf_troca', 'Umtausch bestätigt (5 bis 11 Tage) plus Rückerstattung von 20% (14,00 €) in 3 bis 14 Tagen: Hauptstraße 5, 10115 Berlin.', { an: anTroca20 })
+  // conf_troca com cupom (qual_troca): a palavra cupom, o código e o percentual
+  const anTrocaCupom = { ...anTroca, acaoAceita: 'qual_troca' }
+  bloqueia('conf_troca', 'Umtausch bestätigt (4 bis 11 Tage), DANKE15 (15%): Hauptstraße 5, 10115 Berlin.', /se trata de um cupom/, { an: anTrocaCupom })
+  passa('conf_troca', 'Umtausch bestätigt (4 bis 11 Tage) plus Gutschein DANKE15 (15%): Hauptstraße 5, 10115 Berlin.', { an: anTrocaCupom })
+
+  // ofertas compostas com cupom: código solto não basta
+  bloqueia('qual_troca', 'Kostenloser Umtausch, 4 bis 11 Tage, DANKE15 (15%). Ok?', /se trata de um cupom/)
+  passa('qual_troca', 'Kostenloser Umtausch, 4 bis 11 Tage, Gutschein DANKE15 (15%). Ok?')
+  bloqueia('nr_reenvio_30', 'Wir senden das Paket erneut (4 bis 11 Tage), BACK30 (30%). Ok?', /se trata de um cupom/)
+  bloqueia('nr_reenvio_30', 'Wir senden das Paket erneut, Gutschein BACK30 (30%). Ok?', /prazo obrigatório/)
+  bloqueia('nr_reenvio_30', 'Gutschein BACK30 (30%), 4 bis 11 Tage. Ok?', /"reenvio"/)
+  passa('nr_reenvio_30', 'Wir senden das Paket erneut (4 bis 11 Tage) plus Gutschein BACK30 (30%). Ok?')
+
+  // não recebido
+  bloqueia('nc_atrasado_25', 'Bitte etwas Geduld; Gutschein SORRY25 (25%).', /5 dias úteis/)
+  bloqueia('nc_atrasado_25', 'Bitte noch 5 Tage Geduld; Gutschein SORRY25 (25%).', /5 dias úteis/, undefined)
+  passa('nc_atrasado_25', 'Bitte noch maximal 5 Werktage Geduld; als Entschuldigung Gutschein SORRY25 (25%).')
+  passa('nc_atrasado_25', 'Please wait at most five more business days; coupon SORRY25 (25%).')
+  bloqueia('nr_entregue_aguardar', 'Bitte warten Sie noch etwas.', /2 dias/)
+  bloqueia('nr_entregue_aguardar', 'Bitte warten Sie noch 2 Tage.', /vizinhos/)
+  bloqueia('nr_entregue_aguardar', 'Bitte warten Sie noch 2 Tage und fragen Sie die Nachbarn; hier ein Gutschein.', /não se oferece/)
+  passa('nr_entregue_aguardar', 'Bitte warten Sie noch 2 Tage und fragen Sie bei Nachbarn oder der Rezeption nach.')
+  passa('nr_entregue_aguardar', 'Aguarde mais dois dias e verifique com vizinhos ou na portaria.')
+  // dentro do prazo: prazo + data provável do servidor (pedido1 despachado 22/08 → 28/08/2026), sem benefício
+  assert.equal(prazoDoPedido(pedido1, loja, agora).provavel, '2026-08-28')
+  bloqueia('nc_no_prazo', 'Ihre Bestellung kommt voraussichtlich am 28.08.2026 an.', /dentro do prazo/)
+  bloqueia('nc_no_prazo', 'Ihre Bestellung ist noch innerhalb der Lieferzeit.', /data provável/)
+  bloqueia('nc_no_prazo', 'Ihre Bestellung ist innerhalb der Lieferzeit, voraussichtlich am 27.08.2026.', /data provável/)
+  bloqueia('nc_no_prazo', 'Innerhalb der Lieferzeit, voraussichtlich am 28.08.2026 — als Entschuldigung ein Gutschein.', /não se oferece cupom/)
+  bloqueia('nc_no_prazo', 'Innerhalb der Lieferzeit, voraussichtlich am 28.08.2026.', /sem pedido/, { pedido: null })
+  passa('nc_no_prazo', 'Ihre Bestellung ist innerhalb der Lieferzeit und kommt voraussichtlich am 28.08.2026 an.')
+  passa('nc_no_prazo', 'Still within the delivery window; expected around August 28.')
+  passa('nc_no_prazo', 'Seu pedido está dentro do prazo; previsão de chegada em 28 de agosto de 2026.')
+  assert.equal(mencionaData('le 28/08/2026', '2026-08-28'), true); assert.equal(mencionaData('28 août', '2026-08-28'), true); assert.equal(mencionaData('29.08.2026', '2026-08-28'), false)
+
+  // coleta / tamanho / foto / endereço
+  bloqueia('coleta', 'Können Sie mir mehr sagen?', /pedir o número do pedido/, { faltando: ['pedido'] })
+  passa('coleta', 'Bitte nennen Sie Ihre Bestellnummer.', { faltando: ['pedido'] })
+  bloqueia('coleta', 'Welchen Artikel meinen Sie?', /pedir o motivo/, { faltando: ['produtos', 'motivo'] })
+  passa('coleta', 'Welchen Artikel meinen Sie, und was ist der Grund?', { faltando: ['produtos', 'motivo'] })
+  bloqueia('coleta', 'Danke für die Info.', /PERGUNTAR/, { faltando: [] })
+  bloqueia('tam_ajuste', 'Ist das Polo zu klein?', /PEQUENO ou GRANDE/)
+  passa('tam_ajuste', 'Ist das Polo zu klein oder zu groß?')
+  bloqueia('def_foto', 'Bitte beschreiben Sie den Schaden.', /foto/)
+  passa('def_foto', 'Bitte senden Sie ein Foto des Schadens.')
+  bloqueia('endereco', 'Bitte senden Sie Ihre Adresse.', /COMPLETO/, { faltando: [] })
+  passa('endereco', 'Bitte senden Sie Ihre vollständige Adresse.', { faltando: [] })
+  passa('endereco', 'Bitte Straße und Hausnummer, Postleitzahl und Stadt.', { faltando: [] })
+  bloqueia('endereco', 'Bitte die Postleitzahl.', /rua e número/, { faltando: ['end_rua', 'end_cep'] })
+  passa('endereco', 'Bitte Straße, Hausnummer und Postleitzahl.', { faltando: ['end_rua', 'end_cep'] })
+  // todas as fases sem oferta têm exigência própria: nenhuma passa com texto vazio de conteúdo
+  for (const id of Object.keys(FASES).filter(id => !FASES[id].oferta && FASES[id].instrucao && !FASES[id].confirmacao)) {
+    assert.equal(c(id, 'Vielen Dank für Ihre Nachricht.', { faltando: ['pedido'] }).ok, false, `${id}: texto vazio de conteúdo não pode passar`)
+  }
 })
 
 test('confirmação: só depois do aceite; fato consumado só ali e só com os números da opção aceita; depois, mensagem nova vai ao dono', () => {

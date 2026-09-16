@@ -177,6 +177,22 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     "registrado"; encerramento sem reembolso não entra em nada. O cenário
     hipotético usa os mesmos efetivados.
 
+30. **Fases sem oferta também têm conteúdo obrigatório (16/09)**: o bloqueio
+    positivo confere cada fase do mapa, não só as que têm oferta —
+    `coleta` pede cada item que falta (pedido, produtos, motivo,
+    pequeno/grande, foto, rua/CEP/cidade); `tam_ajuste` pergunta pequeno E
+    grande; `def_foto` pede a foto; `endereco` pede o endereço completo (ou
+    só os componentes que faltam); `nc_no_prazo` diz que está dentro do prazo,
+    cita a data provável calculada pelo servidor (qualquer formato usual) e não
+    oferece benefício; `nr_entregue_aguardar` pede mais 2 dias e a checagem
+    com vizinhos/portaria; `nc_atrasado_25` exige "mais 5 dias úteis" além do
+    cupom; `conf_troca` repete o endereço confirmado por inteiro, o prazo
+    exato da troca/reenvio e, se houver, percentual + valor + 3 a 14 dias e
+    cupom com a palavra, o código e o percentual. Em toda oferta com cupom a
+    palavra "cupom" (Gutschein/coupon) é obrigatória — código solto não basta.
+    O prompt entrega esses dados à IA (data provável, 2 dias, 5 dias úteis,
+    endereço a repetir).
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.

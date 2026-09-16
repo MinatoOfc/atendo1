@@ -581,7 +581,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   if (e.r.acao_proposta && e.r.acao_proposta !== faseId) {
     return falhar(`A IA saiu da etapa permitida: propôs "${e.r.acao_proposta}" em vez de "${faseId}"`)
   }
-  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an, pedido)
+  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an, pedido, { faltando })
   if (!v.ok) return falhar(`A IA saiu da etapa permitida: ${v.motivo}`)
 
   t.rascunho = String(e.r.resposta || '').trim()
@@ -1037,7 +1037,7 @@ agendar(async () => {
         const anL = t.atendimentoNovo
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t))
+          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t), { faltando: anL.transicaoPendente.faltando ?? [] })
           const dif = v.ok ? diferencaDeOferta(anL.rascunhoGerado ?? t.rascunho, t.rascunho, lojaL) : null
           if (!v.ok || dif) {
             t.status = 'humano'
@@ -2429,7 +2429,7 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
       const e = await escreverNovo(p.system, p.user)
       if (e.erro) return res.status(400).json({ erro: e.erro, state: visao(req.wsId) })
       somarCusto(t, e.custo); registrarGasto(req.estado, t.lojaId, e.custo)
-      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t))
+      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t), { faltando: anR.transicaoPendente.faltando ?? [] })
       if (!v.ok || (e.r.acao_proposta && e.r.acao_proposta !== faseId)) {
         return res.status(400).json({ erro: `A IA saiu da etapa permitida: ${v.motivo || 'ação diferente da permitida'}. Tente de novo.`, state: visao(req.wsId) })
       }
@@ -2545,7 +2545,7 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     if (anA?.transicaoPendente?.para) {
       const faseId = anA.transicaoPendente.para
       const lojaA = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t))
+      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t), { faltando: anA.transicaoPendente.faltando ?? [] })
       if (!v.ok) {
         return res.status(400).json({ erro: `Não enviado — o texto não pertence à etapa "${FASES[faseId].titulo}": ${v.motivo}.`, state: visao(req.wsId) })
       }

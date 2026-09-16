@@ -810,6 +810,14 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
     else if (faseId === 'def_foto') dados.push(`A imagem que o cliente mandou não serviu como comprovação. Peça ${lista}.`)
     else dados.push(`Informações que faltam: ${lista}.`)
   }
+  if (faseId === 'nc_no_prazo' && pedido) {
+    const pz = prazoDoPedido(pedido, loja, agora)
+    dados.push(`Diga claramente que o pedido está DENTRO do prazo de entrega (${pz.diasUteis}). Data provável de recebimento: ${pz.provavel} — escreva essa data por extenso ou como DD/MM/AAAA. Não ofereça cupom, reembolso, troca nem reenvio.`)
+  }
+  if (faseId === 'nr_entregue_aguardar') dados.push('Peça que aguarde mais 2 dias e que verifique com vizinhos ou na portaria. Não ofereça nada.')
+  if (faseId === 'nc_atrasado_25') dados.push('Peça que aguarde no máximo mais 5 dias úteis (diga "5 dias úteis").')
+  if (conf && an.enderecoConfirmado) dados.push('Repita o endereço de entrega confirmado EXATAMENTE como está acima.')
+  if (cupom.precisa) dados.push('Diga que é um CUPOM (Gutschein / coupon / código de desconto), com o código e o percentual.')
 
   const system = [
     `Você é o atendimento ao cliente da loja "${loja?.nome ?? config?.nomeLoja ?? 'loja'}", um e-commerce de roupas.`,
@@ -951,13 +959,108 @@ export function codigosCitados(texto) {
   return [...out]
 }
 
+/* ---- exigências das fases SEM oferta: nada do mapa pode ser omitido ---- */
+
+const semAcento = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+
+const RE_PALAVRAS = {
+  pedido: /pedido|encomenda|bestell|order|commande|ordine|n[úu]mero|nummer|number|num[ée]ro/i,
+  produtos: /produto|artikel|product|produit|prodotto|art[ií]culo|\bitem/i,
+  motivo: /motivo|grund|reason|raison|ragione|\bwhy\b|warum|por\s?qu[eê]|pourquoi|perch[ée]/i,
+  pequeno: /pequen|klein|small|tight|petit|piccol|\bkrap|\beng\b|apertad/i,
+  grande: /grand|gro[ßs]|large|\bbig\b|\bweit|groot|ampi|folgad/i,
+  foto: /foto|photo|bild|picture|image|imagem|immagine|afbeelding/i,
+  end_rua: /\brua\b|stra(?:ß|ss)e|street|\brue\b|calle|\bvia\b|straat|hausnummer|n[úu]mero|number|nummer/i,
+  end_cep: /\bcep\b|postleitzahl|\bplz\b|postal|\bzip\b|postcode|c[óo]digo postal/i,
+  end_cidade: /cidade|stadt|\bcity\b|ville|ciudad|citt[àa]|plaats|\bort\b|localidade/i,
+  endereco: /endere[çc]o|adresse|address|indirizzo|direcci[óo]n|\badres\b/i,
+  completo: /complet|vollst[äa]ndig|volledig|inteir|enti[er]/i,
+  prazo: /prazo|frist|lieferzeit|zeitraum|zeitfenster|delivery (?:time|window|period)|d[ée]lai|plazo|termine|levertijd|within|innerhalb|dentro d[oe]|on time|p[üu]nktlich|im rahmen/i,
+  vizinhos: /vizinh|nachbar|neighbo|voisin|vecin|vicin|\bburen\b|portaria|hausmeister|concierge|reception|rezeption|portier|porteir|conserje|portineria|lobby|mailroom|poststelle/i,
+}
+const NOMES_FALTA = {
+  pedido: 'o número do pedido', produtos: 'quais produtos estão envolvidos', motivo: 'o motivo', ajuste: 'se ficou pequeno ou grande',
+  end_rua: 'rua e número', end_cep: 'código postal', end_cidade: 'cidade', foto_melhor: 'outra foto',
+}
+const NUM_DIAS = { 2: 'dois|duas|zwei|two|deux|dos|due|twee', 5: 'cinco|f[üu]nf|five|cinq|cinque|vijf' }
+const RE_DIAS = '(?:dias?\\s*[úu]teis|werktage?n?|business days?|working days?|jours? ouvr[ée]s?|d[ií]as? h[áa]biles|giorni lavorativi|werkdagen|dias?|tage?n?|days?|jours?|d[ií]as?|giorn[oi]|dagen)'
+const RE_DIAS_UTEIS = '(?:dias?\\s*[úu]teis|werktage?n?|business days?|working days?|jours? ouvr[ée]s?|d[ií]as? h[áa]biles|giorni lavorativi|werkdagen)'
+const EXTRA = '(?:weitere?n?\\s+|more\\s+|mais\\s+|de plus\\s+|m[áa]s\\s+|altri\\s+|extra\\s+|noch\\s+)?'
+/** "mais 2 dias", "2 weitere Tage", "two more days"… */
+export const mencionaDias = (texto, n) => new RegExp(`\\b(?:${n}|${NUM_DIAS[n]})\\s*${EXTRA}${RE_DIAS}`, 'i').test(texto)
+/** "5 dias úteis", "fünf Werktage", "5 business days"… */
+export const mencionaDiasUteis = (texto, n) => new RegExp(`\\b(?:${n}|${NUM_DIAS[n]})\\s*${EXTRA}${RE_DIAS_UTEIS}`, 'i').test(texto)
+
+const MESES = ['jan|gen|ene', 'feb|fev', 'mar|marz|mrz', 'apr|abr|avr', 'mai|may|mag', 'jun|giu|juin', 'jul|lug|juil', 'aug|ago|aout', 'sep|set', 'okt|oct|out|ott', 'nov', 'dez|dec|dic']
+/** A data ISO aparece no texto em algum formato usual (28/08/2026, 28.08.2026, 28 de agosto, August 28…)? */
+export function mencionaData(texto, iso) {
+  const [y, m, d] = String(iso || '').split('-')
+  if (!y || !m || !d) return false
+  const dn = String(Number(d)); const mn = String(Number(m))
+  const s = semAcento(texto)
+  const nomes = MESES[Number(m) - 1]
+  const padroes = [
+    `${y}-${m}-${d}`, `\\b${d}\\.${m}\\.${y}`, `\\b${dn}\\.${mn}\\.${y}`, `\\b${d}/${m}/${y}`, `\\b${dn}/${mn}/${y}`, `\\b${m}/${d}/${y}`, `\\b${d}-${m}-${y}`,
+    `\\b${dn}(?:\\.|º|°|st|nd|rd|th)?\\s*(?:de\\s+|di\\s+|du\\s+|of\\s+)?(?:${nomes})`,
+    `(?:${nomes})[a-z]*\\.?\\s+(?:the\\s+)?${dn}\\b`,
+  ]
+  return padroes.some(p => new RegExp(p, 'i').test(s))
+}
+
+/** Exigências das fases sem oferta. Devolve o motivo do bloqueio ou null. */
+function exigenciasSemOferta(faseId, s, { an, pedido, loja, faltando }) {
+  const tem = re => re.test(s)
+  switch (faseId) {
+    case 'coleta': {
+      if (!faltando?.length) return tem(/\?/) ? null : 'a coleta tem de PERGUNTAR o que falta'
+      for (const f of faltando) {
+        if (f === 'ajuste') { if (!tem(RE_PALAVRAS.pequeno) || !tem(RE_PALAVRAS.grande)) return 'falta perguntar se ficou pequeno ou grande'; continue }
+        const re = RE_PALAVRAS[f === 'foto_melhor' ? 'foto' : f]
+        if (re && !tem(re)) return `falta pedir ${NOMES_FALTA[f] ?? f}`
+      }
+      return null
+    }
+    case 'tam_ajuste':
+      return tem(RE_PALAVRAS.pequeno) && tem(RE_PALAVRAS.grande) ? null : 'falta perguntar se ficou PEQUENO ou GRANDE'
+    case 'def_foto':
+      return tem(RE_PALAVRAS.foto) ? null : 'falta pedir a foto do defeito'
+    case 'endereco': {
+      const pendentes = (faltando ?? []).filter(f => /^end_/.test(f))
+      if (pendentes.length) {
+        for (const f of pendentes) if (!tem(RE_PALAVRAS[f])) return `falta pedir ${NOMES_FALTA[f]}`
+        return null
+      }
+      const componentes = tem(RE_PALAVRAS.end_rua) && tem(RE_PALAVRAS.end_cep) && tem(RE_PALAVRAS.end_cidade)
+      if (!tem(RE_PALAVRAS.endereco) && !componentes) return 'falta pedir o endereço de entrega'
+      if (!componentes && !tem(RE_PALAVRAS.completo)) return 'falta pedir o endereço COMPLETO (rua e número, código postal e cidade)'
+      return null
+    }
+    case 'nc_no_prazo': {
+      if (!tem(RE_PALAVRAS.prazo)) return 'falta dizer que o pedido está dentro do prazo de entrega'
+      if (!pedido) return 'sem pedido localizado não há data provável para informar'
+      const prov = prazoDoPedido(pedido, loja).provavel
+      if (!mencionaData(s, prov)) return `falta a data provável de recebimento calculada pelo servidor (${prov})`
+      if (tem(RE_ACAO.cupom)) return 'dentro do prazo não se oferece cupom nem benefício'
+      return null
+    }
+    case 'nr_entregue_aguardar': {
+      if (!mencionaDias(s, 2)) return 'falta pedir que aguarde mais 2 dias'
+      if (!tem(RE_PALAVRAS.vizinhos)) return 'falta orientar a verificar com vizinhos ou na portaria'
+      if (tem(RE_ACAO.cupom)) return 'nesta fase não se oferece nada'
+      return null
+    }
+    default:
+      return null
+  }
+}
+
 /**
  * Confere o texto final de uma fase — bloqueios NEGATIVOS (percentual/cupom de
  * outra etapa, fato consumado) e POSITIVOS (o que a fase exige tem de estar lá):
  * percentual obrigatório, valor em dinheiro igual ao cálculo do servidor, código
  * do cupom cadastrado (e nenhum inventado), ação nomeada e prazo obrigatório.
  */
-export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = null) {
+export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = null, opcoes = {}) {
   const v = validarProposta(faseId, { acao_proposta: faseId, resposta: texto }, loja, an)
   if (!v.ok) return v
   const fase = FASES[faseId]
@@ -985,7 +1088,10 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   // percentual + valor em dinheiro do servidor, frete (50%), cupom (código +
   // percentual), TODAS as ações da etapa, prazo da oferta e 3 a 14 dias na confirmação
   const oferta = ofertaDaFase(faseId, an)
-  if (!oferta) return { ok: true, motivo: null }
+  if (!oferta) {
+    const motivo = exigenciasSemOferta(faseId, s, { an, pedido, loja, faltando: opcoes.faltando ?? an?.transicaoPendente?.faltando ?? [] })
+    return motivo ? { ok: false, motivo } : { ok: true, motivo: null }
+  }
   const valor = Number(pedido?.valor || 0)
   const citados = valoresMonetarios(s)
   const temValor = n => citados.some(v => Math.abs(v - n) < 0.011)
@@ -1006,6 +1112,19 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   if (cup.precisa) {
     if (cup.codigo && !s.includes(cup.codigo)) return { ok: false, motivo: `falta o código do cupom cadastrado (${cup.codigo})` }
     if (!new RegExp(`\\b${cup.pct}\\s?%`).test(s)) return { ok: false, motivo: `falta o percentual do cupom (${cup.pct}%)` }
+    if (!RE_ACAO.cupom.test(s)) return { ok: false, motivo: 'falta dizer que se trata de um cupom (Gutschein / coupon / código de desconto) — o código solto não basta' }
+  }
+  // atrasado: o prazo máximo de mais 5 dias úteis é obrigatório
+  if (faseId === 'nc_atrasado_25' && !mencionaDiasUteis(s, 5)) {
+    return { ok: false, motivo: 'falta pedir que aguarde no máximo mais 5 dias úteis' }
+  }
+  // confirmação de troca/reenvio: o endereço confirmado tem de ser repetido por inteiro
+  if (faseId === 'conf_troca') {
+    const partes = String(an?.enderecoConfirmado || '').split(/[,\n;]+/).map(p => semAcento(p).replace(/\s+/g, ' ').trim()).filter(p => p.length >= 3)
+    const st = semAcento(s).replace(/\s+/g, ' ')
+    if (!partes.length) return { ok: false, motivo: 'não há endereço confirmado pelo cliente — a confirmação da troca/reenvio não pode sair sem ele' }
+    const faltou = partes.find(p => !st.includes(p))
+    if (faltou) return { ok: false, motivo: `não repete o endereço de entrega confirmado por inteiro (faltou "${faltou}")` }
   }
   const acoes = []
   if (/troca/.test(oferta.tipo)) acoes.push('troca')

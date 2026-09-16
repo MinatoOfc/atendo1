@@ -363,7 +363,13 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   separado na fase de 50%, o código do cupom cadastrado com o seu percentual
   (nenhum código inventado), todas as ações da etapa (troca + reembolso,
   reenvio + reembolso), o prazo da oferta e, na confirmação de
-  reembolso/cancelamento, o valor exato e "3 a 14 dias".
+  reembolso/cancelamento, o valor exato e "3 a 14 dias". As fases sem oferta
+  também: coleta pede o que falta, tamanho pergunta pequeno/grande, defeito
+  pede a foto, endereço pede o completo, "dentro do prazo" cita a data
+  provável do servidor, "marcado como entregue" pede 2 dias e vizinhos/
+  portaria, "atrasado" pede 5 dias úteis, e a confirmação de troca repete o
+  endereço confirmado. Cupom exige a palavra "cupom", o código e o
+  percentual.
   No modo novo o e-mail sai SÓ pela conta da própria loja — sem ela, nada
   sai; a conta de outra loja nunca serve de reserva.
   "Gerar nova resposta" no modo novo reescreve só a ação da fase pendente; a
