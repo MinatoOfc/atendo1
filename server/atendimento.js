@@ -711,13 +711,39 @@ export function normalizarIdioma(cod) {
 }
 
 const RE_CURTA = /^\s*(ok(?:ay|é|ey)?|sim|ja|yes|yep|oui|s[ií]|nee|nein|no|non|n[aã]o|nope|danke|thanks?|merci|gracias|grazie|obrigad[oa]|bedankt|dank|bitte|please|top|super|perfekt|perfeito|perfect|genau|certo|d'accord|akkoord|prima|klar|fine|good|gut)[\s.!,]*$/i
+const soDados = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+
+/**
+ * A mensagem é só um DADO pedido (endereço, números, código postal, número do
+ * pedido, nome de produto/tamanho, foto) e não uma frase? Decidido pelo
+ * SERVIDOR — o booleano da IA não basta para trocar o idioma da conversa.
+ */
+export function mensagemEhDados(cls, corpo) {
+  const texto = String(corpo || '').replace(/https?:\/\/\S+/g, ' ')
+  const c = soDados(texto)
+  if (!c) return true // vazio ou só a foto
+  if (RE_CURTA.test(texto)) return true
+  // o corpo é essencialmente o endereço que a IA extraiu (pontuação, espaços e quebras à parte)
+  const e = soDados(cls?.endereco)
+  if (e && (c === e || e.includes(c) || (c.includes(e) && c.length <= e.length + 25))) return true
+  // só números/códigos (CEP, número do pedido, rastreio)
+  if (!/\p{L}{3,}/u.test(c)) return true
+  // nome isolado de produto e/ou tamanho
+  const produtos = (cls?.produtos ?? []).map(soDados).filter(Boolean)
+  if (produtos.length && produtos.some(p => c === p || c.includes(p)) && c.length <= produtos.join(' ').length + 15) return true
+  if (/^(xs|s|m|l|xl|xxl|xxxl|\d{2,3})( (xs|s|m|l|xl|xxl|xxxl|\d{2,3}))*$/.test(c)) return true
+  // menos de três palavras de verdade não é frase
+  const palavras = c.split(' ').filter(w => /^\p{L}{2,}$/u.test(w))
+  if (palavras.length < 3) return true
+  // cara de endereço: código postal e poucas palavras
+  if (/\b\d{4,5}\b/.test(c) && palavras.length <= 6) return true
+  return false
+}
+
 /** A mensagem tem texto o bastante para confiar no idioma detectado? ("ok", endereço, números, só foto: não) */
 export function idiomaConfiavel(cls, corpo) {
   if (cls?.idiomaConfiavel === false) return false
-  const texto = String(corpo || '').replace(/https?:\/\/\S+/g, ' ')
-  if (RE_CURTA.test(texto)) return false
-  const palavras = texto.split(/\s+/).filter(p => /[a-zà-ÿ]{2,}/i.test(p))
-  return palavras.length >= 3
+  return !mensagemEhDados(cls, corpo)
 }
 
 /**

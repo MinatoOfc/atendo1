@@ -5,7 +5,7 @@ import {
   novoEstado, decidir, confirmarTransicao, validarProposta, prazoDoPedido, somarDiasUteis,
   horarioMinimoEnvio, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
   instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados, mencionaData, ofertaIndevida, acoesDaOferta,
-  normalizarIdioma, idiomaConfiavel, definirIdioma, detectarIdioma, conferirIdioma, IDIOMAS_VALIDADOS,
+  normalizarIdioma, idiomaConfiavel, definirIdioma, detectarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, mensagemEhDados,
 } from '../server/atendimento.js'
 
 const loja = { id: 'l1', nome: 'Von Alder', moeda: 'EUR', cupons: { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }, prazoEntrega: { min: 5, max: 12, processamento: 3 } }
@@ -461,6 +461,35 @@ test('idioma: normalização, mensagens curtas preservam o último confiável, m
   assert.equal(leve.ok, true); assert.match(leve.aviso, /não é validado localmente/)
   assert.equal(conferirTextoDaFase('reemb_40', 'Zwrot 50% (28,00 €). Ok?', loja, novoEstado(), pedido1, { idioma: 'pl' }).ok, false, 'percentual errado bloqueia mesmo em polonês')
   assert.equal(conferirTextoDaFase('reemb_40', 'Zwrot 40% (30,00 €). Ok?', loja, novoEstado(), pedido1, { idioma: 'pl' }).ok, false, 'valor errado bloqueia mesmo em polonês')
+})
+
+test('só dados não trocam o idioma, mesmo com a IA dizendo idiomaConfiavel: true', () => {
+  const erro = extra => ({ idioma: 'de', idiomaConfiavel: true, ...extra }) // a IA erra: marca dado como confiável
+  const endereco = 'Hauptstraße 5, 10115 Berlin, Deutschland'
+  assert.equal(mensagemEhDados(erro({ endereco }), 'Hauptstraße 5,\n10115 Berlin, Deutschland'), true, 'corpo = endereço (quebras e pontuação à parte)')
+  assert.equal(mensagemEhDados(erro({ endereco }), 'Hauptstraße 5, 10115 Berlin, Deutschland. Danke!'), true, 'endereço com um adendo curto')
+  assert.equal(mensagemEhDados(erro({}), 'Hauptstraße 5, 10115 Berlin, Deutschland'), true, 'cara de endereço mesmo sem a IA extrair')
+  assert.equal(mensagemEhDados(erro({}), '#2202'), true); assert.equal(mensagemEhDados(erro({}), '10115'), true); assert.equal(mensagemEhDados(erro({}), 'DE123456789'), true)
+  assert.equal(mensagemEhDados(erro({ produtos: ['Polo Premium (Schwarz / L)'] }), 'Polo Premium, Schwarz / L'), true, 'nome de produto')
+  assert.equal(mensagemEhDados(erro({}), 'XL'), true); assert.equal(mensagemEhDados(erro({}), 'M'), true)
+  assert.equal(mensagemEhDados(erro({}), ''), true, 'só a foto')
+  assert.equal(mensagemEhDados(erro({}), 'ok danke'), true)
+  assert.equal(mensagemEhDados(erro({}), 'Ik wil liever mijn geld terug, geen omruil.'), false, 'frase completa')
+  // com idioma confiável já gravado, nada muda
+  const an = novoEstado()
+  definirIdioma(an, { idioma: 'nl-BE', idiomaConfiavel: true }, 'Ik wil liever mijn geld terug, geen omruil.')
+  const antes = { idioma: an.idioma, original: an.idiomaOriginal, incerto: an.idiomaIncerto }
+  assert.equal(definirIdioma(an, erro({ endereco }), 'Hauptstraße 5, 10115 Berlin, Deutschland'), 'nl', 'endereço não troca')
+  definirIdioma(an, erro({}), '#2202'); definirIdioma(an, erro({ produtos: ['Polo Premium (Schwarz / L)'] }), 'Polo Premium (Schwarz / L)'); definirIdioma(an, erro({}), ''); definirIdioma(an, erro({}), 'XL')
+  assert.deepEqual({ idioma: an.idioma, original: an.idiomaOriginal, incerto: an.idiomaIncerto }, antes, 'idioma, original e incerto intactos')
+  // sem idioma ainda: o endereço só marca como incerto
+  const vazio = novoEstado()
+  assert.equal(definirIdioma(vazio, erro({ endereco }), endereco), 'de'); assert.equal(vazio.idiomaIncerto, true)
+  // uma frase completa em holandês troca uma conversa alemã
+  const de = novoEstado()
+  definirIdioma(de, { idioma: 'de', idiomaConfiavel: true }, 'Die Qualität ist schlecht, ich will mein Geld zurück.')
+  assert.equal(definirIdioma(de, { idioma: 'nl', idiomaConfiavel: true }, 'Nee, dat wil ik niet. Ik wil liever een terugbetaling.'), 'nl')
+  assert.equal(de.idiomaIncerto, false)
 })
 
 test('holandês: ofertas, negações e exigências positivas passam pelos mesmos bloqueios das versões em alemão', () => {

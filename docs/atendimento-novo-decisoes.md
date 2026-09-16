@@ -220,10 +220,14 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     X" da loja vale só para o clássico. A 1ª chamada devolve o código ISO
     (com região: de-AT, nl-BE, fr-BE) e `idiomaConfiavel`; o servidor
     normaliza (`nl-BE` → `nl`, guardando o original para exibir), grava em
-    `atendimentoNovo.idioma` e só troca o alvo com uma mensagem completa
-    (`idiomaConfiavel` e ≥ 3 palavras; "ok", endereço, números e foto
-    preservam o último confiável; sem nenhum ainda, usa o detectado marcado
-    como incerto — nunca português/inglês por padrão). A 2ª chamada recebe
+    `atendimentoNovo.idioma` e só troca o alvo com uma mensagem completa. O
+    que é "só dado" é decidido pelo SERVIDOR (`mensagemEhDados`), não pelo
+    booleano da IA: corpo igual ao endereço extraído (pontuação, espaços e
+    quebras à parte), só números/códigos (CEP, pedido, rastreio), nome de
+    produto/tamanho, foto, "ok"/"danke", menos de três palavras ou cara de
+    endereço (código postal + poucas palavras) nunca alteram idioma, original
+    ou incerto quando já há um idioma confiável; sem nenhum ainda, entram só
+    como incerto — nunca português/inglês por padrão. A 2ª chamada recebe
     "Escreva OBRIGATORIAMENTE em holandês (código "nl")" e devolve no JSON o
     idioma em que escreveu. Prova antes do envio (`conferirIdioma`): o
     código declarado tem de ser o alvo E a detecção local por palavras

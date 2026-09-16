@@ -83,7 +83,8 @@ globalThis.fetch = async (url, opts) => {
     const prazo = sys.match(/Prazo do envio expresso: ([^.]+)\./)?.[1]
     const titulo = sys.match(/AÇÃO DESTA RESPOSTA — ([^\n]+):/)?.[1] ?? ''
     const aceita = sys.match(/Opção aceita pelo cliente e aprovada pelo lojista: ([^\n]+)/)?.[1] ?? ''
-    const alvo = (titulo + ' ' + aceita).toLowerCase()
+    // na confirmação, as ações vêm SÓ da opção aceita (o título genérico diz "troca/reenvio")
+    const alvo = (aceita || titulo).toLowerCase()
     // idioma: o alvo vem do prompt ("código \"nl\""); a sabotagem escreve em outro idioma por N chamadas
     const alvoIdioma = sys.match(/OBRIGATORIAMENTE em [^(]+\(código "(\w+)"\)/)?.[1] ?? 'de'
     let idiomaUsado = alvoIdioma
@@ -105,12 +106,12 @@ globalThis.fetch = async (url, opts) => {
     if (/código postal/.test(sys)) frases.push('Bitte die Postleitzahl.')
     if (/: cidade|e cidade/.test(sys)) frases.push('Bitte die Stadt.')
     if (/Pedir foto do defeito|outra foto/.test(sys)) frases.push('Bitte senden Sie ein Foto des Schadens.')
-    if (/Confirmar endereço completo/.test(titulo) && !/Peça SOMENTE/.test(sys)) frases.push('Bitte senden Sie Ihre vollständige Adresse (Straße, Hausnummer, PLZ, Stadt).')
+    if (/Confirmar endereço completo/.test(titulo) && !/Peça SOMENTE/.test(sys)) frases.push(idiomaUsado === 'nl' ? 'Stuur alstublieft uw volledige adres (straat, huisnummer, postcode, plaats).' : 'Bitte senden Sie Ihre vollständige Adresse (Straße, Hausnummer, PLZ, Stadt).')
     if (/Diga claramente que o pedido está DENTRO/.test(sys)) frases.push(`Ihre Bestellung ist innerhalb der Lieferzeit, voraussichtlich am ${sys.match(/Data provável de recebimento: (\d{4}-\d{2}-\d{2})/)?.[1]} .`)
     if (/aguarde mais 2 dias/.test(sys)) frases.push('Bitte warten Sie noch 2 Tage und fragen Sie bei Nachbarn oder der Rezeption nach.')
     if (/5 dias úteis/.test(sys)) frases.push('Bitte noch maximal 5 Werktage Geduld.')
     const endConf = sys.match(/Endereço de entrega confirmado: ([^\n]+?)\.\n/)?.[1]
-    if (endConf) frases.push(`Lieferadresse: ${endConf}.`)
+    if (endConf) frases.push(`${idiomaUsado === 'nl' ? 'Bezorgadres' : idiomaUsado === 'fr' ? 'Adresse de livraison' : idiomaUsado === 'en' ? 'Delivery address' : 'Lieferadresse'}: ${endConf}.`)
     if (prazoDinheiro) frases.push(F.dinheiro)
     if (!frases.length) frases.push('Wir melden uns.')
     let texto = `${F.ola} ${frases.join(' ')}${prazo ? ` ${F.prazo(prazo)}` : ''} ${F.pergunta}`
@@ -486,6 +487,24 @@ test('mensagem curta preserva o idioma; mensagem completa em outro idioma troca;
   r = await comEnvio('ok', () => aprovar(t))
   assert.equal(r.status, 200, r.erro); t = await ticket(t.id)
   assert.equal(an(t).etapa, 'conf_reembolso'); assert.equal(t.status, 'enviado')
+})
+
+test('endereço marcado pela IA como idiomaConfiavel: true não troca o idioma da conversa (o servidor decide)', async () => {
+  let t = await cliente({ intencao: 'pede_troca', motivo: 'errado', idioma: 'nl' }, { de: 'c26@web.de', nome: 'C26', corpo: 'Ik heb de verkeerde kleur ontvangen, graag omruilen.', lojaId: 'loja1' })
+  assert.equal(an(t).idioma, 'nl'); assert.equal(an(t).transicaoPendente.para, 'err_envio')
+  await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
+  t = await cliente({ intencao: 'aceita', idioma: 'nl' }, { de: 'c26@web.de', corpo: 'Ja, graag, dat is prima zo.', ticketId: t.id })
+  assert.equal(an(t).transicaoPendente.para, 'endereco'); assert.match(t.rascunho, /adres/i)
+  await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
+  // a IA erra: endereço alemão classificado como idioma "de" e confiável
+  const endereco = 'Hauptstraße 5, 10115 Berlin, Deutschland'
+  t = await cliente({ intencao: 'informa', idioma: 'de', idiomaConfiavel: true, endereco }, { de: 'c26@web.de', corpo: 'Hauptstraße 5,\n10115 Berlin, Deutschland', ticketId: t.id })
+  assert.equal(an(t).idioma, 'nl', 'endereço não troca o idioma'); assert.equal(an(t).idiomaOriginal, 'nl'); assert.equal(an(t).idiomaIncerto, false)
+  assert.equal(t.status, 'humano'); assert.ok(an(t).enderecoConfirmado)
+  // a confirmação sai em holandês
+  const r = await api(`/api/tickets/${t.id}/novo/confirmar`)
+  assert.equal(r.status, 200, r.erro); t = await ticket(t.id)
+  assert.equal(an(t).transicaoPendente.para, 'conf_troca'); assert.equal(an(t).rascunhoIdioma, 'nl'); assert.match(t.rascunho, /opnieuw|Hallo!/); assert.match(ultimoPromptEscrita, /código "nl"/)
 })
 
 test('escritor no idioma errado: regenera uma vez; se insistir, vai ao dono sem enviar nem avançar — também na regeneração', async () => {
