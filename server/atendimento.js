@@ -751,7 +751,7 @@ export function mensagemEhDados(cls, corpo) {
   if (reLinguistica().test(resto)) return false
   // resto curto sem sinal linguístico ("Berlin Mitte", "blau") continua sendo dado
   // cara de endereço sem a IA ter extraído (código postal + poucas palavras): ainda é dado
-  if (/bd{4,5}b/.test(c) && tokens.length <= 6) return true
+  if (/\b\d{4,5}\b/.test(c) && tokens.length <= 6) return true
   return tokens.length < 3
 }
 
