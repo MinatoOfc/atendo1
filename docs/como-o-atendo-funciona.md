@@ -358,9 +358,12 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   chegada de mensagem, "Gerar nova resposta", "Aprovar e enviar", auto-envio):
   ação proposta fora da fase, percentual ou cupom de outra etapa, e linguagem
   de confirmação derrubam o texto. Cupom não cadastrado na loja também. E o
-  texto TEM de conter o que a fase exige: o percentual da etapa, só valores
-  em dinheiro calculados pelo servidor, o código do cupom cadastrado (nenhum
-  inventado), a ação nomeada e o prazo da oferta.
+  texto TEM de conter o que a fase exige: o percentual da etapa E o valor em
+  dinheiro calculado pelo servidor (nada de "25%" sem o valor), o frete
+  separado na fase de 50%, o código do cupom cadastrado com o seu percentual
+  (nenhum código inventado), todas as ações da etapa (troca + reembolso,
+  reenvio + reembolso), o prazo da oferta e, na confirmação de
+  reembolso/cancelamento, o valor exato e "3 a 14 dias".
   No modo novo o e-mail sai SÓ pela conta da própria loja — sem ela, nada
   sai; a conta de outra loja nunca serve de reserva.
   "Gerar nova resposta" no modo novo reescreve só a ação da fase pendente; a
@@ -391,11 +394,15 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   Seis jornadas (Entrada geral, Tamanho, Qualidade, Defeito/errado, Não
   recebeu, Cancelamento) com quantidade, valor e percentual; indicadores por
   moeda (pedidos totais, com ticket, envolvidos em reembolso, valor total,
-  valor com ticket, valor dos pedidos reembolsados, **reembolsado de fato** e
-  o **cenário hipotético sem retenção** — se todos tivessem 100%; é hipótese,
-  não economia comprovada, e vira "dados históricos insuficientes" sem
-  reembolso confirmado pelo motor —, reembolsos parciais, % com produto
-  identificado); duas visões: **Mapa do fluxo** (fases por jornada com
+  valor com atendimento, valor dos pedidos reembolsados, **aceites
+  pendentes** (aceite aguardando o dono — ainda não é reembolso),
+  **reembolsado de fato** — só com a confirmação realmente enviada (fase de
+  confirmação no histórico) ou o caso marcado como processado no link do
+  relatório — e o **cenário hipotético sem retenção** — os mesmos efetivados
+  se tivessem 100%; é hipótese, não economia comprovada, e vira "dados
+  históricos insuficientes" sem reembolso efetivado pelo motor —, reembolsos
+  parciais, % com produto identificado); todos os indicadores refletem as
+  linhas visíveis depois de TODOS os filtros; duas visões: **Mapa do fluxo** (fases por jornada com
   passaram / pararam / avançaram e o valor por moeda; conta **só fases
   enviadas**, uma vez por pedido + fase, e mostra à parte quantos casos
   inferidos/manuais apontam para a fase) e **Todos os pedidos** (junção dos

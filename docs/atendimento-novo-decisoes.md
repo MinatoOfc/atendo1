@@ -153,6 +153,30 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     `process.exit`; uma falha real termina `npm test` com código diferente de
     zero (test/saida.test.mjs prova isso com um processo filho).
 
+27. **Valor em dinheiro obrigatório (revisão de 16/09)**: toda fase com
+    percentual exige o percentual E o valor em dinheiro calculado pelo servidor
+    (percentual × valor pago); sem valor do pedido o texto não sai. Troca +
+    reembolso e reenvio + reembolso exigem as duas ações nomeadas; a fase de
+    50% exige o valor do frete (25%) separado do valor do reembolso; cupom
+    exige código cadastrado E percentual; confirmação de reembolso/cancelamento
+    exige o valor exato e "3 a 14 dias".
+
+28. **Indicadores da Central = linhas visíveis**: pedidos totais, valor total,
+    pedidos com atendimento, casos, envolvidos em reembolso, aceites
+    pendentes, reembolsado de fato e jornadas são calculados sobre as linhas
+    que sobram depois de busca + loja + período + desfecho + jornada + fase.
+
+29. **"Reembolsado de fato" só com prova**: entra apenas quando a fase de
+    confirmação (`conf_reembolso`, `conf_cancelamento`, `conf_troca` com
+    reembolso parcial) está em `historicoEtapas` — gravada por
+    `confirmarTransicao` somente depois de o e-mail sair por um canal real — ou
+    quando o dono marcou o caso como processado no link do relatório
+    (`relatorioProcessado`). Aceite com `acaoAceita` + `aguardando: humano`
+    (ou com a confirmação ainda em rascunho) é "aceite pendente", com
+    indicador próprio; linha do relatório clássico não processada é
+    "registrado"; encerramento sem reembolso não entra em nada. O cenário
+    hipotético usa os mesmos efetivados.
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.

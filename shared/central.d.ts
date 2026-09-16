@@ -35,6 +35,9 @@ export interface Caso {
   comVoce: boolean
   acaoPendente: string | null
   escalouAoDono: boolean
+  /** efetivado = confirmação enviada ou processado no relatório; aceite_pendente = com o dono; registrado = linha do relatório clássico */
+  situacaoReembolso: 'efetivado' | 'aceite_pendente' | 'registrado' | null
+  confirmacaoEnviada: string | null
   dataMs: number
   ajuste: AjusteCentral | null
   historicoAjustes: AjusteCentral[]
@@ -71,13 +74,17 @@ export interface Linha {
 export interface Indicadores {
   moeda: string
   pedidosTotais: number
-  pedidosComTicket: number
+  pedidosComAtendimento: number
   pedidosEmReembolso: number
   valorTotalPedidos: number
-  valorComTicket: number
+  valorComAtendimento: number
   valorPedidosReembolsados: number
   hipoteticoSemRetencao: number
   reembolsadoEfetivo: number
+  reembolsosEfetivados: number
+  aceitesPendentes: number
+  valorAceitesPendentes: number
+  reembolsosRegistrados: number
   historicoSuficiente: boolean
   reembolsosConfirmados: number
   reembolsosParciais: number
@@ -108,5 +115,5 @@ export function filtrarPedidos(pedidos: Pedido[], f: Filtros, agora?: number): P
 export function filtrarRegistros(registros: Registro[], f: Filtros, agora?: number): Registro[]
 export function linhasDePedidos(pedidosFiltrados: Pedido[], registrosTodos: Registro[], registrosFiltrados: Registro[], lojas: Loja[], f: Filtros): Linha[]
 export function pedidosComConversa(tickets: Ticket[], pedidos: Pedido[]): Set<string>
-export function indicadores(registrosFiltrados: Registro[], pedidosFiltrados: Pedido[], lojas: Loja[], pedidosComTicket: Set<string>): Indicadores[]
+export function indicadores(linhas: Linha[]): Indicadores[]
 export function calcularCentral(args: { tickets: Ticket[]; pedidos: Pedido[]; lojas: Loja[]; fases: Record<string, FaseNovo>; filtros?: Partial<Filtros>; agora?: number }): ResultadoCentral

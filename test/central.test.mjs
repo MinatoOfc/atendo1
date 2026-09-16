@@ -18,6 +18,9 @@ const pedidos = [
   ped('p3', 'l2', 50, dia(3), 'c3@x.de'),
   ped('p4', 'l1', 60, dia(1), 'c4@x.de'), // sem nenhuma conversa
   ped('p5', 'l1', 90, dia(40), 'c5@x.de'), // caso do clássico (inferido)
+  ped('p6', 'l1', 40, dia(3), 'c6@x.de'), // confirmação de reembolso ENVIADA
+  ped('p7', 'l1', 90, dia(50), 'c7@x.de'), // clássico marcado como processado no relatório
+  ped('p8', 'l1', 30, dia(4), 'c8@x.de'), // encerrado sem reembolso
 ]
 const hist = ids => ids.map((para, i) => ({ de: ids[i - 1] ?? null, para, mensagem: 'x', em: new Date(agora - (ids.length - i) * 3600e3).toISOString() }))
 const an = (etapa, trilha, extra = {}) => ({
@@ -37,6 +40,12 @@ const tickets = [
   tk('t3', 'c3@x.de', 'l2', { atendimentoNovo: an('qual_troca', ['qual_troca']), centralAjuste: { fase: 'reemb_40', jornada: 'qualidade', por: 'Teste', em: new Date(agora).toISOString(), anterior: 'qual_troca', justificativa: 'era 40' }, centralHistorico: [{ removido: false, fase: 'reemb_40', jornada: 'qualidade', anterior: 'qual_troca', anteriorJornada: null, por: 'Teste', em: new Date(agora).toISOString(), justificativa: 'era 40' }] }),
   // p5: clássico com relatório manual — fase INFERIDA (nunca enviada pelo motor)
   tk('t5', 'c5@x.de', 'l1', { status: 'enviado', relatorioDia: dia(30), relatorioTexto: 'REEMBOLSO 60%', motivoReembolso: { motivo: 'material ruim', categoria: 'qualidade', em: new Date(agora).toISOString() } }),
+  // p6: aceitou 25% e a CONFIRMAÇÃO saiu (fase conf_reembolso no histórico) → efetivado
+  tk('t6', 'c6@x.de', 'l1', { status: 'enviado', atendimentoNovo: an('conf_reembolso', ['qual_troca', 'qual_cupom_35', 'reemb_25', 'conf_reembolso'], { aguardando: null, acaoAceita: 'reemb_25' }) }),
+  // p7: clássico REEMBOLSO 60% marcado como processado no link do relatório → efetivado
+  tk('t7', 'c7@x.de', 'l1', { status: 'enviado', relatorioDia: dia(45), relatorioTexto: 'REEMBOLSO 60%', relatorioProcessado: new Date(agora).toISOString(), motivoReembolso: { motivo: 'não gostou', categoria: 'nao_gostou', em: new Date(agora).toISOString() } }),
+  // p8: encerrado sem reembolso
+  tk('t8', 'c8@x.de', 'l1', { status: 'enviado', resolucao: 'Encerrada — cliente confirmou que está tudo certo', atendimentoNovo: an('qual_troca', ['qual_troca'], { aguardando: null }) }),
   // spam nunca entra
   tk('t9', 'c4@x.de', 'l1', { status: 'spam' }),
 ]
@@ -44,7 +53,7 @@ const calc = (filtros = {}) => calcularCentral({ tickets, pedidos, lojas, fases,
 
 test('"Todos os pedidos" é a junção pedido × caso: pedido sem conversa aparece como sem atendimento / sem fase', () => {
   const { linhas } = calc()
-  assert.equal(linhas.length, 5, 'todos os pedidos filtrados, com ou sem ticket')
+  assert.equal(linhas.length, 8, 'todos os pedidos filtrados, com ou sem ticket')
   const p4 = linhas.find(l => l.pedidoId === 'p4')
   assert.equal(p4.atendimento, 'sem atendimento'); assert.equal(p4.faseTitulo, 'sem fase'); assert.equal(p4.registro, null)
   assert.equal(p4.valor, 60); assert.equal(p4.lojaNome, 'Loja Euro')
@@ -57,8 +66,8 @@ test('"Todos os pedidos" é a junção pedido × caso: pedido sem conversa apare
 test('métricas deduplicadas por pedido + fase: duas conversas do mesmo pedido contam uma vez', () => {
   const { metricas, registros } = calc()
   assert.equal(registros.filter(r => r.pedidoId === 'p1').length, 1)
-  assert.equal(metricas.qual_troca.passaram, 3, 'p1 (uma vez), p2 e p3')
-  assert.equal(metricas.qual_cupom_35.passaram, 2, 'p1 e p2')
+  assert.equal(metricas.qual_troca.passaram, 5, 'p1 (uma vez), p2, p3, p6 e p8')
+  assert.equal(metricas.qual_cupom_35.passaram, 3, 'p1, p2 e p6')
   const casos = montarCasos(tickets, pedidos, lojas, fases)
   assert.equal(casos.filter(c => c.pedidoId === 'p1').length, 2, 'os dois tickets existem como casos…')
   assert.equal(consolidarPorPedido(casos).filter(r => r.pedidoId === 'p1').length, 1, '…mas viram um registro')
@@ -67,9 +76,10 @@ test('métricas deduplicadas por pedido + fase: duas conversas do mesmo pedido c
 test('só fase enviada conta: pendência, inferência e correção manual ficam fora de passaram/pararam/avançaram', () => {
   const { metricas } = calc()
   // t1 tem transicaoPendente para reemb_25 — não conta; só t2 enviou reemb_25
-  assert.equal(metricas.reemb_25.passaram, 1); assert.equal(metricas.reemb_25.pararam, 1, 'aceite no 25%')
+  assert.equal(metricas.reemb_25.passaram, 2); assert.equal(metricas.reemb_25.pararam, 2, 'aceite no 25% (p2 pendente, p6 confirmado)')
+  assert.equal(metricas.conf_reembolso.passaram, 1, 'a confirmação enviada conta na própria fase de confirmação')
   // inferido (clássico, REEMBOLSO 60%): aparece separado
-  assert.equal(metricas.reemb_60.passaram, 0); assert.equal(metricas.reemb_60.pararam, 0); assert.equal(metricas.reemb_60.inferidos, 1)
+  assert.equal(metricas.reemb_60.passaram, 0); assert.equal(metricas.reemb_60.pararam, 0); assert.equal(metricas.reemb_60.inferidos, 2, 'p5 e p7 (clássico, mesmo o processado não é fase enviada)')
   // correção manual para reemb_40: não vira fase enviada
   assert.equal(metricas.reemb_40.passaram, 0); assert.equal(metricas.reemb_40.manuais, 1)
   // a trilha confirmada do caso corrigido continua contando
@@ -87,19 +97,19 @@ test('só fase enviada conta: pendência, inferência e correção manual ficam 
 
 test('valores das fases separados por moeda — EUR e USD nunca se somam', () => {
   const { metricas, indicadores } = calc()
-  assert.deepEqual(metricas.qual_troca.valorPorMoeda, { EUR: 180, USD: 50 })
-  assert.deepEqual(metricas.qual_cupom_35.valorPorMoeda, { EUR: 180 })
+  assert.deepEqual(metricas.qual_troca.valorPorMoeda, { EUR: 250, USD: 50 })
+  assert.deepEqual(metricas.qual_cupom_35.valorPorMoeda, { EUR: 220 })
   const eur = indicadores.find(k => k.moeda === 'EUR'); const usd = indicadores.find(k => k.moeda === 'USD')
-  assert.equal(eur.pedidosTotais, 4); assert.equal(usd.pedidosTotais, 1)
-  assert.equal(eur.valorTotalPedidos, 330); assert.equal(usd.valorTotalPedidos, 50)
+  assert.equal(eur.pedidosTotais, 7); assert.equal(usd.pedidosTotais, 1)
+  assert.equal(eur.valorTotalPedidos, 490); assert.equal(usd.valorTotalPedidos, 50)
 })
 
 test('"antes do pipeline" é hipótese: cenário sem retenção separado do reembolsado de fato, e "insuficiente" sem histórico confirmado', () => {
   const { indicadores } = calc()
   const eur = indicadores.find(k => k.moeda === 'EUR')
-  assert.equal(eur.hipoteticoSemRetencao, 170, 'p2 (80) + p5 (90) com 100%')
-  assert.equal(eur.reembolsadoEfetivo, 74, '25% de 80 + 60% de 90')
-  assert.equal(eur.historicoSuficiente, true); assert.equal(eur.reembolsosConfirmados, 1)
+  assert.equal(eur.hipoteticoSemRetencao, 130, 'os mesmos efetivados (p6 40 + p7 90) com 100%')
+  assert.equal(eur.reembolsadoEfetivo, 64, '25% de 40 (confirmação enviada) + 60% de 90 (processado no relatório)')
+  assert.equal(eur.historicoSuficiente, true); assert.equal(eur.reembolsosConfirmados, 1, 'só p6 veio do motor')
   const usd = indicadores.find(k => k.moeda === 'USD')
   assert.equal(usd.historicoSuficiente, false); assert.equal(usd.reembolsadoEfetivo, 0)
 })
@@ -110,19 +120,76 @@ test('filtros combinados: busca + loja + período + desfecho + jornada + fase ag
   r = calc({ lojaId: 'l1', jornada: 'qualidade', fase: 'reemb_25', desfecho: 'reembolso', busca: 'c1' })
   assert.equal(r.registros.length, 0)
   r = calc({ desfecho: '25' })
-  assert.deepEqual(r.registros.map(x => x.pedidoId), ['p2'])
+  assert.deepEqual(r.registros.map(x => x.pedidoId), ['p6', 'p2'], 'p6 (confirmado) e p2 (pendente) aceitaram 25%')
   r = calc({ fase: 'sem_fase' })
   assert.deepEqual(r.linhas.map(l => l.pedidoId), ['p4'], 'só pedidos sem fase')
   r = calc({ periodo: '7' })
-  assert.deepEqual(r.linhas.map(l => l.pedidoId).sort(), ['p1', 'p2', 'p3', 'p4'], 'p5 tem 40 dias')
+  assert.deepEqual(r.linhas.map(l => l.pedidoId).sort(), ['p1', 'p2', 'p3', 'p4', 'p6', 'p8'], 'p5 e p7 são antigos')
   r = calc({ lojaId: 'l2' })
   assert.deepEqual(r.linhas.map(l => l.pedidoId), ['p3']); assert.equal(r.indicadores.length, 1); assert.equal(r.indicadores[0].moeda, 'USD')
   r = calc({ busca: 'cliente p4' })
   assert.deepEqual(r.linhas.map(l => l.pedidoId), ['p4'], 'busca acha pedido sem ticket')
   r = calc({ fase: 'qual_cupom_35' })
   assert.deepEqual(r.registros.map(x => x.pedidoId), ['p1'], 'fase ATUAL: p1 está no cupom de 35% (o rascunho pendente não conta)…')
-  assert.equal(calc({ fase: 'qual_troca' }).registros.length, 0, 'ninguém está parado no qual_troca (p3 foi corrigido à mão)')
+  assert.deepEqual(calc({ fase: 'qual_troca' }).registros.map(x => x.pedidoId), ['p8'], 'só p8 está no qual_troca (p3 foi corrigido à mão)')
   assert.equal(filtrarRegistros(consolidarPorPedido(montarCasos(tickets, pedidos, lojas, fases)), { ...FILTROS_PADRAO, fase: 'reemb_40' }, agora)[0].pedidoId, 'p3', '…e a correção manual define a fase atual de p3')
+})
+
+test('todos os filtros mudam TODOS os indicadores (pedidos totais, valor total, com atendimento, casos, reembolsos)', () => {
+  const eur = f => calc(f).indicadores.find(k => k.moeda === 'EUR')
+  const base = eur({})
+  assert.deepEqual([base.pedidosTotais, base.valorTotalPedidos, base.pedidosComAtendimento, base.valorComAtendimento, base.casos], [7, 490, 6, 430, 6])
+  // busca
+  let k = eur({ busca: 'c2' })
+  assert.deepEqual([k.pedidosTotais, k.valorTotalPedidos, k.pedidosComAtendimento, k.casos, k.aceitesPendentes, k.reembolsadoEfetivo], [1, 80, 1, 1, 1, 0])
+  // loja: l2 é USD → não existe indicador EUR
+  assert.equal(eur({ lojaId: 'l2' }), undefined)
+  const usd = calc({ lojaId: 'l2' }).indicadores[0]
+  assert.deepEqual([usd.moeda, usd.pedidosTotais, usd.valorTotalPedidos, usd.casos], ['USD', 1, 50, 1])
+  // período
+  k = eur({ periodo: '7' })
+  assert.deepEqual([k.pedidosTotais, k.valorTotalPedidos, k.pedidosComAtendimento, k.reembolsadoEfetivo, k.aceitesPendentes], [5, 310, 4, 10, 1])
+  // desfecho
+  k = eur({ desfecho: 'encerrado' })
+  assert.deepEqual([k.pedidosTotais, k.valorTotalPedidos, k.casos, k.pedidosEmReembolso, k.reembolsadoEfetivo], [1, 30, 1, 0, 0])
+  k = eur({ desfecho: 'reembolso' })
+  assert.deepEqual([k.pedidosTotais, k.valorTotalPedidos, k.pedidosEmReembolso, k.reembolsadoEfetivo, k.aceitesPendentes, k.reembolsosRegistrados], [4, 300, 4, 64, 1, 1])
+  // jornada: exclui o pedido sem caso (p4) e os casos de outras jornadas
+  k = eur({ jornada: 'qualidade' })
+  assert.deepEqual([k.pedidosTotais, k.valorTotalPedidos, k.pedidosComAtendimento], [6, 430, 6])
+  assert.equal(eur({ jornada: 'tamanho' }), undefined, 'nenhum caso de tamanho → nenhum indicador')
+  // fase atual
+  k = eur({ fase: 'reemb_25' })
+  assert.deepEqual([k.pedidosTotais, k.valorTotalPedidos, k.aceitesPendentes, k.reembolsadoEfetivo], [1, 80, 1, 0])
+  k = eur({ fase: 'sem_fase' })
+  assert.deepEqual([k.pedidosTotais, k.valorTotalPedidos, k.pedidosComAtendimento, k.casos], [1, 60, 0, 0])
+  // combinação: busca + período + jornada + fase
+  k = eur({ busca: 'c6', periodo: '7', jornada: 'qualidade', fase: 'conf_reembolso' })
+  assert.deepEqual([k.pedidosTotais, k.valorTotalPedidos, k.reembolsadoEfetivo, k.hipoteticoSemRetencao], [1, 40, 10, 40])
+  const porJ = k.porJornada.find(j => j.chave === 'qualidade')
+  assert.deepEqual([porJ.pedidos, porJ.valor, porJ.pct], [1, 40, 100])
+})
+
+test('"Reembolsado de fato" só com confirmação enviada ou reembolso processado; aceite pendente e encerramento ficam fora', () => {
+  const { registros, indicadores } = calc()
+  const reg = id => registros.find(r => r.pedidoId === id)
+  // aceite + aguardando humano = aceite pendente
+  assert.equal(reg('p2').situacaoReembolso, 'aceite_pendente'); assert.equal(reg('p2').confirmacaoEnviada, null)
+  // confirmação enviada (fase conf_reembolso no histórico) = efetivado
+  assert.equal(reg('p6').situacaoReembolso, 'efetivado'); assert.equal(reg('p6').confirmacaoEnviada, 'conf_reembolso')
+  // processado no relatório (clássico) = efetivado; só a linha do relatório = registrado
+  assert.equal(reg('p7').situacaoReembolso, 'efetivado'); assert.equal(reg('p5').situacaoReembolso, 'registrado')
+  // encerramento sem reembolso: fora de tudo
+  assert.equal(reg('p8').situacaoReembolso, null); assert.equal(reg('p8').desfecho, 'encerrado')
+  const eur = indicadores.find(k => k.moeda === 'EUR')
+  assert.equal(eur.reembolsadoEfetivo, 64); assert.equal(eur.reembolsosEfetivados, 2)
+  assert.equal(eur.aceitesPendentes, 1); assert.equal(eur.valorAceitesPendentes, 20)
+  assert.equal(eur.reembolsosRegistrados, 1)
+  assert.equal(eur.pedidosEmReembolso, 4, 'p2, p5, p6, p7 envolvidos; p8 não')
+  // se a confirmação ainda não saiu (rascunho pendente), continua pendente
+  const t6Pendente = { ...tickets.find(t => t.id === 't6'), atendimentoNovo: an('reemb_25', ['qual_troca', 'qual_cupom_35', 'reemb_25'], { aguardando: 'envio', acaoAceita: 'reemb_25', transicaoPendente: { para: 'conf_reembolso', mensagem: 'aceite aprovado' } }) }
+  const r2 = calcularCentral({ tickets: [t6Pendente], pedidos, lojas, fases, agora })
+  assert.equal(r2.registros[0].situacaoReembolso, 'aceite_pendente'); assert.equal(r2.indicadores[0].reembolsadoEfetivo, 0); assert.equal(r2.indicadores[0].aceitesPendentes, 1)
 })
 
 test('relação com a fase: recusou tudo e chegou ao 100% conta como avançou (o 100% está com o dono, não foi enviado)', () => {

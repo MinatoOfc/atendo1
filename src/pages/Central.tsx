@@ -138,18 +138,19 @@ export default function Central() {
         <div key={k.moeda} className="mb-16">
           {kpis.length > 1 && <div className="muted-sm mb-8"><b>{k.moeda}</b></div>}
           <div className="central-kpis">
-            <Kpi rotulo="Pedidos totais" valor={String(k.pedidosTotais)} pe="da loja / período" />
-            <Kpi rotulo="Pedidos com ticket" valor={String(k.pedidosComTicket)} pe={dinheiro(k.valorComTicket, k.moeda) + ' em pedidos'} />
+            <Kpi rotulo="Pedidos totais" valor={String(k.pedidosTotais)} pe="nos filtros atuais" />
+            <Kpi rotulo="Pedidos com atendimento" valor={String(k.pedidosComAtendimento)} pe={dinheiro(k.valorComAtendimento, k.moeda) + ' em pedidos'} />
             <Kpi rotulo="Casos" valor={String(k.casos)} pe={`${k.pctProdutoIdentificado}% com produto identificado`} />
-            <Kpi rotulo="Envolvidos em reembolso" valor={String(k.pedidosEmReembolso)} pe={`${k.reembolsosParciais} parciais · ${k.reembolsosConfirmados} confirmados pelo motor`} />
+            <Kpi rotulo="Envolvidos em reembolso" valor={String(k.pedidosEmReembolso)} pe={`${k.reembolsosRegistrados} só no relatório (não processados)`} />
             <Kpi rotulo="Valor total dos pedidos" valor={dinheiro(k.valorTotalPedidos, k.moeda)} pe="pago na Shopify" />
             <Kpi rotulo="Valor dos pedidos reembolsados" valor={dinheiro(k.valorPedidosReembolsados, k.moeda)} pe="valor pago dos casos com reembolso" />
-            <Kpi rotulo="Reembolsado de fato" valor={dinheiro(k.reembolsadoEfetivo, k.moeda)} pe="percentual concedido × valor pago" destaque />
+            <Kpi rotulo="Aceites pendentes" valor={String(k.aceitesPendentes)} pe={`${dinheiro(k.valorAceitesPendentes, k.moeda)} aguardando sua decisão — ainda não é reembolso`} />
+            <Kpi rotulo="Reembolsado de fato" valor={dinheiro(k.reembolsadoEfetivo, k.moeda)} pe={`${k.reembolsosEfetivados} efetivados (${k.reembolsosParciais} parciais): só confirmação enviada ou processado no relatório`} destaque />
             {k.historicoSuficiente ? (
               <Kpi rotulo="Cenário hipotético sem retenção" valor={dinheiro(k.hipoteticoSemRetencao, k.moeda)}
-                pe={`hipótese: todos com 100% — diferença de ${dinheiro(k.hipoteticoSemRetencao - k.reembolsadoEfetivo, k.moeda)} (não é economia comprovada)`} />
+                pe={`hipótese: os mesmos efetivados com 100% — diferença de ${dinheiro(k.hipoteticoSemRetencao - k.reembolsadoEfetivo, k.moeda)} (não é economia comprovada)`} />
             ) : (
-              <Kpi rotulo="Cenário hipotético sem retenção" valor="—" pe="dados históricos insuficientes: nenhum reembolso confirmado pelo motor" />
+              <Kpi rotulo="Cenário hipotético sem retenção" valor="—" pe="dados históricos insuficientes: nenhum reembolso efetivado pelo motor" />
             )}
           </div>
           <div className="central-jornadas">
@@ -212,7 +213,10 @@ export default function Central() {
                       <td><span className="tag tag-outro">{l.lojaNome}</span></td>
                       <td className="muted-sm" style={{ whiteSpace: 'nowrap' }}>{fmtData(l.dataMs)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{l.valor != null ? dinheiro(l.valor, l.moeda) : '—'}</td>
-                      <td>{!c ? <span className="muted-sm">—</span> : c.percentual != null ? `${c.percentual}%` : c.desfecho === 'em_aberto' ? <span className="muted-sm">em aberto</span> : NOME_DESFECHO[c.desfecho]}</td>
+                      <td>
+                        {!c ? <span className="muted-sm">—</span> : c.percentual != null ? `${c.percentual}%` : c.desfecho === 'em_aberto' ? <span className="muted-sm">em aberto</span> : NOME_DESFECHO[c.desfecho]}
+                        {c?.situacaoReembolso && <div className="muted-sm" style={{ fontSize: 11 }}>{c.situacaoReembolso === 'efetivado' ? 'efetivado' : c.situacaoReembolso === 'aceite_pendente' ? 'aceite pendente' : 'no relatório, não processado'}</div>}
+                      </td>
                       <td style={{ maxWidth: 200 }}>{c?.motivo ?? <span className="muted-sm">—</span>}</td>
                       <td>
                         <span className={'tag ' + (l.atendimento === 'confirmada' ? 'tag-green' : l.atendimento === 'manual' ? 'tag-amber' : 'tag-outro')} title="Origem da classificação">{NOME_ORIGEM[l.atendimento]}</span>

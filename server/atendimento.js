@@ -981,19 +981,43 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
     const indevida = confirmacaoIndevida(s)
     if (indevida) return { ok: false, motivo: `o texto confirma ${indevida} como fato consumado — a oferta tem de ser apresentada como pergunta` }
   }
-  // exigências positivas da oferta (ou da opção aceita, na confirmação)
+  // exigências positivas da oferta (ou da opção aceita, na confirmação):
+  // percentual + valor em dinheiro do servidor, frete (50%), cupom (código +
+  // percentual), TODAS as ações da etapa, prazo da oferta e 3 a 14 dias na confirmação
   const oferta = ofertaDaFase(faseId, an)
   if (!oferta) return { ok: true, motivo: null }
-  if (oferta.pct && oferta.tipo !== 'cancelamento' && !new RegExp(`\\b${oferta.pct}\\s?%`).test(s)) {
-    return { ok: false, motivo: `falta o percentual obrigatório da etapa (${oferta.pct}%)` }
+  const valor = Number(pedido?.valor || 0)
+  const citados = valoresMonetarios(s)
+  const temValor = n => citados.some(v => Math.abs(v - n) < 0.011)
+  const pctOferta = oferta.tipo === 'cancelamento' ? 100 : oferta.pct
+  if (pctOferta) {
+    if (oferta.tipo !== 'cancelamento' && !new RegExp(`\\b${pctOferta}\\s?%`).test(s)) {
+      return { ok: false, motivo: `falta o percentual obrigatório da etapa (${pctOferta}%)` }
+    }
+    if (!valor) return { ok: false, motivo: 'não há valor do pedido para calcular o reembolso em dinheiro — sem ele o texto não pode sair' }
+    const esperado = Math.round(valor * pctOferta) / 100
+    if (!temValor(esperado)) return { ok: false, motivo: `falta o valor em dinheiro calculado pelo servidor (${esperado.toFixed(2)} = ${pctOferta}% de ${valor.toFixed(2)})` }
+  }
+  if (faseId === 'reemb_50') {
+    const frete = Math.round(valor * 25) / 100
+    if (!valor || !temValor(frete)) return { ok: false, motivo: `falta o valor do frete de devolução calculado pelo servidor (${frete.toFixed(2)}), separado do valor do reembolso` }
   }
   const cup = cupomDaFase(faseId, loja, an)
-  if (cup.precisa && cup.codigo && !s.includes(cup.codigo)) {
-    return { ok: false, motivo: `falta o código do cupom cadastrado (${cup.codigo})` }
+  if (cup.precisa) {
+    if (cup.codigo && !s.includes(cup.codigo)) return { ok: false, motivo: `falta o código do cupom cadastrado (${cup.codigo})` }
+    if (!new RegExp(`\\b${cup.pct}\\s?%`).test(s)) return { ok: false, motivo: `falta o percentual do cupom (${cup.pct}%)` }
   }
-  const acao = acaoPrincipal(oferta.tipo)
-  if (acao && RE_ACAO[acao] && !RE_ACAO[acao].test(s)) {
-    return { ok: false, motivo: `o texto não nomeia a ação da etapa (${NOME_ACAO[acao]})` }
+  const acoes = []
+  if (/troca/.test(oferta.tipo)) acoes.push('troca')
+  if (/reenvio/.test(oferta.tipo)) acoes.push('reenvio')
+  if (/reembolso/.test(oferta.tipo)) acoes.push('reembolso')
+  if (oferta.tipo === 'cupom') acoes.push('cupom')
+  if (oferta.tipo === 'cancelamento') acoes.push('cancelamento')
+  for (const acao of acoes) {
+    if (!RE_ACAO[acao].test(s)) return { ok: false, motivo: `o texto não nomeia a ação "${NOME_ACAO[acao]}" desta etapa${acoes.length > 1 ? ` (a etapa tem ${acoes.length} ações: ${acoes.join(' + ')})` : ''}` }
+  }
+  if (fase?.confirmacao && pctOferta && !/\b3\s*(?:[-–—]|a|à|to|bis|hasta|tot|e|und|and|ou|or|oder|\/)\s*14\b/i.test(s)) {
+    return { ok: false, motivo: 'falta o prazo de 3 a 14 dias para o dinheiro voltar ao método de pagamento' }
   }
   if (oferta.prazo) {
     const [min, max] = oferta.prazo.match(/\d+/g) ?? []

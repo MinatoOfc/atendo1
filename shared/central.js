@@ -15,6 +15,10 @@
  *    contam — aparecem na tabela e em contadores separados (inferidos / manuais).
  *  - Valores nunca somam moedas diferentes: por moeda em cada fase e indicador.
  *  - "Cenário hipotético sem retenção" é hipótese (todos com 100%), não histórico.
+ *  - Indicadores refletem EXATAMENTE as linhas visíveis depois de todos os filtros.
+ *  - "Reembolsado de fato" só depois da confirmação realmente enviada (fase de
+ *    confirmação em historicoEtapas) ou do reembolso marcado como processado no
+ *    relatório; aceite aguardando o dono é "aceite pendente".
  */
 
 export const ORDEM_JORNADAS = ['entrada', 'tamanho', 'qualidade', 'defeito_errado', 'nao_recebido', 'cancelamento']
@@ -99,14 +103,20 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
     let comVoce = false
     let acaoPendente = null
     let escalouAoDono = false
+    let situacaoReembolso = null // 'efetivado' | 'aceite_pendente' | 'registrado' | null
+    let confirmacaoEnviada = null
 
     if (an?.fluxo) {
       origem = 'confirmada'
       jornada = JORNADA_DO_FLUXO[an.fluxo] ?? 'entrada'
       faseConfirmada = an.etapa ?? null
-      // só o que saiu de verdade; a mesma fase repetida (cliente só informou algo) conta uma vez
-      trilha = (an.historicoEtapas ?? []).filter(h => !h.evento && h.para && fases[h.para]).map(h => h.para)
+      // só o que saiu de verdade; a mesma fase repetida (cliente só informou algo) conta uma vez.
+      // A fase de confirmação (enviada só depois da aprovação do dono) fica à parte:
+      // é a prova de que o reembolso/troca foi efetivado.
+      const enviadas = (an.historicoEtapas ?? []).filter(h => !h.evento && h.para && fases[h.para]).map(h => h.para)
         .filter((id, i, arr) => arr.indexOf(id) === i)
+      trilha = enviadas.filter(id => !fases[id].confirmacao)
+      confirmacaoEnviada = enviadas.find(id => fases[id].confirmacao) ?? null
       motivo = an.motivo ? NOME_MOTIVO[an.motivo] ?? an.motivo : null
       produto = an.produtosAfetados?.length ? an.produtosAfetados.join('; ') : null
       comVoce = an.aguardando === 'humano'
@@ -114,6 +124,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
         const d = desfechoDaOferta(fases[an.acaoAceita]?.oferta ?? null); desfecho = d.desfecho; percentual = d.percentual
         acaoPendente = comVoce ? an.acaoAceita : null
         escalouAoDono = comVoce && !!fases[an.acaoAceita]?.decisaoDono
+        if (percentual != null) situacaoReembolso = (confirmacaoEnviada || t.relatorioProcessado) ? 'efetivado' : 'aceite_pendente'
       } else if (t.status === 'enviado' && /^Encerrada/.test(t.resolucao ?? '')) desfecho = 'encerrado'
     } else {
       const cat = t.motivoReembolso?.categoria
@@ -126,6 +137,8 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       else if (/cancel/i.test(linha)) { desfecho = 'cancelamento'; percentual = 100 }
       else if (t.status === 'enviado' && t.relatorioDia) desfecho = 'encerrado'
       comVoce = t.status === 'humano'
+      // clássico: a linha do relatório é registro; efetivado só quando o dono marcou "processado"
+      if ((desfecho === 'reembolso' || desfecho === 'cancelamento') && percentual != null) situacaoReembolso = t.relatorioProcessado ? 'efetivado' : 'registrado'
       // fase final deduzida do desfecho — o clássico não percorreu a escada (nada entra em trilha)
       if (desfecho === 'reembolso') faseInferida = percentual === 100 ? 'reemb_100' : percentual && fases[`reemb_${percentual}`] ? `reemb_${percentual}` : 'reemb_100'
       else if (desfecho === 'troca') faseInferida = jornada === 'tamanho' ? 'tam_troca' : jornada === 'defeito_errado' ? 'def_troca' : 'qual_troca'
@@ -158,6 +171,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       faseConfirmada, faseInferida, faseManual, origem, trilha,
       pendente: an?.transicaoPendente?.para ?? null,
       desfecho, percentual, reembolsado, concluido, comVoce, acaoPendente, escalouAoDono,
+      situacaoReembolso, confirmacaoEnviada,
       dataMs: new Date(pedido?.criadoEm ? pedido.criadoEm + 'T12:00:00' : t.data).getTime(),
       ajuste: t.centralAjuste ?? null,
       historicoAjustes: t.centralHistorico ?? [],
@@ -216,6 +230,11 @@ export function metricasPorFase(registros, fases) {
       if (rel === 'avancaram') m[id].avancaram++
       else if (rel === 'pararam') m[id].pararam++
       else if (rel === 'em_aberto') m[id].emAberto++
+    }
+    if (r.confirmacaoEnviada && m[r.confirmacaoEnviada]) {
+      const c = m[r.confirmacaoEnviada]
+      c.passaram++; c.pararam++
+      c.valorPorMoeda[r.moeda] = Math.round(((c.valorPorMoeda[r.moeda] ?? 0) + (r.pedidoValor ?? 0)) * 100) / 100
     }
     // classificações não confirmadas: aparecem separadas, nunca em passaram
     if (r.origem === 'manual' && r.faseManual && m[r.faseManual]) m[r.faseManual].manuais++
@@ -306,21 +325,26 @@ export function pedidosComConversa(tickets, pedidos) {
 const soma = (lista, f) => Math.round(lista.reduce((s, x) => s + (f(x) || 0), 0) * 100) / 100
 
 /**
- * Indicadores por moeda (lojas de moedas diferentes não se somam).
- *  hipoteticoSemRetencao  HIPÓTESE: se todo caso com reembolso tivesse recebido 100%
- *  reembolsadoEfetivo     o que foi de fato concedido (percentual × valor)
- *  historicoSuficiente    false quando não há caso confirmado de reembolso — a
- *                         hipótese não deve ser lida como economia
+ * Indicadores por moeda, calculados SOBRE AS LINHAS VISÍVEIS (depois de busca,
+ * loja, período, desfecho, jornada e fase) — lojas de moedas diferentes não se somam.
+ *  reembolsadoEfetivo     só reembolsos EFETIVADOS: confirmação enviada (fase de
+ *                         confirmação no histórico) ou marcado como processado no relatório
+ *  aceitesPendentes       aceite do cliente aguardando decisão/confirmação do dono
+ *  reembolsosRegistrados  linha do relatório manual (clássico) ainda não processada
+ *  hipoteticoSemRetencao  HIPÓTESE: os mesmos efetivados, se tivessem recebido 100%
+ *  historicoSuficiente    false sem reembolso efetivado confirmado pelo motor
  */
-export function indicadores(registrosFiltrados, pedidosFiltrados, lojas, pedidosComTicket) {
-  const moedaDaLoja = id => lojas.find(l => l.id === (id ?? 'loja1'))?.moeda ?? 'EUR'
-  const moedas = [...new Set([...pedidosFiltrados.map(p => moedaDaLoja(p.lojaId)), ...registrosFiltrados.map(r => r.moeda)])]
+export function indicadores(linhas) {
+  const moedas = [...new Set(linhas.map(l => l.moeda))]
   return moedas.map(moeda => {
-    const ps = pedidosFiltrados.filter(p => moedaDaLoja(p.lojaId) === moeda)
-    const rs = registrosFiltrados.filter(r => r.moeda === moeda)
-    const reembolsos = rs.filter(r => r.reembolsado != null && (r.desfecho === 'reembolso' || r.desfecho === 'cancelamento'))
-    const confirmados = reembolsos.filter(r => r.origem === 'confirmada')
-    const comTicket = ps.filter(p => pedidosComTicket.has(p.id))
+    const ls = linhas.filter(l => l.moeda === moeda)
+    const ps = ls.filter(l => l.pedidoId)
+    const rs = ls.filter(l => l.registro).map(l => l.registro)
+    const envolvidos = rs.filter(r => r.desfecho === 'reembolso' || r.desfecho === 'cancelamento')
+    const efetivados = rs.filter(r => r.situacaoReembolso === 'efetivado' && r.reembolsado != null)
+    const pendentes = rs.filter(r => r.situacaoReembolso === 'aceite_pendente')
+    const registrados = rs.filter(r => r.situacaoReembolso === 'registrado')
+    const confirmados = efetivados.filter(r => r.origem === 'confirmada')
     const porJornada = ORDEM_JORNADAS.map(chave => {
       const d = rs.filter(r => r.jornada === chave)
       return { chave, pedidos: d.length, valor: soma(d, r => r.pedidoValor), pct: rs.length ? Math.round((d.length / rs.length) * 1000) / 10 : 0 }
@@ -328,16 +352,20 @@ export function indicadores(registrosFiltrados, pedidosFiltrados, lojas, pedidos
     return {
       moeda,
       pedidosTotais: ps.length,
-      pedidosComTicket: comTicket.length,
-      pedidosEmReembolso: reembolsos.length,
-      valorTotalPedidos: soma(ps, p => p.valor),
-      valorComTicket: soma(comTicket, p => p.valor),
-      valorPedidosReembolsados: soma(reembolsos, r => r.pedidoValor),
-      hipoteticoSemRetencao: soma(reembolsos, r => r.pedidoValor),
-      reembolsadoEfetivo: soma(reembolsos, r => r.reembolsado),
+      pedidosComAtendimento: ps.filter(l => l.registro).length,
+      valorTotalPedidos: soma(ps, l => l.valor),
+      valorComAtendimento: soma(ps.filter(l => l.registro), l => l.valor),
+      pedidosEmReembolso: envolvidos.length,
+      valorPedidosReembolsados: soma(envolvidos, r => r.pedidoValor),
+      reembolsadoEfetivo: soma(efetivados, r => r.reembolsado),
+      reembolsosEfetivados: efetivados.length,
+      aceitesPendentes: pendentes.length,
+      valorAceitesPendentes: soma(pendentes, r => r.reembolsado),
+      reembolsosRegistrados: registrados.length,
+      hipoteticoSemRetencao: soma(efetivados, r => r.pedidoValor),
       historicoSuficiente: confirmados.length > 0,
       reembolsosConfirmados: confirmados.length,
-      reembolsosParciais: reembolsos.filter(r => (r.percentual ?? 100) < 100).length,
+      reembolsosParciais: efetivados.filter(r => (r.percentual ?? 100) < 100).length,
       casos: rs.length,
       pctProdutoIdentificado: rs.length ? Math.round((rs.filter(r => r.produtoIdentificado).length / rs.length) * 100) : 0,
       porJornada,
@@ -354,6 +382,6 @@ export function calcularCentral({ tickets, pedidos, lojas, fases, filtros = FILT
   const pedidosFiltrados = filtrarPedidos(pedidos, f, agora)
   const linhas = linhasDePedidos(pedidosFiltrados, registros, registrosFiltrados, lojas, f)
   const metricas = metricasPorFase(registrosFiltrados, fases)
-  const kpis = indicadores(registrosFiltrados, pedidosFiltrados, lojas, pedidosComConversa(tickets, pedidos))
+  const kpis = indicadores(linhas)
   return { filtros: f, casos, registros: registrosFiltrados, linhas, metricas, indicadores: kpis }
 }

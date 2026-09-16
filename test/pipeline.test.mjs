@@ -67,7 +67,10 @@ globalThis.fetch = async (url, opts) => {
     ultimoPromptEscrita = sys
     const acao = sys.match(/"acao_proposta" deve ser exatamente "([^"]+)"/)?.[1] ?? '?'
     const pct = sys.match(/Reembolso de (\d+)% = ([\d,]+ €)/)
-    const cupom = sys.match(/código (\w+)\. Use EXATAMENTE/)?.[1]
+    const cup = sys.match(/Cupom de (\d+)%: código (\w+)\. Use EXATAMENTE/)
+    const cupom = cup ? `${cup[2]} (${cup[1]}%)` : null
+    const frete = sys.match(/Frete de devolução estimado: ([\d,]+ €)/)?.[1]
+    const prazoDinheiro = /3 a 14 dias/.test(sys)
     const prazo = sys.match(/Prazo do envio expresso: ([^.]+)\./)?.[1]
     const titulo = sys.match(/AÇÃO DESTA RESPOSTA — ([^\n]+):/)?.[1] ?? ''
     const aceita = sys.match(/Opção aceita pelo cliente e aprovada pelo lojista: ([^\n]+)/)?.[1] ?? ''
@@ -78,6 +81,8 @@ globalThis.fetch = async (url, opts) => {
     if (/reembolso/.test(alvo) || pct) frases.push(pct ? `Wir bieten eine Rückerstattung von ${pct[1]}% (${pct[2]}) an.` : 'Wir bieten eine Rückerstattung an.')
     if (/cupom/.test(alvo) || cupom) frases.push(cupom ? `Gutschein: ${cupom}.` : 'Wir bieten einen Gutschein an.')
     if (/cancel/.test(alvo)) frases.push('Die Bestellung wird storniert.')
+    if (frete) frases.push(`Die Rücksendung würde ca. ${frete} kosten.`)
+    if (prazoDinheiro) frases.push('Das Geld ist in 3 bis 14 Tagen wieder da.')
     if (!frases.length) frases.push('Wir melden uns.')
     let texto = `Hallo! ${frases.join(' ')}${prazo ? ` Lieferzeit ${prazo}.` : ''} Möchten Sie das annehmen?`
     if (sabotagem) { texto = sabotagem; sabotagem = null }
@@ -218,6 +223,9 @@ test('edição manual no aprovar: fora da fase bloqueia; mudança de oferta exig
   // valor em dinheiro diferente do cálculo do servidor (25% de 100 = 25,00): não envia
   r = await comEnvio('ok', () => aprovar(t2, { texto: 'Wir bieten eine Rückerstattung von 25% (30,00 €) an. Ok?' }))
   assert.equal(r.status, 400); assert.match(r.erro, /não corresponde ao cálculo/)
+  // percentual certo mas SEM o valor em dinheiro: não envia
+  r = await comEnvio('ok', () => aprovar(t2, { texto: 'Wir bieten eine Rückerstattung von 25% an. Ok?' }))
+  assert.equal(r.status, 400); assert.match(r.erro, /falta o valor em dinheiro/)
   // cupom inventado: não envia
   r = await comEnvio('ok', () => aprovar(t2, { texto: 'Wir bieten eine Rückerstattung von 25% (25,00 €) an, plus Gutschein: FAKE99. Ok?' }))
   assert.equal(r.status, 400); assert.match(r.erro, /não está cadastrado/)
@@ -320,12 +328,23 @@ test('aceite aprovado pelo dono: a confirmação nasce só do clique, com os nú
   // outro percentual continua barrado, mesmo na confirmação
   r = await comEnvio('ok', () => aprovar(t, { texto: 'Rückerstattung von 40% veranlasst.' }))
   assert.equal(r.status, 400); assert.match(r.erro, /40%/)
+  // confirmação sem o prazo de 3 a 14 dias: não envia
+  r = await comEnvio('ok', () => aprovar(t, { texto: 'Ihre Rückerstattung von 25% (25,00 €) wurde veranlasst.' }))
+  assert.equal(r.status, 400); assert.match(r.erro, /3 a 14 dias/)
+  // antes de a confirmação sair, a Central mostra aceite pendente e NADA reembolsado de fato
+  let c = await api('/api/central?busca=C11', null, 'GET')
+  assert.equal(c.registros.length, 1); assert.equal(c.registros[0].situacaoReembolso, 'aceite_pendente')
+  assert.equal(c.indicadores[0].aceitesPendentes, 1); assert.equal(c.indicadores[0].reembolsadoEfetivo, 0)
   // fato consumado é permitido AQUI
   r = await comEnvio('ok', () => aprovar(t, { texto: 'Ihre Rückerstattung von 25% (25,00 €) wurde veranlasst — 3 bis 14 Tage.' }))
   assert.equal(r.status, 200, r.erro)
   t = await ticket(t.id)
   assert.equal(t.status, 'enviado'); assert.equal(an(t).etapa, 'conf_reembolso'); assert.equal(an(t).aguardando, null)
   assert.ok(an(t).historicoEtapas.some(h => h.evento === 'aceite_aprovado'))
+  // a confirmação ENVIADA (fase conf_reembolso no histórico) é o que efetiva o reembolso na Central
+  c = await api('/api/central?busca=C11', null, 'GET')
+  assert.equal(c.registros[0].situacaoReembolso, 'efetivado'); assert.equal(c.registros[0].confirmacaoEnviada, 'conf_reembolso')
+  assert.equal(c.indicadores[0].reembolsadoEfetivo, 25); assert.equal(c.indicadores[0].aceitesPendentes, 0)
   // mensagem nova depois da confirmação vai ao dono, sem reabrir a escada
   t = await cliente({ intencao: 'informa', resumo: 'e agora?' }, { de: 'c11@web.de', corpo: 'Und jetzt?', ticketId: t.id })
   assert.equal(t.status, 'humano'); assert.match(t.motivoEscalada, /confirmad/); assert.equal(an(t).etapa, 'conf_reembolso')
