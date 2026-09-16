@@ -14,6 +14,8 @@ const portaAberta = porta => new Promise(resolve => {
 
 export default async function encerrarServidorDeEnsaio() {
   try { await fetch(`http://127.0.0.1:${CONTROLE}/encerrar`, { method: 'POST', signal: AbortSignal.timeout(3000) }) } catch { /* já encerrado */ }
-  for (let i = 0; i < 40; i++) { if (!(await portaAberta(PORTA))) return; await new Promise(r => setTimeout(r, 250)) }
-  console.error(`[visual] a porta ${PORTA} continua aberta depois do encerramento`)
+  for (let i = 0; i < 40; i++) { if (!(await portaAberta(PORTA)) && !(await portaAberta(CONTROLE))) return; await new Promise(r => setTimeout(r, 250)) }
+  const estados = await Promise.all([PORTA, CONTROLE].map(p => portaAberta(p)))
+  const abertas = [PORTA, CONTROLE].filter((_, i) => estados[i])
+  throw new Error(`[visual] o servidor de ensaio continua escutando (${PORTA}/${CONTROLE}) depois do encerramento — portas ainda abertas: ${abertas.join(', ')}`)
 }

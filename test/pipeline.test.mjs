@@ -43,7 +43,7 @@ estado.lojas = [
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -67,6 +67,10 @@ estado.tickets = [
   semProva('sp3', 53, 'loja1', { fluxo: 'tamanho', motivo: 'tamanho', etapa: 'endereco', historicoEtapas: hist(['tam_ajuste', 'tam_troca', 'endereco']), acaoAceita: 'tam_troca', ajusteTamanho: { 'Polo Premium (Schwarz / L)': 'pequeno' } }),
   semProva('sp4', 54, 'loja1', { etapa: 'qual_troca', historicoEtapas: hist(['qual_troca']) }), // pedido com DOIS itens, sem marca de origem
   semProva('sp5', 55, 'loja1', { etapa: 'qual_troca', historicoEtapas: hist(['qual_troca']), aguardando: 'humano' }, { status: 'humano', motivoEscalada: 'Não deu para entender se o cliente aceitou ou recusou — responda você' }),
+  // conversas do modo novo SEM transição pendente (o motor é o da conversa, não a existência de transição)
+  semProva('sp7', 57, 'loja1', { etapa: 'qual_troca', historicoEtapas: hist(['qual_troca']), produtosAfetados: [], aguardando: 'cliente' }, { status: 'humano', motivoEscalada: 'Enviado e mantido com você' }), // sem produto, com o dono, sem ação automática
+  semProva('sp8', 58, 'loja4', { etapa: null, historicoEtapas: [], produtosInformados: true, aguardando: 'cliente' }, { status: 'humano', motivoEscalada: 'Mantido com você' }), // loja SEM e-mail (nada enviado nela), produto informado
+  semProva('sp9', 59, 'loja1', { etapa: 'qual_troca', historicoEtapas: hist(['qual_troca']), produtosInformados: true, aguardando: 'cliente' }, { status: 'humano', motivoEscalada: 'Mantido com você' }), // produto informado, resposta humana
   semProva('sp6', 56, 'loja3', { etapa: 'reemb_25', historicoEtapas: hist(['qual_troca', 'qual_cupom_35', 'reemb_25']), aguardando: 'envio', transicaoPendente: { para: 'reemb_40', mensagem: 'nein', faltando: [] }, rascunhoGerado: TEXTO40 }, { status: 'aprovacao', rascunho: TEXTO40, geradoPorIA: true, enviaEm: Date.now() - 1000 }), // envio AUTOMÁTICO vencido
   // modo novo com produtos "afetados" e endereço contaminados de propósito (nada pode vazar)
   { id: 'n909', nome: 'Fulano da Silva Sauro', de: 'c16@web.de', assunto: 'Bestellung #16', corpo: 'ik wil mijn geld terug, Hauptstraße 5, 10115 Berlin, Deutschland', data: '2026-08-01T10:00:00.000Z', lido: true, origem: 'cliente', categoria: 'reembolso', status: 'aprovacao', idioma: 'nl', lojaId: 'loja1', historico: [], motor: 'novo',
@@ -108,6 +112,7 @@ writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
 /* ---------- IA simulada: classificações roteirizadas + escritor que obedece ao prompt ---------- */
 const fila = []
 let sabotagem = null
+let classificacaoQuebrada = false // simula a IA falhando na classificação (resposta que não é JSON)
 // sabotagem de idioma: { idioma, vezes } — o escritor responde nesse idioma por N chamadas
 let idiomaSabotado = null
 let ultimoPromptInferencia = ''
@@ -140,6 +145,7 @@ globalThis.fetch = async (url, opts) => {
     }) })
   }
   if (req.includes('intencao')) {
+    if (classificacaoQuebrada) { classificacaoQuebrada = false; return responder('isto não é JSON') }
     const c = fila.shift() ?? { intencao: 'outro' }
     // o cliente informa o produto (regra do mapa); um teste passa produtos: [] para exercitar a trava
     return responder({ intencao: 'outro', motivo: 'nenhum', produtos: ['Polo Premium'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false, ...c })
@@ -963,6 +969,51 @@ test('rotas — casos antigos sem prova de produto: oferta antiga não sai (manu
   // Central agora identifica só os que informaram
   c = await api('/api/central', null, 'GET')
   for (const [n, esperado] of [['51', true], ['52', true], ['55', true], ['53', false], ['54', false], ['56', false]]) assert.equal(c.registros.find(x => x.pedidoNumero === n).produtoIdentificado, esperado, 'pedido ' + n)
+})
+
+test('rotas — modo novo SEM transição pendente: sem produto nada sai (manual, classificação falha, IA pausada); coleta manual sai; volta ao mesmo motivo; conta própria sempre; sem transição inventada', async () => {
+  const OFERTA = 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Möchten Sie das annehmen?'
+  const COLETA = 'Hallo! Welchen Artikel aus Ihrer Bestellung meinen Sie genau?'
+  // sp7: modo novo, transicaoPendente null, produto ausente, status humano → oferta/troca manual = 400 e NADA sai
+  let s7 = await ticket('sp7'); assert.equal(an(s7).transicaoPendente, null); assert.equal(s7.status, 'humano')
+  let r = await comEnvio('ok', () => api('/api/tickets/sp7/aprovar', { texto: OFERTA, origem: 'manual', confirmarAlteracao: true }))
+  assert.equal(r.status, 400); assert.equal(r.produtoNaoInformado, true)
+  s7 = await ticket('sp7'); assert.equal(s7.resposta, 'Antwort.', 'nada foi enviado'); assert.equal(an(s7).historicoEtapas.length, 1); assert.equal(an(s7).etapa, 'qual_troca')
+  assert.equal(an(s7).transicaoPendente.para, 'coleta'); assert.deepEqual(an(s7).transicaoPendente.faltando, ['produtos']); assert.equal(an(s7).proximaAposColeta, '__humano__'); assert.equal(an(s7).humanoPendente, 'Enviado e mantido com você', 'motivo humano preservado')
+  // a coleta manual do produto no idioma do cliente é permitida; depois do produto, volta ao MESMO motivo humano
+  r = await comEnvio('ok', () => api('/api/tickets/sp7/aprovar', { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  s7 = await ticket('sp7'); assert.equal(an(s7).etapa, 'coleta'); assert.equal(s7.resposta, COLETA)
+  s7 = await cliente({ intencao: 'informa', produtos: ['Polo Premium'], resumo: 'polo' }, { de: 'c57@web.de', corpo: 'Das Polo Premium.', ticketId: 'sp7' })
+  assert.equal(s7.status, 'humano'); assert.equal(s7.motivoEscalada, 'Enviado e mantido com você'); assert.equal(an(s7).produtosInformados, true); assert.equal(an(s7).transicaoPendente, null)
+
+  // classificação da IA falha ANTES do produto: escalada sem saída manual irrestrita — só a coleta do produto
+  classificacaoQuebrada = true
+  let a = await cliente(null, { de: 'c61@web.de', nome: 'C61', corpo: 'Hilfe, Geld zurück.', lojaId: 'loja1' })
+  assert.equal(a.status, 'humano'); assert.match(a.motivoEscalada, /não conseguiu classificar/); assert.equal(a.rascunho, undefined)
+  assert.equal(an(a).transicaoPendente.para, 'coleta'); assert.deepEqual(an(a).transicaoPendente.faltando, ['produtos']); assert.equal(an(a).proximaAposColeta, '__humano__')
+  r = await comEnvio('ok', () => api(`/api/tickets/${a.id}/aprovar`, { texto: OFERTA, origem: 'manual', confirmarAlteracao: true })); assert.equal(r.status, 400); assert.match(r.erro, /etapa|produto/i)
+  a = await ticket(a.id); assert.equal(a.resposta, undefined, 'nada saiu'); assert.equal(an(a).etapa, null)
+  r = await comEnvio('ok', () => api(`/api/tickets/${a.id}/aprovar`, { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  a = await cliente({ intencao: 'informa', produtos: ['Polo Premium'], resumo: 'polo' }, { de: 'c61@web.de', corpo: 'Das Polo Premium.', ticketId: a.id })
+  assert.equal(a.status, 'humano'); assert.match(a.motivoEscalada, /não conseguiu classificar/, 'volta ao mesmo motivo humano')
+
+  // IA pausada ANTES do produto: oferta manual bloqueada; coleta manual permitida
+  let b = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: [] }, { de: 'c62@web.de', nome: 'C62', corpo: 'Schlecht.', lojaId: 'loja1' })
+  assert.equal(an(b).transicaoPendente.para, 'coleta')
+  r = await api(`/api/tickets/${b.id}/pausar-ia`, { pausar: true }); assert.equal(r.status, 200)
+  b = await cliente(null, { de: 'c62@web.de', corpo: 'Hallo?', ticketId: b.id }); assert.equal(b.status, 'humano'); assert.match(b.motivoEscalada, /pausada/)
+  r = await comEnvio('ok', () => api(`/api/tickets/${b.id}/aprovar`, { texto: OFERTA, origem: 'manual', confirmarAlteracao: true })); assert.equal(r.status, 400)
+  b = await ticket(b.id); assert.equal(b.resposta, undefined); assert.equal(an(b).etapa, null)
+  r = await comEnvio('ok', () => api(`/api/tickets/${b.id}/aprovar`, { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  b = await ticket(b.id); assert.equal(an(b).etapa, 'coleta')
+
+  // sp8: modo novo sem transição, produto informado, loja SEM e-mail → nunca a conta de outra loja (nada sai)
+  r = await comEnvio('ok', () => api('/api/tickets/sp8/aprovar', { texto: 'Hallo, wir melden uns.', origem: 'manual' }))
+  assert.equal(r.status, 500); assert.match(r.erro, /própria loja/); const s8 = await ticket('sp8'); assert.equal(s8.resposta, 'Antwort.'); assert.equal(s8.status, 'humano')
+
+  // sp9: modo novo sem transição, produto informado → resposta humana sai pela conta própria, sem transição inventada
+  r = await comEnvio('ok', () => api('/api/tickets/sp9/aprovar', { texto: 'Hallo, wir kümmern uns darum.', origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  const s9 = await ticket('sp9'); assert.equal(s9.status, 'enviado'); assert.equal(s9.resposta, 'Hallo, wir kümmern uns darum.'); assert.equal(an(s9).etapa, 'qual_troca'); assert.equal(an(s9).historicoEtapas.length, 1, 'nenhuma transição registrada'); assert.equal(an(s9).transicaoPendente, null)
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

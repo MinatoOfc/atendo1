@@ -681,6 +681,42 @@ function mandarParaHumanoNovo(t, motivo) {
   t.rascunhoTraducao = undefined
   t.enviaEm = undefined
   if (an) { an.aguardando = 'humano'; an.transicaoPendente = null; an.rascunhoGerado = undefined }
+  // sem produto informado, a escalada NÃO abre uma saída manual irrestrita: o motivo fica
+  // preservado como pendência e a única resposta permitida é a coleta do produto (escrita à mão)
+  if (an && !produtoFoiInformado(an)) exigirColetaManualDeProduto(t, motivo)
+}
+
+/**
+ * Deixa a conversa do modo novo esperando SÓ a pergunta do produto, sem gerar
+ * rascunho (o lojista escreve; o texto é validado como coleta). Preserva a
+ * pendência: uma fase já guardada, ou a volta ao dono com o motivo dado.
+ */
+function exigirColetaManualDeProduto(t, motivo) {
+  const an = t.atendimentoNovo
+  if (!an.aguardandoProduto || !an.proximaAposColeta) { an.aguardandoProduto = true; an.proximaAposColeta = '__humano__' }
+  if (an.proximaAposColeta === '__humano__') an.humanoPendente = motivo || an.humanoPendente || t.motivoEscalada || 'Caso estava com você — decida'
+  an.transicaoPendente = { para: 'coleta', mensagem: 'produto não informado pelo cliente', faltando: ['produtos'] }
+  an.rascunhoGerado = undefined
+  t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined
+}
+
+/**
+ * Bloqueio de uma resposta do modo novo sem produto informado: preserva a fase ou
+ * decisão pendente (ou o motivo humano), remove qualquer oferta antiga e deixa só a
+ * coleta do produto — gerada pela IA quando ela está disponível, manual quando não.
+ */
+async function exigirColetaDeProduto(estado, wsId, t, motivoHumano) {
+  const an = (t.atendimentoNovo ??= novoEstado())
+  const tp = an.transicaoPendente
+  if (tp?.para === 'coleta' && (tp.faltando ?? []).includes('produtos')) return
+  if (!migrarCasoSemProduto(t)) {
+    // sem rascunho de oferta e sem estar com o dono: a pendência é voltar ao dono com o motivo
+    if (!an.aguardandoProduto || !an.proximaAposColeta) { an.aguardandoProduto = true; an.proximaAposColeta = '__humano__' }
+    if (an.proximaAposColeta === '__humano__') an.humanoPendente = an.humanoPendente || motivoHumano || t.motivoEscalada || 'Resposta manual bloqueada até o cliente informar o produto'
+    an.pedirProduto = true
+  }
+  if (t.iaPausada || !iaConfigurada) { exigirColetaManualDeProduto(t, an.humanoPendente); an.pedirProduto = false; return }
+  await gerarColetasDeProduto(wsId)
 }
 
 /**
@@ -1141,7 +1177,11 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   const lojaId = ticket.lojaId ?? 'loja1'
   const contas = contasDe(wsId)
   const an = ticket.atendimentoNovo
-  const modoNovo = !!an?.transicaoPendente?.para
+  // o motor é o da CONVERSA (motorDaConversa), nunca "ter uma fase pendente": conversa do
+  // novo sem transição (classificação falhou, IA pausada, rascunho falhou, com o dono) continua do novo
+  const modoNovo = motorDaConversa(ticket) === 'novo'
+  const transicao = an?.transicaoPendente?.para ? an.transicaoPendente : null
+  const coletaDeProduto = transicao?.para === 'coleta' && (transicao.faltando ?? []).includes('produtos')
   // modo novo: SÓ a conta da própria loja — nunca a de outra loja como reserva
   const propria = contas.find(c => c.id === lojaId) ?? null
   const conta = modoNovo ? propria : (propria ?? contas[0])
@@ -1149,8 +1189,9 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   if (modoNovo && !canal) {
     throw new Error(`A loja desta conversa (${lojaId}) não tem caixa de e-mail configurada — no modo novo a resposta só sai pela conta da própria loja, nunca pela de outra`)
   }
-  if (modoNovo && an.transicaoPendente.para !== 'coleta' && !produtoFoiInformado(an)) {
-    throw new Error('Produto não informado pelo cliente — nenhuma oferta, confirmação ou decisão sai antes; só a pergunta do produto')
+  // modo novo sem produto comprovadamente informado: NADA sai — a única exceção é a coleta que pergunta o produto
+  if (modoNovo && !produtoFoiInformado(an) && !coletaDeProduto) {
+    throw new Error('Produto não informado pelo cliente — nenhuma resposta sai antes; só a pergunta do produto')
   }
   // canal simulado só nos testes (ATENDO_SIMULAR=1): 'ok' envia, 'falha' quebra
   const simulado = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_SMTP_FAKE : null
@@ -1163,8 +1204,13 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   if (modoNovo && !enviou) {
     throw new Error('Nenhuma caixa de e-mail configurada nesta loja — no modo novo a resposta só conta depois de enviada de verdade')
   }
-  if (modoNovo) {
-    confirmarTransicao(an, { para: an.transicaoPendente.para, mensagem: an.transicaoPendente.mensagem, observacao: an.transicaoPendente.observacao })
+  if (modoNovo && transicao) {
+    // só registra transição quando ela existe de verdade
+    confirmarTransicao(an, { para: transicao.para, mensagem: transicao.mensagem, observacao: transicao.observacao })
+    an.proximoEnvioMinimo = undefined
+    an.rascunhoGerado = undefined
+  } else if (modoNovo && an) {
+    // resposta humana sem transição (com produto informado): sai pela conta própria, sem inventar fase
     an.proximoEnvioMinimo = undefined
     an.rascunhoGerado = undefined
   }
@@ -2925,13 +2971,20 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     // modo novo: o texto FINAL (regenerado ou editado à mão) tem de pertencer à
     // fase pendente; edição que mude a oferta exige confirmação explícita
     const anA = t.atendimentoNovo
-    if (anA?.transicaoPendente?.para) {
-      const faseId = anA.transicaoPendente.para
-      if (faseId !== 'coleta' && !produtoFoiInformado(anA)) {
-        // rascunho de oferta/confirmação sem prova de produto (caso antigo): não sai — vira a pergunta do produto
-        if (migrarCasoSemProduto(t)) await gerarColetasDeProduto(req.wsId)
+    // TRAVA PELO MOTOR DA CONVERSA (não pela transição): modo novo sem produto informado só envia a coleta do produto
+    if (motorDaConversa(t) === 'novo' && !produtoFoiInformado(anA)) {
+      const tp = anA?.transicaoPendente
+      const coletaProduto = tp?.para === 'coleta' && (tp.faltando ?? []).includes('produtos')
+      if (!coletaProduto) {
+        // sem transição (classificação falhou, IA pausada, rascunho falhou, com o dono) ou outra fase: bloqueia,
+        // preserva o motivo humano / a fase pendente e deixa só a coleta do produto
+        await exigirColetaDeProduto(req.estado, req.wsId, t, motivo)
+        salvar(req.wsId)
         return res.status(400).json({ erro: 'Não enviado — o cliente ainda não informou qual produto; só a pergunta do produto pode sair (regra do mapa).', produtoNaoInformado: true, state: visao(req.wsId) })
       }
+    }
+    if (anA?.transicaoPendente?.para) {
+      const faseId = anA.transicaoPendente.para
       const lojaA = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
       const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t), { faltando: anA.transicaoPendente.faltando ?? [], idioma: anA.idioma ?? null })
       if (!v.ok) {

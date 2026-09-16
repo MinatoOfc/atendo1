@@ -450,6 +450,22 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     o servidor fecha o HTTP e sai com código 0, e o teardown espera a porta 8798
     fechar. Rede de segurança: vida máxima de 20 min e sinais do sistema.
 
+45. **Motor pela conversa, nunca pela transição pendente (16/09)**: `enviarResposta`
+    e `/api/tickets/:id/aprovar` identificam o modo novo por `motorDaConversa(t)`.
+    Uma conversa do novo sem `transicaoPendente` (classificação falhou, IA
+    pausada, rascunho falhou, com o dono sem ação automática) continua do novo:
+    usa só a conta da própria loja; sem produto comprovadamente informado nada
+    sai (única exceção: coleta cujos faltantes contenham `produtos`); com
+    produto e resposta humana sem transição, envia pela conta própria sem
+    registrar transição inexistente; `confirmarTransicao` só roda quando a
+    transição existe. Em `/aprovar` a trava vem antes do bloco da transição:
+    sem transição ou com outra fase, bloqueia, preserva o motivo humano / a
+    fase pendente e prepara a coleta do produto (`exigirColetaDeProduto`; manual
+    quando a IA está pausada ou indisponível). `mandarParaHumanoNovo` sem
+    produto deixa como única resposta permitida a coleta escrita à mão
+    (`exigirColetaManualDeProduto`), com o motivo preservado. O teardown dos
+    testes visuais lança erro se 8798 ou 8796 continuar aberta.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o
