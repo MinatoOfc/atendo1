@@ -43,7 +43,7 @@ estado.lojas = [
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -188,9 +188,9 @@ const api = (rota, corpo, metodo = 'POST') => realFetch(base + rota, { method: m
 const ticket = async id => (await api('/api/state', null, 'GET')).state.tickets.find(t => t.id === id)
 const an = t => t.atendimentoNovo ?? {}
 
-async function cliente(cls, { de, nome, corpo, ticketId, lojaId, comImagem } = {}) {
+async function cliente(cls, { de, nome, corpo, ticketId, lojaId, comImagem, agora } = {}) {
   if (cls) fila.push(cls)
-  const r = await api('/api/simular-email', { de, nome, assunto: 'Bestellung', corpo, ticketId, lojaId, comImagem })
+  const r = await api('/api/simular-email', { de, nome, assunto: 'Bestellung', corpo, ticketId, lojaId, comImagem, agora })
   assert.ok(r.ok, 'simular falhou: ' + r.erro)
   return r.ticket
 }
@@ -836,6 +836,58 @@ test('conversas de motores diferentes nunca se fundem; do mesmo motor continuam 
   assert.equal(r.mudou, true); assert.equal(r.restantes.length, 1)
   r = rodar([base('e1', { motor: 'novo', atendimentoNovo: novo() }), base('e2', { de: 'ana.souza@outro.de', motor: 'novo', atendimentoNovo: novo() })])
   assert.equal(r.mudou, true); assert.equal(r.restantes.length, 1)
+})
+
+test('ponta a ponta — marcado como entregue: aguardar 2 dias (48 h reais do envio) → 20% → 35% → 100% com o dono; sem salto e sem reinício do relógio', async () => {
+  const H = 3600_000
+  const iso = ms => new Date(ms).toISOString()
+  const enviar = async t => { const r = await comEnvio('ok', () => aprovar(t)); assert.equal(r.status, 200, r.erro); return ticket(t.id) }
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'nao_recebido', situacaoEntrega: 'entregue_nao_recebido', resumo: 'consta entregue, nada chegou' }, { de: 'c41@web.de', nome: 'C41', corpo: 'Als zugestellt markiert, aber nichts angekommen. Geld zurück!', lojaId: 'loja1' })
+  assert.equal(an(t).fluxo, 'entregue_nao_recebido'); assert.equal(an(t).subfluxo, 'entregue'); assert.equal(an(t).transicaoPendente.para, 'nr_entregue_aguardar', 'entrada no cenário entregue')
+  assert.match(t.rascunho, /2 Tage/); assert.match(t.rascunho, /Nachbarn/)
+  t = await enviar(t); assert.equal(an(t).etapa, 'nr_entregue_aguardar')
+  const envio = Date.parse(an(t).historicoEtapas[0].em); assert.ok(Number.isFinite(envio), 'horário real do envio gravado no histórico')
+  // 10 h depois do envio: "ainda não chegou" → permanece na fase; o prazo é o do envio real
+  t = await cliente({ intencao: 'pede_reembolso', resumo: 'immer noch nichts' }, { de: 'c41@web.de', corpo: 'Immer noch nichts!', ticketId: t.id, agora: iso(envio + 10 * H) })
+  assert.equal(an(t).transicaoPendente.para, 'nr_entregue_aguardar', 'antes de 48 h permanece na fase')
+  assert.deepEqual(an(t).aguardarEntregue, { desde: iso(envio), ate: iso(envio + 48 * H) })
+  assert.match(t.rascunho, /2 Tage/, 'a resposta antecipada informa que o período segue correndo')
+  t = await enviar(t)
+  // 50 h depois do PRIMEIRO envio (40 h depois da resposta antecipada): venceu → só o 20%
+  t = await cliente({ intencao: 'pede_reembolso', resumo: 'nicht angekommen' }, { de: 'c41@web.de', corpo: 'Nicht angekommen. Geld!', ticketId: t.id, agora: iso(envio + 50 * H) })
+  assert.equal(an(t).transicaoPendente.para, 'nr_reenvio_20', 'a resposta antecipada não reiniciou o relógio; após 48 h vem o 20%, nunca o 35%')
+  assert.match(t.rascunho, /20%/); assert.match(t.rascunho, /erneut/); assert.doesNotMatch(t.rascunho, /35%/)
+  t = await enviar(t); assert.equal(an(t).etapa, 'nr_reenvio_20')
+  t = await cliente({ intencao: 'recusa', resumo: 'nein' }, { de: 'c41@web.de', corpo: 'Nein. 100%!', ticketId: t.id, agora: iso(envio + 60 * H) })
+  assert.equal(an(t).transicaoPendente.para, 'nr_reenvio_35', 'recusa do 20% → só o 35%'); assert.match(t.rascunho, /35%/)
+  t = await enviar(t); assert.equal(an(t).etapa, 'nr_reenvio_35')
+  t = await cliente({ intencao: 'recusa', resumo: 'nein, 100%' }, { de: 'c41@web.de', corpo: 'Nein! 100%!', ticketId: t.id, agora: iso(envio + 70 * H) })
+  assert.equal(t.status, 'humano'); assert.match(t.motivoEscalada, /100%/); assert.equal(an(t).acaoAceita, 'reemb_100'); assert.equal(t.rascunho, undefined)
+  const seq = an(t).historicoEtapas.map(h => h.para).join(' → ')
+  assert.equal(seq, 'nr_entregue_aguardar → nr_entregue_aguardar → nr_reenvio_20 → nr_reenvio_35', 'sequência enviada exata, sem salto')
+  console.log('[sequência observada — marcado como entregue] ' + seq + ' → reemb_100 (decisão do dono)')
+
+  // aceite do 20% pede endereço completo e não avança para o 35%
+  let u = await cliente({ intencao: 'pede_reembolso', motivo: 'nao_recebido', situacaoEntrega: 'entregue_nao_recebido' }, { de: 'c42@web.de', nome: 'C42', corpo: 'Zugestellt, aber nicht da.', lojaId: 'loja1' })
+  u = await enviar(u); const envio2 = Date.parse(an(u).historicoEtapas[0].em)
+  u = await cliente({ intencao: 'pede_reembolso' }, { de: 'c42@web.de', corpo: 'Nichts.', ticketId: u.id, agora: iso(envio2 + 49 * H) }); assert.equal(an(u).transicaoPendente.para, 'nr_reenvio_20')
+  u = await enviar(u)
+  u = await cliente({ intencao: 'aceita', resumo: 'ja' }, { de: 'c42@web.de', corpo: 'Ja, bitte erneut senden.', ticketId: u.id, agora: iso(envio2 + 50 * H) })
+  assert.equal(an(u).transicaoPendente.para, 'endereco', 'aceite do 20% pede endereço completo'); assert.equal(an(u).acaoAceita, 'nr_reenvio_20'); assert.match(u.rascunho, /Adresse/)
+
+  // recebeu antes dos 2 dias: encerra normalmente
+  let v = await cliente({ intencao: 'pede_reembolso', motivo: 'nao_recebido', situacaoEntrega: 'entregue_nao_recebido' }, { de: 'c43@web.de', nome: 'C43', corpo: 'Zugestellt, aber nicht da.', lojaId: 'loja1' })
+  v = await enviar(v); const envio3 = Date.parse(an(v).historicoEtapas[0].em)
+  v = await cliente({ intencao: 'informa', resumo: 'Paket ist angekommen, erhalten' }, { de: 'c43@web.de', corpo: 'Ist jetzt angekommen, danke!', ticketId: v.id, agora: iso(envio3 + 5 * H) })
+  assert.equal(v.status, 'enviado'); assert.match(v.resolucao, /Encerrada/); assert.equal(an(v).etapa, 'nr_entregue_aguardar', 'encerrou sem nova fase')
+
+  // link externo: o caminho "marcado como entregue" conta 20% e 35% em cartões separados (c41 passou por ambos; c42 só pelo 20%)
+  const r = await api('/api/pipeline-link', { acao: 'gerar' }); assert.equal(r.status, 200)
+  const ext = await (await realFetch(base + r.state.pipelineLink + '/dados')).json()
+  assert.equal(ext.porItem['delivery-delivered-wait2'].passaram, 3)
+  assert.equal(ext.porItem['delivery-delivered-reship20'].passaram, 2); assert.equal(ext.porItem['delivery-delivered-reship35'].passaram, 1)
+  assert.equal(ext.porItem['delivery-refused-20'].passaram, 0); assert.equal(ext.porItem['delivery-returned-reship20'].passaram, 0); assert.equal(ext.porItem['delivery-refused-35'].passaram, 0)
+  await api('/api/pipeline-link', { acao: 'revogar' })
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

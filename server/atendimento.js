@@ -196,7 +196,7 @@ export const FASES = {
   nr_entregue_aguardar: {
     jornada: 'nao_recebido', titulo: 'Marcado como entregue — aguardar 2 dias',
     oferta: null, requer: [],
-    aoAceitar: null, aoRecusar: 'nr_reenvio_35',
+    aoAceitar: null, aoRecusar: 'nr_reenvio_20',
     instrucao: 'Explique que a transportadora às vezes marca como entregue enquanto o pacote ainda está a caminho. Peça que aguarde mais dois dias e que verifique com vizinhos ou na portaria se alguém recebeu na ausência dele. Não ofereça nada ainda.',
   },
   nr_reenvio_20: {
@@ -485,6 +485,24 @@ export function faltaPara(faseId, an) {
  *  encerrar  true quando a mensagem não pede nada (agradecimento)
  *  aceite    { fase, oferta } quando o cliente aceitou algo
  */
+/** O cliente disse que recebeu (qualquer idioma do mapa). */
+export const RE_RECEBEU = /receb|chegou|arriv|erhalten|angekommen|ricevut|reçu|ontvangen/i
+/** "Aguardar 2 dias" = dois dias completos (48 h) contados do envio REAL do e-mail da fase. */
+export const AGUARDAR_ENTREGUE_MS = 48 * 3600_000
+/**
+ * Prazo dos 2 dias do cenário "marcado como entregue": começa no PRIMEIRO envio
+ * de nr_entregue_aguardar registrado em historicoEtapas (o horário confirmado do
+ * envio). Uma resposta antecipada repete a fase e gera outro registro, mas o
+ * relógio continua o mesmo. Sem horário confiável, o motor não avança sozinho.
+ */
+export function prazoAguardarEntregue(an, agora = Date.now()) {
+  const envio = (an?.historicoEtapas ?? []).find(h => h.para === 'nr_entregue_aguardar')
+  const desdeMs = envio ? Date.parse(envio.em) : NaN
+  if (!Number.isFinite(desdeMs) || desdeMs > agora) return { confiavel: false, desde: null, ate: null, vencido: false }
+  const ateMs = desdeMs + AGUARDAR_ENTREGUE_MS
+  return { confiavel: true, desde: new Date(desdeMs).toISOString(), ate: new Date(ateMs).toISOString(), vencido: agora >= ateMs }
+}
+
 export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora = Date.now() }) {
   const an = { ...anAntes, produtosAfetados: [...(anAntes.produtosAfetados ?? [])], historicoEtapas: [...(anAntes.historicoEtapas ?? [])] }
   const saida = { an, fase: null, faltando: [], humano: null, encerrar: false, aceite: null }
@@ -556,8 +574,16 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
     return irPara(saida, prazo.vencido ? 'nc_atrasado_25' : 'nc_no_prazo', agora)
   }
   if (an.etapa === 'nr_entregue_aguardar') {
-    if (cls.intencao === 'informa' && /receb|chegou|arriv|erhalten|angekommen|ricevut|reçu|ontvangen/i.test(cls.resumo ?? '')) { saida.encerrar = true; return saida }
-    return irPara(saida, atual.aoRecusar, agora)
+    // recebeu: encerra a qualquer momento
+    if (cls.intencao === 'informa' && RE_RECEBEU.test(cls.resumo ?? '')) { saida.encerrar = true; return saida }
+    // os 2 dias (48 h) contam do envio REAL do e-mail desta fase; a resposta antecipada
+    // repete a fase ("o período ainda não terminou") e NÃO reinicia o relógio
+    const pz = prazoAguardarEntregue(an, agora)
+    if (!pz.confiavel) { saida.humano = 'Sem horário confiável do envio de "aguardar 2 dias" — o motor não avança sozinho; decida você'; return saida }
+    an.aguardarEntregue = { desde: pz.desde, ate: pz.ate }
+    if (!pz.vencido) return irPara(saida, 'nr_entregue_aguardar', agora)
+    // única saída após os 2 dias: reenvio + 20% (nenhuma mensagem leva direto ao 35%)
+    return irPara(saida, 'nr_reenvio_20', agora)
   }
 
   // --- resposta a uma oferta ---
@@ -947,7 +973,10 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
     const pz = prazoDoPedido(pedido, loja, agora)
     dados.push(`Diga claramente que o pedido está DENTRO do prazo de entrega (${pz.diasUteis}). Data provável de recebimento: ${pz.provavel} — escreva essa data por extenso ou como DD/MM/AAAA. Não ofereça cupom, reembolso, troca nem reenvio.`)
   }
-  if (faseId === 'nr_entregue_aguardar') dados.push('Peça que aguarde mais 2 dias e que verifique com vizinhos ou na portaria. Não ofereça nada.')
+  if (faseId === 'nr_entregue_aguardar') {
+    dados.push('Peça que aguarde mais 2 dias e que verifique com vizinhos ou na portaria. Não ofereça nada.')
+    if (an?.etapa === 'nr_entregue_aguardar' && an.aguardarEntregue?.ate) dados.push(`O período de 2 dias já está correndo desde o e-mail anterior (${an.aguardarEntregue.desde}) e termina em ${an.aguardarEntregue.ate}: diga que o período ainda não terminou e que a contagem continua a mesma — NÃO reinicie os 2 dias nem prometa nada.`)
+  }
   if (faseId === 'nc_atrasado_25') dados.push('Peça que aguarde no máximo mais 5 dias úteis (diga "5 dias úteis").')
   if (conf && an.enderecoConfirmado) dados.push('Repita o endereço de entrega confirmado EXATAMENTE como está acima.')
   if (cupom.precisa) dados.push('Diga que é um CUPOM (Gutschein / coupon / código de desconto), com o código e o percentual.')

@@ -359,6 +359,22 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     um estado salvo (loja no novo com automático ligado, conversa do novo
     com `enviaEm` vencido, conversa clássica agendada) e prova tudo isso.
 
+39. **Marcado como entregue, mas não recebeu — correção pelo Miro (16/09)**: o
+    caminho obrigatório é aguardar 2 dias → (recebeu: encerrar) → destacar no
+    relatório → reenvio expresso + 20% → reenvio expresso + 35% → 100% com o
+    dono. O motor saltava do "aguardar" direto para o 35%; `nr_entregue_aguardar`
+    agora sai só para `nr_reenvio_20` (e `nr_reenvio_20 → nr_reenvio_35 →
+    reemb_100` fica como estava; aceite de 20% ou 35% pede o endereço completo
+    e vai ao dono). Os 2 dias são 48 h contadas do envio REAL do e-mail da
+    fase (horário gravado em `historicoEtapas`, no primeiro envio): "ainda não
+    chegou" antes disso repete a fase dizendo que o período não terminou e não
+    reinicia a contagem; sem horário confiável o motor não avança sozinho;
+    "recebi" encerra a qualquer momento. Nenhuma mensagem leva do "aguardar"
+    ao 35%. O mapa externo liga relatório → 20% → 35% → 100%, sem atalho. A
+    rota de ensaio `/api/simular-email` (só com ATENDO_SIMULAR=1) aceita um
+    horário simulado para os testes de prazo; e-mails reais usam o relógio do
+    servidor. Testes: unitário (motor) e ponta a ponta pelo pipeline real.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

@@ -140,8 +140,55 @@ test('não recebido: prazo decide; seção 7 quando já chega pedindo reembolso'
   r = rodada(r.an, { intencao: 'recusa' }, { pedido: atrasado }); assert.equal(r.an.aguardando, 'humano')
   const entregue = { ...pedido1, status: 'entregue' }
   r = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'nao_recebido' }, { pedido: entregue })
+  assert.equal(r.fase, 'nr_entregue_aguardar', 'entrada no cenário entregue')
+})
+
+test('7.2 marcado como entregue: 48 h reais do envio → 20% → 35% → 100%; resposta antecipada não avança nem reinicia o relógio', () => {
+  const entregue = { ...pedido1, status: 'entregue' }
+  const H = 3600_000
+  let r = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'nao_recebido' }, { pedido: entregue })
   assert.equal(r.fase, 'nr_entregue_aguardar')
-  r = rodada(r.an, { intencao: 'pede_reembolso' }, { pedido: entregue }); assert.equal(r.fase, 'nr_reenvio_35', '7.2: a seta do mapa entra no 35%')
+  // 10 h depois: "ainda não chegou" permanece na fase; o prazo é o do PRIMEIRO envio
+  r = rodada(r.an, { intencao: 'pede_reembolso', resumo: 'immer noch nichts' }, { pedido: entregue, agora: agora + 10 * H })
+  assert.equal(r.fase, 'nr_entregue_aguardar', 'antes de 48 h permanece')
+  assert.deepEqual(r.an.aguardarEntregue, { desde: new Date(agora).toISOString(), ate: new Date(agora + 48 * H).toISOString() })
+  r = rodada(r.an, { intencao: 'recusa', resumo: 'nein, nichts da' }, { pedido: entregue, agora: agora + 47 * H })
+  assert.equal(r.fase, 'nr_entregue_aguardar', '47 h desde o primeiro envio: ainda não venceu')
+  assert.equal(r.an.aguardarEntregue.ate, new Date(agora + 48 * H).toISOString(), 'a resposta antecipada não reiniciou a contagem')
+  // 50 h desde o primeiro envio (3 h desde a última resposta): venceu → SÓ o 20%
+  r = rodada(r.an, { intencao: 'pede_reembolso', resumo: 'immer noch nicht angekommen' }, { pedido: entregue, agora: agora + 50 * H })
+  assert.equal(r.fase, 'nr_reenvio_20', 'após 48 h vem o 20%, nunca o 35%')
+  r = rodada(r.an, { intencao: 'recusa' }, { pedido: entregue, agora: agora + 60 * H }); assert.equal(r.fase, 'nr_reenvio_35', 'recusa do 20% → só o 35%')
+  r = rodada(r.an, { intencao: 'recusa' }, { pedido: entregue, agora: agora + 70 * H }); assert.equal(r.an.aguardando, 'humano'); assert.equal(r.an.acaoAceita, 'reemb_100')
+  assert.equal(trilha(r), 'nr_entregue_aguardar → nr_entregue_aguardar → nr_entregue_aguardar → nr_reenvio_20 → nr_reenvio_35', 'histórico exato, sem salto')
+  // nenhuma intenção salta de "aguardar" para o 35%
+  for (const intencao of ['recusa', 'pede_reembolso', 'pede_cancelamento', 'aceita', 'informa', 'pergunta_status', 'outro']) {
+    let s = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'nao_recebido' }, { pedido: entregue })
+    s = rodada(s.an, { intencao, resumo: 'nichts' }, { pedido: entregue, agora: agora + 49 * H })
+    assert.notEqual(s.fase, 'nr_reenvio_35', intencao); assert.ok(s.fase === 'nr_reenvio_20' || s.encerrar === false, intencao)
+  }
+  // aceite do 20% pede endereço completo e não avança para o 35%
+  let s = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'nao_recebido' }, { pedido: entregue })
+  s = rodada(s.an, { intencao: 'pede_reembolso' }, { pedido: entregue, agora: agora + 49 * H }); assert.equal(s.fase, 'nr_reenvio_20')
+  s = rodada(s.an, { intencao: 'aceita' }, { pedido: entregue, agora: agora + 50 * H }); assert.equal(s.fase, 'endereco'); assert.equal(s.an.acaoAceita, 'nr_reenvio_20')
+  // recebeu: encerra a qualquer momento (antes ou depois das 48 h)
+  for (const h of [5, 60]) {
+    let e = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'nao_recebido' }, { pedido: entregue })
+    e = rodada(e.an, { intencao: 'informa', resumo: 'Paket ist angekommen, erhalten' }, { pedido: entregue, agora: agora + h * H }); assert.equal(e.encerrar, true, h + ' h')
+  }
+  // sem horário confiável do envio: não avança sozinho
+  const semHora = { ...novoEstado(), etapa: 'nr_entregue_aguardar', fluxo: 'entregue_nao_recebido', aguardando: 'cliente', historicoEtapas: [{ de: null, para: 'nr_entregue_aguardar', mensagem: '', em: 'inválido' }] }
+  const h = decidir({ an: semHora, cls: { intencao: 'pede_reembolso', resumo: 'nichts' }, pedido: entregue, loja, agora: agora + 100 * H })
+  assert.equal(h.fase, null); assert.match(h.humano, /horário confiável/)
+  // os outros cenários de não recebido não mudam
+  const atrasado = { ...pedido1, despachadoEm: '2026-08-01', status: 'transito' }
+  let n = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'nao_recebido', situacaoEntrega: 'nao_chegou' }, { pedido: atrasado }); assert.equal(n.fase, 'nr_reenvio_30')
+  n = rodada(n.an, { intencao: 'recusa' }, { pedido: atrasado }); assert.equal(n.fase, 'nr_reenvio_20')
+  n = rodada(n.an, { intencao: 'recusa' }, { pedido: atrasado }); assert.equal(n.fase, 'nr_reenvio_35')
+  n = rodada(n.an, { intencao: 'recusa' }, { pedido: atrasado }); assert.equal(n.an.acaoAceita, 'reemb_100')
+  let q = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'nao_recebido', situacaoEntrega: 'recusou_na_porta' }, { pedido: atrasado }); assert.equal(q.fase, 'nr_reenvio_30')
+  let p = rodada(novoEstado(), { intencao: 'pergunta_status', motivo: 'nao_recebido' }, { pedido: atrasado }); assert.equal(p.fase, 'nc_atrasado_25')
+  p = rodada(p.an, { intencao: 'pede_reembolso' }, { pedido: atrasado }); assert.equal(p.fase, 'nc_cupom_40')
 })
 
 test('cancelamento de pedido não processado, agradecimento e fora do mapa', () => {

@@ -680,7 +680,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   return { ok: true, motivo: null }
 }
 
-async function processarNovo(estado, t) {
+async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
   t.atendimentoNovo ??= novoEstado()
@@ -700,7 +700,7 @@ async function processarNovo(estado, t) {
   if (cls.resumo) { t.resumoSituacao = cls.resumo; t.situacaoTraducao = undefined }
 
   // 2. o servidor decide a única ação permitida
-  const d = decidir({ an, cls, pedido, loja, temFoto: !!t.anexos?.length })
+  const d = decidir({ an, cls, pedido, loja, temFoto: !!t.anexos?.length, agora })
   Object.assign(an, d.an)
   if (an.fluxo && CATEGORIA_DO_FLUXO[an.fluxo]) t.categoria = CATEGORIA_DO_FLUXO[an.fluxo]
 
@@ -926,7 +926,7 @@ export function fundirConversasDuplicadas(estado) {
   return mudou
 }
 
-async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }, wsId = null) {
+async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, agora }, wsId = null) {
   if (messageId) estado.emailsProcessados.push(messageId)
 
   // decide o spam ANTES de guardar imagem: mensagem que vira spam não salva bytes
@@ -962,7 +962,7 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }, w
   } else if (motorDaConversa(t) === 'novo') {
     // a conversa segue no motor em que começou, mesmo que a loja tenha trocado de modo
     // mensagem nova reinicia a cadência e recalcula o rascunho (regra 8)
-    const rn = await processarNovo(estado, t)
+    const rn = await processarNovo(estado, t, { agora })
     if (rn.spam) { t.status = 'spam'; t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined }
   } else {
     const r = await processarEmail(estado, t)
@@ -1707,7 +1707,9 @@ if (process.env.ATENDO_SIMULAR === '1') {
       if (ticketId) {
         const t = req.estado.tickets.find(x => x.id === ticketId)
         if (!t) return res.status(404).json({ erro: 'ticket não encontrado' })
-        await anexarNaConversa(req.estado, t, { corpo: String(corpo || ''), data: new Date().toISOString(), anexos }, req.wsId)
+        // relógio simulado (só nesta rota de ensaio, que só existe com ATENDO_SIMULAR=1): permite testar prazos reais como as 48 h de "aguardar 2 dias"
+        const agora = req.body.agora ? Date.parse(String(req.body.agora)) : NaN
+        await anexarNaConversa(req.estado, t, { corpo: String(corpo || ''), data: new Date(Number.isFinite(agora) ? agora : Date.now()).toISOString(), anexos, agora: Number.isFinite(agora) ? agora : undefined }, req.wsId)
         salvar(req.wsId)
         return res.json({ ok: true, ticket: t, state: visao(req.wsId) })
       }

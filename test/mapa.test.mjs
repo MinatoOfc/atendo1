@@ -97,7 +97,8 @@ const registros = [
   reg('N2', 'nao_recebido_status', ['nc_atrasado_25', 'nc_cupom_40'], { subfluxo: 'cancelamento' }), // pediu cancelamento, atrasado
   reg('N3', 'nao_recebido_reembolso', ['nr_reenvio_30', 'nr_reenvio_20'], { subfluxo: 'nao_chegou' }),
   reg('N4', 'nao_recebido_reembolso', ['nr_reenvio_30'], { subfluxo: 'recusado' }),
-  reg('N5', 'entregue_nao_recebido', ['nr_entregue_aguardar', 'nr_reenvio_35'], { subfluxo: 'entregue' }),
+  reg('N5', 'entregue_nao_recebido', ['nr_entregue_aguardar', 'nr_reenvio_20', 'nr_reenvio_35'], { subfluxo: 'entregue' }), // entregue: 20% e depois 35%
+  reg('N6', 'entregue_nao_recebido', ['nr_entregue_aguardar', 'nr_reenvio_20'], { subfluxo: 'entregue' }),                  // entregue: parado no 20%
 ]
 const porItem = metricasPorItem(registros, fases, metricasPorFase, relacaoComFase)
 const p = id => porItem[id].passaram
@@ -124,8 +125,22 @@ test('não recebido: cada cenário do mapa conta só os seus casos', () => {
   assert.equal(p('delivery-late-coupon40'), 1)
   assert.equal(p('delivery-returned-reship30'), 1); assert.equal(p('delivery-refused-reship30'), 1, 'N3 não chegou; N4 recusado')
   assert.equal(p('delivery-returned-reship20'), 1); assert.equal(p('delivery-refused-20'), 0)
-  assert.equal(p('delivery-delivered-wait2'), 1); assert.equal(p('delivery-delivered-reship35'), 1); assert.equal(p('delivery-refused-35'), 0); assert.equal(p('delivery-returned-reship35'), 0)
+  assert.equal(p('delivery-delivered-wait2'), 2); assert.equal(p('delivery-delivered-reship20'), 2); assert.equal(p('delivery-delivered-reship35'), 1); assert.equal(p('delivery-refused-35'), 0); assert.equal(p('delivery-returned-reship35'), 0)
   for (const [id, m] of Object.entries(porItem)) assert.equal(m.pctPassaram, m.totalSegmento ? Math.round((m.passaram / m.totalSegmento) * 1000) / 10 : 0, id)
+})
+
+test('marcado como entregue (Miro 7.2): relatório → 20% → 35% → 100%, sem atalho para o 35%; 20% e 35% contam separadamente', () => {
+  assert.deepEqual(itemPorId['delivery-delivered-wait2'].destinos, ['delivery-delivered-report'])
+  assert.deepEqual(itemPorId['delivery-delivered-report'].destinos, ['delivery-delivered-reship20'])
+  assert.deepEqual(itemPorId['delivery-delivered-reship20'].destinos, ['delivery-returned-address', 'delivery-delivered-reship35'])
+  assert.deepEqual(itemPorId['delivery-delivered-reship35'].destinos, ['delivery-returned-address', 'delivery-delivered-full'])
+  assert.deepEqual(MAPA_VISUAL.filter(i => i.destinos.includes('delivery-delivered-reship35')).map(i => i.id), ['delivery-delivered-reship20'], 'só o 20% leva ao 35%')
+  assert.doesNotMatch(itemPorId['delivery-delivered-reship20'].descricao, /35%/)
+  assert.equal(FASES.nr_entregue_aguardar.aoRecusar, 'nr_reenvio_20'); assert.equal(FASES.nr_reenvio_20.aoRecusar, 'nr_reenvio_35'); assert.equal(FASES.nr_reenvio_35.aoRecusar, 'reemb_100')
+  // N5 passou por 20% e 35%; N6 parou no 20%: cartões separados, só casos do caminho "entregue"
+  assert.deepEqual([p('delivery-delivered-wait2'), p('delivery-delivered-reship20'), p('delivery-delivered-reship35'), p('delivery-delivered-full')], [2, 2, 1, 0])
+  assert.deepEqual([porItem['delivery-delivered-reship20'].pararam, porItem['delivery-delivered-reship20'].avancaram, porItem['delivery-delivered-reship20'].emAberto], [0, 1, 1])
+  assert.deepEqual([p('delivery-returned-reship20'), p('delivery-refused-20'), p('delivery-returned-reship35'), p('delivery-refused-35')], [1, 0, 0, 0], 'os outros cenários não recebem os casos de "entregue"')
 })
 
 test('funil coerente em cada jornada: nenhuma etapa tem mais casos que a anterior e a soma pararam + avançaram + em aberto = passaram', () => {
@@ -136,6 +151,7 @@ test('funil coerente em cada jornada: nenhuma etapa tem mais casos que a anterio
     ['wrong-correct', 'wrong-coupon-35', 'wrong-refund-25', 'wrong-refund-40', 'wrong-refund-50', 'wrong-refund-60', 'wrong-refund-70'],
     ['delivery-returned-reship30', 'delivery-returned-reship20', 'delivery-returned-reship35'],
     ['delivery-late-wait', 'delivery-late-coupon40'],
+    ['delivery-delivered-wait2', 'delivery-delivered-reship20', 'delivery-delivered-reship35', 'delivery-delivered-full'],
   ]
   for (const cadeia of cadeias) {
     for (let k = 1; k < cadeia.length; k++) assert.ok(p(cadeia[k]) <= p(cadeia[k - 1]), `${cadeia[k]} (${p(cadeia[k])}) ≤ ${cadeia[k - 1]} (${p(cadeia[k - 1])})`)

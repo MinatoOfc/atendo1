@@ -344,7 +344,8 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   produto errado (produto correto + cupom 15% → escada da qualidade); não
   recebido (prazo decide: acalmar / cupom 25% / cupom 40% / 100%; ou, se já
   chegou pedindo reembolso, reenvio + cupom 30% → reenvio + 20% → reenvio + 35%
-  → 100%; marcado como entregue sem receber: aguardar 2 dias → reenvio + 35%);
+  → 100%; marcado como entregue sem receber: aguardar 2 dias (48 h contadas do
+  envio real do e-mail) → reenvio + 20% → reenvio + 35% → 100% com o dono);
   na fase de 50% o frete de retorno é dito só em dinheiro; cancelamento de pedido não processado (direto ao dono).
 - **Todo aceite vai para o dono** (troca e reenvio pedem o endereço completo
   antes). Reembolso de 100% e cancelamento também. Ao aprovar ("Aprovar e
