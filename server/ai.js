@@ -500,7 +500,7 @@ export async function extrairMotivosReembolso(casos) {
 const SCHEMA_CLASSIFICACAO_NOVO = {
   type: 'object',
   additionalProperties: false,
-  required: ['intencao', 'motivo', 'produtos', 'ajustes', 'situacaoEntrega', 'endereco', 'resumo', 'idioma', 'spam'],
+  required: ['intencao', 'motivo', 'produtos', 'ajustes', 'situacaoEntrega', 'endereco', 'resumo', 'idioma', 'idiomaConfiavel', 'spam'],
   properties: {
     intencao: { type: 'string', enum: ['aceita', 'recusa', 'pede_reembolso', 'pede_cancelamento', 'pede_troca', 'informa', 'pergunta_status', 'agradece', 'outro'] },
     motivo: { type: 'string', enum: ['tamanho', 'qualidade', 'nao_gostou', 'defeito', 'errado', 'nao_recebido', 'nao_informado', 'nenhum'] },
@@ -515,7 +515,8 @@ const SCHEMA_CLASSIFICACAO_NOVO = {
     situacaoEntrega: { type: 'string', enum: ['nao_chegou', 'entregue_nao_recebido', 'voltou_remetente', 'recusou_na_porta', 'nenhuma'] },
     endereco: { type: 'string' },
     resumo: { type: 'string' },
-    idioma: { type: 'string' },
+    idioma: { type: 'string', description: 'Código ISO 639-1 do idioma da mensagem do cliente, com região quando reconhecível (de, de-AT, nl, nl-BE, fr-BE, en, pt…)' },
+    idiomaConfiavel: { type: 'boolean', description: 'false quando a mensagem é curta demais para identificar o idioma com segurança ("ok", "sim", só um endereço, números, só uma foto)' },
     spam: { type: 'boolean' },
   },
 }
@@ -523,10 +524,11 @@ const SCHEMA_CLASSIFICACAO_NOVO = {
 const SCHEMA_RESPOSTA_NOVO = {
   type: 'object',
   additionalProperties: false,
-  required: ['resposta', 'acao_proposta'],
+  required: ['resposta', 'acao_proposta', 'idioma'],
   properties: {
     resposta: { type: 'string', description: 'A resposta completa ao cliente, pronta para envio' },
     acao_proposta: { type: 'string', description: 'O id da ação executada — deve ser exatamente o que as instruções pedem' },
+    idioma: { type: 'string', description: 'Código ISO 639-1 do idioma em que a resposta foi escrita (de, nl, fr, it, es, en, pt…)' },
   },
 }
 

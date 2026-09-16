@@ -289,6 +289,9 @@ export function novoEstado() {
     fotoRecebida: false,     // chegou uma imagem (ainda não é prova de nada)
     fotoValidada: null,      // true só depois de o lojista confirmar que mostra o defeito
     aguardandoComprovacao: false, // imagem recebida no fluxo de defeito, esperando o lojista dizer se comprova
+    idioma: null,            // idioma-alvo da conversa (ISO 639-1), pela última mensagem completa do cliente
+    idiomaOriginal: null,    // como veio da detecção (de-AT, nl-BE…), só para exibir
+    idiomaIncerto: false,    // ainda sem mensagem longa o bastante para ter certeza
     ofertaAtual: null,
     ofertaEnviadaEm: null,
     aguardando: null,
@@ -692,7 +695,85 @@ export function cupomDaFase(faseId, loja, an = null) {
 /* Prompts do modo novo                                                */
 /* ------------------------------------------------------------------ */
 
-const NOMES_IDIOMA = { pt: 'português', en: 'inglês', es: 'espanhol', fr: 'francês', de: 'alemão', it: 'italiano', nl: 'holandês' }
+export const NOMES_IDIOMA = { pt: 'português', en: 'inglês', es: 'espanhol', fr: 'francês', de: 'alemão', it: 'italiano', nl: 'holandês', pl: 'polonês', sv: 'sueco', da: 'dinamarquês', no: 'norueguês', fi: 'finlandês', cs: 'tcheco', hu: 'húngaro', ro: 'romeno', el: 'grego', tr: 'turco' }
+
+/* ------------------------------------------------------------------ */
+/* Idioma da conversa                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Idiomas que o validador local sabe ler (palavras de ação, oferta, negação). */
+export const IDIOMAS_VALIDADOS = new Set(['de', 'nl', 'fr', 'it', 'es', 'en', 'pt'])
+
+/** "nl-BE" → "nl", "de_AT" → "de", "PT-br" → "pt"; null se não for um código. */
+export function normalizarIdioma(cod) {
+  const base = String(cod || '').trim().toLowerCase().split(/[-_]/)[0]
+  return /^[a-z]{2,3}$/.test(base) ? base : null
+}
+
+const RE_CURTA = /^\s*(ok(?:ay|é|ey)?|sim|ja|yes|yep|oui|s[ií]|nee|nein|no|non|n[aã]o|nope|danke|thanks?|merci|gracias|grazie|obrigad[oa]|bedankt|dank|bitte|please|top|super|perfekt|perfeito|perfect|genau|certo|d'accord|akkoord|prima|klar|fine|good|gut)[\s.!,]*$/i
+/** A mensagem tem texto o bastante para confiar no idioma detectado? ("ok", endereço, números, só foto: não) */
+export function idiomaConfiavel(cls, corpo) {
+  if (cls?.idiomaConfiavel === false) return false
+  const texto = String(corpo || '').replace(/https?:\/\/\S+/g, ' ')
+  if (RE_CURTA.test(texto)) return false
+  const palavras = texto.split(/\s+/).filter(p => /[a-zà-ÿ]{2,}/i.test(p))
+  return palavras.length >= 3
+}
+
+/**
+ * Define/atualiza o idioma-alvo da conversa a partir da classificação: só uma
+ * mensagem completa troca o idioma; mensagem curta preserva o último confiável.
+ * Sem nenhum idioma ainda, usa o detectado (marcado como incerto) — nunca cai
+ * em português ou inglês por padrão.
+ */
+export function definirIdioma(an, cls, corpo) {
+  const detectado = normalizarIdioma(cls?.idioma)
+  if (!detectado) return an.idioma ?? null
+  if (idiomaConfiavel(cls, corpo)) {
+    an.idioma = detectado; an.idiomaOriginal = String(cls.idioma).trim(); an.idiomaIncerto = false
+  } else if (!an.idioma) {
+    an.idioma = detectado; an.idiomaOriginal = String(cls.idioma).trim(); an.idiomaIncerto = true
+  }
+  return an.idioma
+}
+
+// palavras funcionais distintivas por idioma (detecção local, sem rede)
+const PISTAS_IDIOMA = {
+  de: 'der die das und nicht ist sie ihre ihnen wir mit für bitte vielen dank bestellung gerne können werden wird haben sehr geehrte hallo grüße zu auf bei wenn ihr ihrer uns dass noch ein eine einen einem einer dem den des vom zum zur wurde tage tagen wieder zurück nach möchten',
+  nl: 'de het een en niet is wij we uw u met voor graag alstublieft bedankt bestelling kunnen zullen dat van wordt hebben beste groeten naar bij als ook dit nog binnen op aan te ik mijn wel zijn heeft moet kan wilt dagen',
+  fr: 'le la les et pas est vous votre nous avec pour merci commande bonjour cordialement dans une des un sera avons si ne que à sous au vos du aux ce cette sont ont été jours',
+  it: 'il lo gli le e non è lei suo sua noi con per grazie ordine buongiorno cordiali saluti che una del della sarà abbiamo entro di dei delle nel al sono hanno giorni',
+  es: 'el los las y no es usted su nosotros con para gracias pedido hola saludos que una del será hemos si le en al lo se han fue ya por días',
+  en: 'the and not is you your we with for thank thanks order hello regards please will have if can would of to within it this that are was our at by from days',
+  pt: 'o os as e não é você seu sua nós com para obrigado obrigada pedido olá atenciosamente que uma do da será temos se em um dos das no na ao à foi já dias',
+}
+const CONJUNTOS_IDIOMA = Object.fromEntries(Object.entries(PISTAS_IDIOMA).map(([k, v]) => [k, new Set(v.split(' '))]))
+
+/** Detecção local por palavras funcionais. Devolve { idioma, pontos, pontosPorIdioma }. */
+export function detectarIdioma(texto) {
+  const tokens = String(texto || '').toLowerCase().replace(/[^\p{L}\s'’]/gu, ' ').split(/\s+/).filter(Boolean)
+  const pontos = {}
+  for (const [id, set] of Object.entries(CONJUNTOS_IDIOMA)) pontos[id] = tokens.filter(t => set.has(t)).length
+  const melhor = Object.entries(pontos).sort((a, b) => b[1] - a[1])[0]
+  return { idioma: melhor && melhor[1] > 0 ? melhor[0] : null, pontos: melhor?.[1] ?? 0, pontosPorIdioma: pontos }
+}
+
+/**
+ * Prova do idioma antes do envio: (1) o código que o escritor declarou no JSON
+ * tem de ser o alvo; (2) a detecção local não pode apontar com força outro
+ * idioma validável. Sem alvo, nada a conferir.
+ */
+export function conferirIdioma(texto, alvo, declarado = null) {
+  if (!alvo) return { ok: true, motivo: null }
+  const decl = normalizarIdioma(declarado)
+  if (decl && decl !== alvo) return { ok: false, motivo: `o escritor declarou "${decl}" (${NOMES_IDIOMA[decl] ?? decl}) e o alvo é "${alvo}" (${NOMES_IDIOMA[alvo] ?? alvo})` }
+  const d = detectarIdioma(texto)
+  const doAlvo = d.pontosPorIdioma[alvo] ?? 0
+  if (d.idioma && d.idioma !== alvo && d.pontos >= 4 && d.pontos >= 2 * doAlvo) {
+    return { ok: false, motivo: `o texto parece estar em ${NOMES_IDIOMA[d.idioma] ?? d.idioma} ("${d.idioma}"), e o alvo é "${alvo}" (${NOMES_IDIOMA[alvo] ?? alvo})` }
+  }
+  return { ok: true, motivo: null }
+}
 const SIMBOLOS = { EUR: '€', BRL: 'R$', USD: 'US$', GBP: '£' }
 const dinheiro = (v, moeda) => `${Number(v || 0).toFixed(2).replace('.', ',')} ${SIMBOLOS[moeda] ?? moeda ?? ''}`.trim()
 
@@ -743,7 +824,9 @@ export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now()
     `"ajustes": para cada produto que o cliente disse que ficou pequeno ou grande.`,
     `"situacaoEntrega": nao_chegou, entregue_nao_recebido (consta entregue mas ele não recebeu), voltou_remetente, recusou_na_porta, ou nenhuma.`,
     `"endereco": o endereço de entrega completo, se o cliente escreveu um; senão string vazia.`,
-    `"resumo": uma frase em português do que o cliente disse. "idioma": código ISO do idioma do cliente.`,
+    `"resumo": uma frase em português do que o cliente disse.`,
+    `"idioma": código ISO 639-1 do idioma em que ESTA mensagem foi escrita, com região quando reconhecível (de, de-AT, nl, nl-BE, fr-BE, en, pt…). Não deduza pelo país: um cliente da Áustria pode escrever em inglês e um da Bélgica em holandês, francês ou alemão.`,
+    `"idiomaConfiavel": false quando a mensagem é curta demais para saber o idioma com segurança ("ok", "sim", só um endereço, números, só uma foto).`,
     `"spam": true só se não for cliente falando da própria compra.`,
   ].join('\n')
   const user = [
@@ -776,10 +859,14 @@ function descreverOferta(o) {
  * recebe a instrução da fase, os valores já calculados e o código do cupom —
  * nunca a escada inteira.
  */
-export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido, ticket, instrucaoEstilo = null, agora = Date.now() }) {
+export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido, ticket, instrucaoEstilo = null, idiomaAlvo = null, instrucaoIdioma = null, agora = Date.now() }) {
   const fase = FASES[faseId]
   const moeda = loja?.moeda ?? 'EUR'
-  const idiomaFixo = loja?.idioma && loja.idioma !== 'auto' ? (NOMES_IDIOMA[loja.idioma] ?? loja.idioma) : null
+  // no modo novo a resposta segue SEMPRE o idioma do cliente — a configuração fixa da loja não entra aqui
+  const alvo = normalizarIdioma(idiomaAlvo)
+  const linhaIdioma = alvo
+    ? `Escreva a resposta OBRIGATORIAMENTE em ${NOMES_IDIOMA[alvo] ?? alvo} (código "${alvo}") — o idioma da última mensagem completa do cliente. Ignore o idioma da loja, do histórico ou destas instruções.`
+    : 'Escreva a resposta no idioma em que o cliente escreveu a última mensagem completa — nunca em português ou inglês "por padrão".'
   const valor = Number(pedido?.valor || 0)
   const conf = !!fase.confirmacao
   const aceita = conf ? FASES[an.acaoAceita] : null
@@ -821,7 +908,8 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
 
   const system = [
     `Você é o atendimento ao cliente da loja "${loja?.nome ?? config?.nomeLoja ?? 'loja'}", um e-commerce de roupas.`,
-    `Escreva a resposta ao cliente ${idiomaFixo ? `em ${idiomaFixo}` : 'no idioma em que ele escreveu'}, cordial, direta, humana, sem parecer robô.`,
+    `${linhaIdioma} Cordial, direta, humana, sem parecer robô.`,
+    ...(instrucaoIdioma ? [`ATENÇÃO: ${instrucaoIdioma}. Reescreva TODA a resposta ${alvo ? `em ${NOMES_IDIOMA[alvo] ?? alvo} ("${alvo}")` : 'no idioma do cliente'}.`] : []),
     ``,
     `Regras invioláveis:`,
     ...(conf ? [
@@ -847,7 +935,7 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
     `Termine com a assinatura abaixo, mantendo as quebras de linha:`,
     loja?.assinatura || config?.assinatura || '',
     ``,
-    `No JSON, "acao_proposta" deve ser exatamente "${faseId}".`,
+    `No JSON, "acao_proposta" deve ser exatamente "${faseId}" e "idioma" deve ser o código ISO 639-1 do idioma em que você escreveu a resposta${alvo ? ` (esperado: "${alvo}")` : ''}.`,
   ].filter(l => l !== undefined).join('\n')
 
   const historico = (ticket.historico ?? []).slice(-6).map(m => `${m.autor === 'atendo' ? 'Loja' : 'Cliente'}: ${String(m.corpo).slice(0, 800)}`).join('\n---\n')
@@ -903,10 +991,10 @@ export function validarEndereco(texto) {
 /* ---- exigências positivas: o texto tem de conter o que a fase manda ---- */
 
 const RE_ACAO = {
-  troca: /\b(troca|trocar|trocamos|umtausch|tausch|austausch|ersatz|exchange|replace|replacement|[ée]change|remplac|cambio|reemplaz|scambio|sostitu|ruil|omruil|vervang)/i,
-  reenvio: /(reenvi|resend|re-send|erneut|nochmal|noch einmal|neu(?:e|en|es)?\s+(?:sendung|versand|lieferung|paket)|ersatzlieferung|ersatzsendung|renvo|nouvel envoi|reenv[ií]|rispedi|nuovo invio|opnieuw|nieuwe zending|ship(?:ping)?\s+(?:it\s+)?again|send(?:ing)?\s+(?:it\s+|you\s+)?again|another (?:package|parcel|shipment)|new (?:shipment|package|parcel))/i,
-  reembolso: /(reembols|refund|erstatt|rimbors|rembours|terugbetal|devolu[çc][aã]o do valor|devoluci[óo]n|money back|geld zur[üu]ck)/i,
-  cupom: /(cupom|cup[óo]n|coupon|gutschein|rabattcode|c[óo]digo de desconto|discount code|code promo|codice sconto|kortingscode|voucher)/i,
+  troca: /(troca|trocar|trocamos|umtausch|tausch|austausch|ersatz|exchange|replace|replacement|[ée]change|remplac|cambio|reemplaz|scambio|sostitu|ruil|omruil|vervang)/i,
+  reenvio: /(reenvi|resend|re-send|erneut|nochmal|noch einmal|neu(?:e|en|es)?\s+(?:sendung|versand|lieferung|paket)|ersatzlieferung|ersatzsendung|renvo|nouvel envoi|reenv[ií]|rispedi|nuovo invio|opnieuw|nieuwe (?:zending|verzending)|nogmaals (?:verzend|verstu|stur)|ship(?:ping)?\s+(?:it\s+)?again|send(?:ing)?\s+(?:it\s+|you\s+)?again|another (?:package|parcel|shipment)|new (?:shipment|package|parcel))/i,
+  reembolso: /(reembols|refund|erstatt|rimbors|rembours|terugbetal|terugstort|geld terug|devolu[çc][aã]o do valor|devoluci[óo]n|money back|geld zur[üu]ck)/i,
+  cupom: /(cupom|cup[óo]n|coupon|gutschein|rabattcode|c[óo]digo de desconto|discount code|code promo|codice sconto|kortingscode|kortingsbon|kortingscoupon|tegoedbon|voucher)/i,
   cancelamento: /(cancel|storn|annul)/i,
 }
 const acaoPrincipal = tipo => /troca/.test(tipo ?? '') ? 'troca' : /reenvio/.test(tipo ?? '') ? 'reenvio' : tipo ?? null
@@ -946,7 +1034,7 @@ export function valoresPermitidos(faseId, an, pedido) {
   return lista.map(v => Math.round(v * 100) / 100)
 }
 
-const RE_CUPOM_KW = /(cupom|cup[óo]n|coupon|gutschein(?:code)?|rabattcode|c[óo]digo|codice|code|kortingscode|voucher)/gi
+const RE_CUPOM_KW = /(cupom|cup[óo]n|coupon(?:code)?|gutschein(?:code)?|rabattcode|c[óo]digo|codice|code|kortingscode|kortingsbon|tegoedbon|voucher)/gi
 /** Códigos de cupom citados no texto (token só com maiúsculas/dígitos, com ao menos uma letra). */
 export function codigosCitados(texto) {
   const out = new Set()
@@ -964,19 +1052,19 @@ export function codigosCitados(texto) {
 const semAcento = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 
 const RE_PALAVRAS = {
-  pedido: /pedido|encomenda|bestell|order|commande|ordine|n[úu]mero|nummer|number|num[ée]ro/i,
+  pedido: /pedido|encomenda|bestell|bestel|order|commande|ordine|n[úu]mero|nummer|number|num[ée]ro/i,
   produtos: /produto|artikel|product|produit|prodotto|art[ií]culo|\bitem/i,
-  motivo: /motivo|grund|reason|raison|ragione|\bwhy\b|warum|por\s?qu[eê]|pourquoi|perch[ée]/i,
+  motivo: /motivo|grund|reason|raison|ragione|reden|\bwhy\b|warum|waarom|por\s?qu[eê]|pourquoi|perch[ée]/i,
   pequeno: /pequen|klein|small|tight|petit|piccol|\bkrap|\beng\b|apertad/i,
   grande: /grand|gro[ßs]|large|\bbig\b|\bweit|groot|ampi|folgad/i,
   foto: /foto|photo|bild|picture|image|imagem|immagine|afbeelding/i,
-  end_rua: /\brua\b|stra(?:ß|ss)e|street|\brue\b|calle|\bvia\b|straat|hausnummer|n[úu]mero|number|nummer/i,
+  end_rua: /\brua\b|stra(?:ß|ss)e|street|\brue\b|calle|\bvia\b|straat|hausnummer|huisnummer|n[úu]mero|number|nummer/i,
   end_cep: /\bcep\b|postleitzahl|\bplz\b|postal|\bzip\b|postcode|c[óo]digo postal/i,
-  end_cidade: /cidade|stadt|\bcity\b|ville|ciudad|citt[àa]|plaats|\bort\b|localidade/i,
+  end_cidade: /cidade|stadt|\bcity\b|ville|ciudad|citt[àa]|plaats|\bstad\b|\bort\b|localidade/i,
   endereco: /endere[çc]o|adresse|address|indirizzo|direcci[óo]n|\badres\b/i,
   completo: /complet|vollst[äa]ndig|volledig|inteir|enti[er]/i,
-  prazo: /prazo|frist|lieferzeit|zeitraum|zeitfenster|delivery (?:time|window|period)|d[ée]lai|plazo|termine|levertijd|within|innerhalb|dentro d[oe]|on time|p[üu]nktlich|im rahmen/i,
-  vizinhos: /vizinh|nachbar|neighbo|voisin|vecin|vicin|\bburen\b|portaria|hausmeister|concierge|reception|rezeption|portier|porteir|conserje|portineria|lobby|mailroom|poststelle/i,
+  prazo: /prazo|frist|lieferzeit|zeitraum|zeitfenster|delivery (?:time|window|period)|d[ée]lai|plazo|termine|levertijd|levertermijn|binnen de|op tijd|within|innerhalb|dentro d[oe]|on time|p[üu]nktlich|im rahmen/i,
+  vizinhos: /vizinh|nachbar|neighbo|voisin|vecin|vicin|\bburen\b|buurman|buurvrouw|portaria|hausmeister|concierge|conci[eë]rge|reception|receptie|rezeption|portier|porteir|conserje|portineria|lobby|mailroom|poststelle/i,
 }
 const NOMES_FALTA = {
   pedido: 'o número do pedido', produtos: 'quais produtos estão envolvidos', motivo: 'o motivo', ajuste: 'se ficou pequeno ou grande',
@@ -991,7 +1079,7 @@ export const mencionaDias = (texto, n) => new RegExp(`\\b(?:${n}|${NUM_DIAS[n]})
 /** "5 dias úteis", "fünf Werktage", "5 business days"… */
 export const mencionaDiasUteis = (texto, n) => new RegExp(`\\b(?:${n}|${NUM_DIAS[n]})\\s*${EXTRA}${RE_DIAS_UTEIS}`, 'i').test(texto)
 
-const MESES = ['jan|gen|ene', 'feb|fev', 'mar|marz|mrz', 'apr|abr|avr', 'mai|may|mag', 'jun|giu|juin', 'jul|lug|juil', 'aug|ago|aout', 'sep|set', 'okt|oct|out|ott', 'nov', 'dez|dec|dic']
+const MESES = ['jan|gen|ene', 'feb|fev', 'mar|marz|mrz|mrt', 'apr|abr|avr', 'mai|may|mag|mei', 'jun|giu|juin', 'jul|lug|juil', 'aug|ago|aout', 'sep|set', 'okt|oct|out|ott', 'nov', 'dez|dec|dic']
 /** A data ISO aparece no texto em algum formato usual (28/08/2026, 28.08.2026, 28 de agosto, August 28…)? */
 export function mencionaData(texto, iso) {
   const [y, m, d] = String(iso || '').split('-')
@@ -1010,13 +1098,13 @@ export function mencionaData(texto, iso) {
 /* ---- oferta indevida: promessa ou oferta de ação que a fase não permite ---- */
 
 // marcadores de oferta/promessa positiva (a ação está sendo oferecida ou garantida)
-const RE_OFERECE = /\b(oferec|ofrec|offr|offer|biet|propos|kostenlos|gratuit|gratis|gr[áa]tis|free\b|podemos|pode(?:r[ií]amos)?\b|we (?:can|could|will|would)|we'll|wir (?:k[oö]nn(?:en|ten)|werden|senden|schicken|tauschen|erstatten)|k[oö]nn(?:en|ten) wir|werden wir|senden wir|schicken wir|tauschen wir|erstatten wir|enviaremos|faremos|reenviaremos|trocaremos|reembolsaremos|cancelaremos|vamos\b|possiamo|potremmo|pouvons|pourrions|allons|podr[ií]amos|com prazer|gerne|happy to|glad to|erhalten sie|sie erhalten|sie bekommen|bekommen sie|receber[áa]|you(?:'ll| will) (?:get|receive)|providenci|arrange|veranlass|organis|garant|assegur|alternativ|como alternativa|as an alternative|stattdessen|instead)/i
+const RE_OFERECE = /\b(oferec|ofrec|offr|offer|biet|propos|kostenlos|gratuit|gratis|gr[áa]tis|free\b|podemos|pode(?:r[ií]amos)?\b|we (?:can|could|will|would)|we'll|wir (?:k[oö]nn(?:en|ten)|werden|senden|schicken|tauschen|erstatten)|k[oö]nn(?:en|ten) wir|werden wir|senden wir|schicken wir|tauschen wir|erstatten wir|enviaremos|faremos|reenviaremos|trocaremos|reembolsaremos|cancelaremos|vamos\b|possiamo|potremmo|pouvons|pourrions|allons|podr[ií]amos|com prazer|gerne|happy to|glad to|erhalten sie|sie erhalten|sie bekommen|bekommen sie|receber[áa]|you(?:'ll| will) (?:get|receive)|providenci|arrange|veranlass|organis|garant|assegur|alternativ|como alternativa|as an alternative|stattdessen|instead|aanbied|bieden (?:wij|we)|(?:wij|we) (?:kunnen|zullen|bieden|sturen|verzenden|ruilen|vervangen|betalen)|kunnen (?:wij|we)|zullen (?:wij|we)|graag|kosteloos|u (?:krijgt|ontvangt)|krijgt u|ontvangt u)/i
 // marcadores de negação / limitação: a ação está sendo explicada como ainda não possível
-const RE_NEGA = /\b(n[aã]o|nicht|not|kein|keine|keinen|nie|niemals|never|pas|non|niet|geen|ainda n[aã]o|noch nicht|not yet|erst\b|s[oó] (?:depois|ap[oó]s|quando|poder)|only (?:after|once|when|possible)|nur (?:nach|wenn|sobald|m[oö]glich)|nach ablauf|ap[oó]s o (?:fim|t[ée]rmino|prazo)|after the (?:deadline|delivery|period)|infelizmente|leider|unfortunately|malheureusement|purtroppo|lamentablemente|helaas|imposs|nicht m[oö]glich|cannot|can't|can not|couldn't|antes d[oe]|before the|until|bis (?:zum|zur|der|die|das)|solange|enquanto)\b/i
+const RE_NEGA = /\b(n[aã]o|nicht|not|kein|keine|keinen|nie|niemals|never|pas|non|niet|geen|ainda n[aã]o|noch nicht|not yet|erst\b|s[oó] (?:depois|ap[oó]s|quando|poder)|only (?:after|once|when|possible)|nur (?:nach|wenn|sobald|m[oö]glich)|nach ablauf|ap[oó]s o (?:fim|t[ée]rmino|prazo)|after the (?:deadline|delivery|period)|infelizmente|leider|unfortunately|malheureusement|purtroppo|lamentablemente|helaas|imposs|nicht m[oö]glich|cannot|can't|can not|couldn't|antes d[oe]|before the|until|bis (?:zum|zur|der|die|das)|solange|enquanto|nog niet|kan niet|kunnen niet|niet mogelijk|pas na|alleen na|voordat|totdat|jammer genoeg)\b/i
 // frases: só pontuação forte. Segmentos: só conjunções adversativas/consecutivas —
 // vírgula, dois-pontos, travessão, artigos e "ou/or/oder" NÃO separam o marcador da ação.
 const RE_FRASES = /[.!?;\n]+/
-const RE_SEGMENTOS = /\b(?:mas|por[ée]m|contudo|entretanto|todavia|ent[ãa]o|portanto|but|however|yet|therefore|then|aber|jedoch|doch|sondern|daher|deshalb|deswegen|dann|pero|sino|entonces|ma|per[òo]|tuttavia|quindi|mais|toutefois|cependant|donc|alors)\b/i
+const RE_SEGMENTOS = /\b(?:mas|por[ée]m|contudo|entretanto|todavia|ent[ãa]o|portanto|but|however|yet|therefore|then|aber|jedoch|doch|sondern|daher|deshalb|deswegen|dann|pero|sino|entonces|ma|per[òo]|tuttavia|quindi|mais|toutefois|cependant|donc|alors|maar|echter|dus|daarom|toch)\b/i
 
 /** Ações que uma oferta traz (troca, reenvio, reembolso, cupom, cancelamento). */
 export function acoesDaOferta(o) {
@@ -1120,6 +1208,11 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   if (!v.ok) return v
   const fase = FASES[faseId]
   const s = String(texto || '')
+  // idioma que o validador local não sabe ler: confere só números/códigos; o texto
+  // fica obrigatoriamente na aprovação humana (prepararRascunhoNovo nunca agenda)
+  const idiomaAlvo = normalizarIdioma(opcoes.idioma)
+  const leve = !!(idiomaAlvo && !IDIOMAS_VALIDADOS.has(idiomaAlvo))
+  const aviso = leve ? `idioma "${idiomaAlvo}" não é validado localmente — aprovação humana obrigatória` : null
   // cupom inventado / código diferente do cadastrado
   const cadastrados = new Set(Object.values(loja?.cupons ?? {}).filter(Boolean))
   for (const c of codigosCitados(s)) {
@@ -1145,11 +1238,11 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   const oferta = ofertaDaFase(faseId, an)
   // nenhuma ação fora da oferta desta fase (ou da opção já aceita) pode ser oferecida ou prometida
   // no pedido de endereço, a opção que o cliente já aceitou pode ser repetida — nada além dela
-  const indevidaAqui = ofertaIndevida(s, acoesDaOferta(faseId === 'endereco' ? (FASES[an?.acaoAceita]?.oferta ?? null) : oferta))
+  const indevidaAqui = leve ? null : ofertaIndevida(s, acoesDaOferta(faseId === 'endereco' ? (FASES[an?.acaoAceita]?.oferta ?? null) : oferta))
   if (indevidaAqui) return { ok: false, motivo: `o texto oferece ou promete ${indevidaAqui}, que não é permitido nesta etapa${oferta ? '' : ' (antes dos dados obrigatórios, da foto validada ou do prazo, nenhuma oferta pode aparecer)'}` }
   if (!oferta) {
-    const motivo = exigenciasSemOferta(faseId, s, { an, pedido, loja, faltando: opcoes.faltando ?? an?.transicaoPendente?.faltando ?? [] })
-    return motivo ? { ok: false, motivo } : { ok: true, motivo: null }
+    const motivo = leve ? null : exigenciasSemOferta(faseId, s, { an, pedido, loja, faltando: opcoes.faltando ?? an?.transicaoPendente?.faltando ?? [] })
+    return motivo ? { ok: false, motivo } : { ok: true, motivo: null, aviso }
   }
   const valor = Number(pedido?.valor || 0)
   const citados = valoresMonetarios(s)
@@ -1171,10 +1264,10 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   if (cup.precisa) {
     if (cup.codigo && !s.includes(cup.codigo)) return { ok: false, motivo: `falta o código do cupom cadastrado (${cup.codigo})` }
     if (!new RegExp(`\\b${cup.pct}\\s?%`).test(s)) return { ok: false, motivo: `falta o percentual do cupom (${cup.pct}%)` }
-    if (!RE_ACAO.cupom.test(s)) return { ok: false, motivo: 'falta dizer que se trata de um cupom (Gutschein / coupon / código de desconto) — o código solto não basta' }
+    if (!leve && !RE_ACAO.cupom.test(s)) return { ok: false, motivo: 'falta dizer que se trata de um cupom (Gutschein / coupon / código de desconto) — o código solto não basta' }
   }
   // atrasado: o prazo máximo de mais 5 dias úteis é obrigatório
-  if (faseId === 'nc_atrasado_25' && !mencionaDiasUteis(s, 5)) {
+  if (!leve && faseId === 'nc_atrasado_25' && !mencionaDiasUteis(s, 5)) {
     return { ok: false, motivo: 'falta pedir que aguarde no máximo mais 5 dias úteis' }
   }
   // confirmação de troca/reenvio: o endereço confirmado tem de ser repetido por inteiro
@@ -1191,19 +1284,19 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   if (/reembolso/.test(oferta.tipo)) acoes.push('reembolso')
   if (oferta.tipo === 'cupom') acoes.push('cupom')
   if (oferta.tipo === 'cancelamento') acoes.push('cancelamento')
-  for (const acao of acoes) {
+  for (const acao of leve ? [] : acoes) {
     if (!RE_ACAO[acao].test(s)) return { ok: false, motivo: `o texto não nomeia a ação "${NOME_ACAO[acao]}" desta etapa${acoes.length > 1 ? ` (a etapa tem ${acoes.length} ações: ${acoes.join(' + ')})` : ''}` }
   }
-  if (fase?.confirmacao && pctOferta && !/\b3\s*(?:[-–—]|a|à|to|bis|hasta|tot|e|und|and|ou|or|oder|\/)\s*14\b/i.test(s)) {
+  if (fase?.confirmacao && pctOferta && !/\b3\s*(?:[-–—]|a|à|to|bis|hasta|tot|e|und|and|ou|or|oder|\/|\S{1,8})\s*14\b/i.test(s)) {
     return { ok: false, motivo: 'falta o prazo de 3 a 14 dias para o dinheiro voltar ao método de pagamento' }
   }
   if (oferta.prazo) {
     const [min, max] = oferta.prazo.match(/\d+/g) ?? []
-    if (min && max && !new RegExp(`\\b${min}\\s*(?:[-–—]|a|à|to|bis|hasta|tot|e|und|and|ou|or|oder|\\/)\\s*${max}\\b`, 'i').test(s)) {
+    if (min && max && !new RegExp(`\\b${min}\\s*(?:[-–—]|a|à|to|bis|hasta|tot|e|und|and|ou|or|oder|\\/|\\S{1,8})\\s*${max}\\b`, 'i').test(s)) {
       return { ok: false, motivo: `falta o prazo obrigatório da etapa (${oferta.prazo})` }
     }
   }
-  return { ok: true, motivo: null }
+  return { ok: true, motivo: null, aviso }
 }
 
 /** Percentuais e cupons presentes num texto — a "assinatura" da oferta. */

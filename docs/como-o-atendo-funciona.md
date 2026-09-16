@@ -391,6 +391,16 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   automático do modo novo é uma chave por loja, desligada no piloto.
 - **Por loja**: prazo de entrega em dias úteis (base do "atrasado") e códigos de
   cupom por percentual (10, 15, 25, 30, 35, 40).
+- **Idioma**: a resposta sai sempre no idioma da última mensagem completa do
+  cliente (a configuração "Sempre em X" da loja vale só para o clássico). A
+  classificação devolve o código ISO com região (de-AT, nl-BE, fr-BE) e se é
+  confiável; "ok", endereço, números ou só uma foto preservam o último idioma
+  confiável da conversa; uma mensagem completa em outro idioma troca. O
+  escritor recebe "escreva obrigatoriamente em holandês (nl)" e declara no
+  JSON o idioma usado; o servidor confere a declaração e a detecção local
+  antes de qualquer envio (primeira resposta, regeneração, aprovação,
+  auto-envio, confirmação): idioma errado → regenera uma vez → fila humana.
+  Idiomas fora do validador local ficam obrigatoriamente na aprovação humana.
 - **Na conversa**: card "Atendimento novo" no painel lateral com jornada, fase
   atual, o que está aguardando, última oferta, próxima ação, dados que faltam,
   horário mínimo da próxima resposta, botões de validação da foto e o histórico

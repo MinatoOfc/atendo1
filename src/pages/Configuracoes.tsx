@@ -624,6 +624,9 @@ export default function Configuracoes() {
         <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
           No automático a IA detecta o idioma de cada cliente. Com um idioma fixo, toda resposta desta loja sai nele — útil quando a detecção confunde.
           A mudança vale para os próximos e-mails; rascunhos que já estão na fila de aprovação não são refeitos.
+          <br /><b>Vale só para o modo clássico.</b> No modo novo a resposta segue sempre o idioma da última mensagem completa do cliente
+          (holandês, francês ou alemão na Bélgica; alemão ou inglês na Áustria…), e o idioma fixo é ignorado.
+          {lojaSel?.modoAtendimento === 'novo' && <> <span className="tag tag-amber">esta loja está no modo novo</span></>}
         </p>
       </div>
       <div className="card mb-16" style={{ padding: 16 }}>

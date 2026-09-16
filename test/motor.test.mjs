@@ -5,6 +5,7 @@ import {
   novoEstado, decidir, confirmarTransicao, validarProposta, prazoDoPedido, somarDiasUteis,
   horarioMinimoEnvio, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
   instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados, mencionaData, ofertaIndevida, acoesDaOferta,
+  normalizarIdioma, idiomaConfiavel, definirIdioma, detectarIdioma, conferirIdioma, IDIOMAS_VALIDADOS,
 } from '../server/atendimento.js'
 
 const loja = { id: 'l1', nome: 'Von Alder', moeda: 'EUR', cupons: { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }, prazoEntrega: { min: 5, max: 12, processamento: 3 } }
@@ -421,6 +422,80 @@ test('oferta indevida: artigo, vírgula, dois-pontos, travessão e "ou/or/oder" 
   // dentro da fase: frase completa da fase + oferta no meio da mesma frase
   const v = conferirTextoDaFase('nc_no_prazo', 'Seu pedido está dentro do prazo, previsão 28/08/2026, e oferecemos o reembolso integral.', loja, novoEstado(), pedido1, {})
   assert.equal(v.ok, false); assert.match(v.motivo, /reembolso/)
+})
+
+test('idioma: normalização, mensagens curtas preservam o último confiável, mensagem completa troca, prova local', () => {
+  assert.equal(normalizarIdioma('nl-BE'), 'nl'); assert.equal(normalizarIdioma('de_AT'), 'de'); assert.equal(normalizarIdioma('PT-br'), 'pt'); assert.equal(normalizarIdioma(''), null); assert.equal(normalizarIdioma('xx-'), 'xx')
+  assert.equal(idiomaConfiavel({ idiomaConfiavel: true }, 'ok'), false, '"ok" nunca é confiável')
+  assert.equal(idiomaConfiavel({ idiomaConfiavel: true }, 'Hauptstraße 5, 10115 Berlin'), false, 'endereço não é confiável')
+  assert.equal(idiomaConfiavel({ idiomaConfiavel: true }, '#2202'), false)
+  assert.equal(idiomaConfiavel({ idiomaConfiavel: true }, 'Ik wil dit product graag omruilen.'), true)
+  assert.equal(idiomaConfiavel({ idiomaConfiavel: false }, 'Ik wil dit product graag omruilen.'), false, 'a IA pode marcar como incerto')
+  const an = novoEstado()
+  assert.equal(definirIdioma(an, { idioma: 'de-AT', idiomaConfiavel: true }, 'Ich möchte das Polo umtauschen.'), 'de')
+  assert.equal(an.idiomaOriginal, 'de-AT'); assert.equal(an.idiomaIncerto, false)
+  assert.equal(definirIdioma(an, { idioma: 'pt', idiomaConfiavel: true }, 'ok'), 'de', '"ok" não troca o idioma (nem para pt)')
+  assert.equal(definirIdioma(an, { idioma: 'en', idiomaConfiavel: false }, 'Hauptstraße 5, 10115 Berlin'), 'de', 'endereço não troca')
+  assert.equal(definirIdioma(an, { idioma: 'nl-BE', idiomaConfiavel: true }, 'Ik wil liever mijn geld terug, geen omruil.'), 'nl', 'mensagem completa troca')
+  assert.equal(an.idiomaOriginal, 'nl-BE')
+  const vazio = novoEstado()
+  assert.equal(definirIdioma(vazio, { idioma: 'fr', idiomaConfiavel: false }, 'ok'), 'fr', 'sem idioma ainda: usa o detectado, marcado como incerto')
+  assert.equal(vazio.idiomaIncerto, true)
+  // detecção local
+  assert.equal(detectarIdioma('Wij bieden u graag een gratis omruil aan. Wilt u dit aanvaarden?').idioma, 'nl')
+  assert.equal(detectarIdioma('Wir bieten Ihnen einen kostenlosen Umtausch an. Möchten Sie das annehmen?').idioma, 'de')
+  assert.equal(detectarIdioma('Nous vous proposons un échange gratuit. Acceptez-vous ?').idioma, 'fr')
+  // conferência: JSON declarado e detecção local
+  const alemao = 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Möchten Sie das annehmen?'
+  const holandes = 'Hallo! Wij bieden u graag een gratis omruil aan. Wilt u dit aanvaarden?'
+  assert.equal(conferirIdioma(holandes, 'nl', 'nl').ok, true)
+  assert.match(conferirIdioma(holandes, 'nl', 'de').motivo, /declarou "de"/)
+  assert.match(conferirIdioma(alemao, 'nl', null).motivo, /parece estar em alemão/, 'sem declaração, a detecção local prova')
+  assert.match(conferirIdioma(alemao, 'nl', 'nl').motivo, /parece estar em alemão/, 'declaração falsa não engana a detecção local')
+  assert.equal(conferirIdioma('Ok, bedankt.', 'de', null).ok, true, 'texto curto sem pistas: nada a provar')
+  assert.equal(conferirIdioma(alemao, null, 'de').ok, true, 'sem alvo, nada a conferir')
+  assert.equal(conferirIdioma('Zwrot 40% (28,00 €). Ok?', 'pl', 'pl').ok, true, 'idioma fora do validador: só a declaração conta')
+  // idioma não validado localmente: só números/códigos são conferidos, e o aviso obriga aprovação humana
+  assert.equal(IDIOMAS_VALIDADOS.has('pl'), false)
+  const leve = conferirTextoDaFase('reemb_40', 'Zwrot 40% (28,00 €). Ok?', loja, novoEstado(), pedido1, { idioma: 'pl' })
+  assert.equal(leve.ok, true); assert.match(leve.aviso, /não é validado localmente/)
+  assert.equal(conferirTextoDaFase('reemb_40', 'Zwrot 50% (28,00 €). Ok?', loja, novoEstado(), pedido1, { idioma: 'pl' }).ok, false, 'percentual errado bloqueia mesmo em polonês')
+  assert.equal(conferirTextoDaFase('reemb_40', 'Zwrot 40% (30,00 €). Ok?', loja, novoEstado(), pedido1, { idioma: 'pl' }).ok, false, 'valor errado bloqueia mesmo em polonês')
+})
+
+test('holandês: ofertas, negações e exigências positivas passam pelos mesmos bloqueios das versões em alemão', () => {
+  const an0 = novoEstado()
+  const c = (fase, txt, extra = {}) => conferirTextoDaFase(fase, txt, loja, extra.an ?? an0, 'pedido' in extra ? extra.pedido : pedido1, { faltando: extra.faltando, idioma: 'nl' })
+  const bloqueia = (fase, txt, re, extra) => { const v = c(fase, txt, extra); assert.equal(v.ok, false, `${fase} devia bloquear: ${txt}`); assert.match(v.motivo, re) }
+  const passa = (fase, txt, extra) => { const v = c(fase, txt, extra); assert.equal(v.ok, true, `${fase} devia passar: ${txt} — ${v.motivo}`) }
+  // oferta indevida
+  assert.equal(ofertaIndevida('Wij kunnen het pakket kosteloos opnieuw verzenden.', []), 'reenvio')
+  assert.equal(ofertaIndevida('Wij bieden u graag een terugbetaling aan.', []), 'reembolso')
+  assert.equal(ofertaIndevida('We zullen het product vervangen.', []), 'troca')
+  assert.equal(ofertaIndevida('U krijgt een kortingscode van ons.', []), 'cupom')
+  assert.equal(ofertaIndevida('Wij kunnen de bestelling annuleren.', []), 'cancelamento')
+  assert.equal(ofertaIndevida('Helaas kunnen wij nog niet terugbetalen of annuleren.', []), null, 'negação holandesa')
+  assert.equal(ofertaIndevida('Een omruil is helaas niet mogelijk, maar wij kunnen wel terugbetalen.', []), 'reembolso', 'adversativa "maar"')
+  assert.equal(ofertaIndevida('U vroeg om een omruil.', []), null, 'mera menção')
+  bloqueia('nc_no_prazo', 'Uw bestelling is nog binnen de levertijd, verwacht op 28-08-2026. Wij kunnen het pakket opnieuw verzenden.', /reenvio/)
+  passa('nc_no_prazo', 'Uw bestelling is nog binnen de levertijd, verwacht op 28-08-2026. Een terugbetaling is pas na de levertermijn mogelijk.')
+  // exigências positivas
+  passa('qual_troca', 'Wij bieden u graag een gratis omruil aan, levertijd 4 tot 11 dagen, met kortingscode DANKE15 (15%). Akkoord?')
+  bloqueia('qual_troca', 'Wij bieden u graag een gratis omruil aan, levertijd 4 tot 11 dagen, DANKE15 (15%). Akkoord?', /se trata de um cupom/)
+  passa('reemb_40', 'Wij bieden een terugbetaling van 40% (28,00 €) aan; u houdt het product. Akkoord?')
+  bloqueia('reemb_40', 'Wij bieden 40% (28,00 €) aan. Akkoord?', /não nomeia a ação/)
+  passa('nr_reenvio_35', 'Wij verzenden het pakket opnieuw (4 tot 11 dagen) plus een terugbetaling van 35% (24,50 €). Akkoord?')
+  passa('nc_atrasado_25', 'Nog maximaal 5 werkdagen geduld alstublieft; als excuus kortingscode SORRY25 (25%).')
+  bloqueia('nc_atrasado_25', 'Nog even geduld alstublieft; kortingscode SORRY25 (25%).', /5 dias úteis/)
+  passa('nr_entregue_aguardar', 'Wacht nog 2 dagen en vraag even bij de buren of de receptie.')
+  bloqueia('nr_entregue_aguardar', 'Wacht nog 2 dagen.', /vizinhos/)
+  passa('tam_ajuste', 'Was het te klein of te groot?')
+  passa('def_foto', 'Stuur alstublieft een foto van het defect.')
+  passa('endereco', 'Stuur alstublieft uw volledige adres.', { faltando: [] })
+  passa('coleta', 'Wat is uw bestelnummer en wat is de reden?', { faltando: ['pedido', 'motivo'] })
+  const anAceite = { ...novoEstado(), acaoAceita: 'reemb_25' }
+  passa('conf_reembolso', 'Uw terugbetaling van 25% (17,50 €) is goedgekeurd; het geld is binnen 3 tot 14 dagen terug.', { an: anAceite })
+  bloqueia('conf_reembolso', 'Uw terugbetaling van 25% (17,50 €) is goedgekeurd.', /3 a 14 dias/, { an: anAceite })
 })
 
 test('confirmação: só depois do aceite; fato consumado só ali e só com os números da opção aceita; depois, mensagem nova vai ao dono', () => {

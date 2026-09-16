@@ -33,13 +33,13 @@ estado.config.atrasoMinutos = 0.1 // 6 s: dá tempo de editar o rascunho antes d
 estado.config.automacaoAtiva = true
 const CUPONS = { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }
 estado.lojas = [
-  { id: 'loja1', nome: 'Loja Nova', ativa: true, moeda: 'EUR', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
+  { id: 'loja1', nome: 'Loja Nova', ativa: true, moeda: 'EUR', idioma: 'de', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
   { id: 'loja2', nome: 'Loja Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' },
   { id: 'loja3', nome: 'Loja Nova Automática', ativa: true, moeda: 'EUR', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: true },
   { id: 'loja4', nome: 'Loja Nova Sem Email', ativa: true, moeda: 'USD', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' })]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
   segredo: 'segredo-de-teste-'.padEnd(64, 'x'),
@@ -50,6 +50,15 @@ writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
 /* ---------- IA simulada: classificações roteirizadas + escritor que obedece ao prompt ---------- */
 const fila = []
 let sabotagem = null
+// sabotagem de idioma: { idioma, vezes } — o escritor responde nesse idioma por N chamadas
+let idiomaSabotado = null
+// frases do escritor simulado por idioma (o bloqueio positivo exige a ação nomeada no idioma do cliente)
+const FRASES = {
+  de: { ola: 'Hallo!', troca: 'Wir bieten Ihnen einen kostenlosen Umtausch an.', reenvio: 'Wir senden das Paket erneut.', reembolso: p => `Wir bieten eine Rückerstattung von ${p[1]}% (${p[2]}) an.`, reembolsoSem: 'Wir bieten eine Rückerstattung an.', cupom: c => `Gutschein: ${c}.`, cupomSem: 'Wir bieten einen Gutschein an.', cancel: 'Die Bestellung wird storniert.', frete: f => `Die Rücksendung würde ca. ${f} kosten.`, dinheiro: 'Das Geld ist in 3 bis 14 Tagen wieder da.', prazo: p => `Lieferzeit ${p}.`, pergunta: 'Möchten Sie das annehmen?' },
+  nl: { ola: 'Hallo!', troca: 'Wij bieden u graag een gratis omruil aan.', reenvio: 'Wij verzenden het pakket opnieuw.', reembolso: p => `Wij bieden een terugbetaling van ${p[1]}% (${p[2]}) aan.`, reembolsoSem: 'Wij bieden een terugbetaling aan.', cupom: c => `Kortingscode: ${c}.`, cupomSem: 'Wij bieden een kortingscode aan.', cancel: 'De bestelling wordt geannuleerd.', frete: f => `De retourzending kost ongeveer ${f}.`, dinheiro: 'Het geld is binnen 3 tot 14 dagen terug.', prazo: p => `Levertijd ${p}.`, pergunta: 'Wilt u dit aanvaarden?' },
+  fr: { ola: 'Bonjour !', troca: 'Nous vous proposons un échange gratuit.', reenvio: 'Nous renvoyons le colis.', reembolso: p => `Nous vous proposons un remboursement de ${p[1]}% (${p[2]}).`, reembolsoSem: 'Nous vous proposons un remboursement.', cupom: c => `Code coupon : ${c}.`, cupomSem: 'Nous vous proposons un coupon.', cancel: 'La commande est annulée.', frete: f => `Le retour coûterait environ ${f}.`, dinheiro: "L'argent revient sous 3 à 14 jours.", prazo: p => `Délai ${p}.`, pergunta: 'Acceptez-vous ?' },
+  en: { ola: 'Hello!', troca: 'We can offer you a free exchange.', reenvio: 'We will resend the parcel.', reembolso: p => `We offer a refund of ${p[1]}% (${p[2]}).`, reembolsoSem: 'We offer a refund.', cupom: c => `Coupon: ${c}.`, cupomSem: 'We offer a coupon.', cancel: 'The order is cancelled.', frete: f => `The return would cost about ${f}.`, dinheiro: 'The money is back within 3 to 14 days.', prazo: p => `Delivery ${p}.`, pergunta: 'Do you accept?' },
+}
 let ultimoPromptEscrita = ''
 const realFetch = globalThis.fetch
 globalThis.fetch = async (url, opts) => {
@@ -61,7 +70,7 @@ globalThis.fetch = async (url, opts) => {
   const req = body.output_config.format.schema.required ?? []
   if (req.includes('intencao')) {
     const c = fila.shift() ?? { intencao: 'outro' }
-    return responder({ intencao: 'outro', motivo: 'nenhum', produtos: [], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'msg', idioma: 'de', spam: false, ...c })
+    return responder({ intencao: 'outro', motivo: 'nenhum', produtos: [], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false, ...c })
   }
   if (req.includes('acao_proposta')) {
     ultimoPromptEscrita = sys
@@ -75,13 +84,18 @@ globalThis.fetch = async (url, opts) => {
     const titulo = sys.match(/AÇÃO DESTA RESPOSTA — ([^\n]+):/)?.[1] ?? ''
     const aceita = sys.match(/Opção aceita pelo cliente e aprovada pelo lojista: ([^\n]+)/)?.[1] ?? ''
     const alvo = (titulo + ' ' + aceita).toLowerCase()
+    // idioma: o alvo vem do prompt ("código \"nl\""); a sabotagem escreve em outro idioma por N chamadas
+    const alvoIdioma = sys.match(/OBRIGATORIAMENTE em [^(]+\(código "(\w+)"\)/)?.[1] ?? 'de'
+    let idiomaUsado = alvoIdioma
+    if (idiomaSabotado && idiomaSabotado.vezes > 0) { idiomaUsado = idiomaSabotado.idioma; idiomaSabotado.vezes-- }
+    const F = FRASES[idiomaUsado] ?? FRASES.de
     const frases = []
-    if (/troca/.test(alvo)) frases.push('Wir bieten Ihnen einen kostenlosen Umtausch an.')
-    if (/reenvio|enviar/.test(alvo)) frases.push('Wir senden das Paket erneut.')
-    if (/reembolso/.test(alvo) || pct) frases.push(pct ? `Wir bieten eine Rückerstattung von ${pct[1]}% (${pct[2]}) an.` : 'Wir bieten eine Rückerstattung an.')
-    if (/cupom/.test(alvo) || cupom) frases.push(cupom ? `Gutschein: ${cupom}.` : 'Wir bieten einen Gutschein an.')
-    if (/cancel/.test(alvo)) frases.push('Die Bestellung wird storniert.')
-    if (frete) frases.push(`Die Rücksendung würde ca. ${frete} kosten.`)
+    if (/troca/.test(alvo)) frases.push(F.troca)
+    if (/reenvio|enviar/.test(alvo)) frases.push(F.reenvio)
+    if (/reembolso/.test(alvo) || pct) frases.push(pct ? F.reembolso(pct) : F.reembolsoSem)
+    if (/cupom/.test(alvo) || cupom) frases.push(cupom ? F.cupom(cupom) : F.cupomSem)
+    if (/cancel/.test(alvo)) frases.push(F.cancel)
+    if (frete) frases.push(F.frete(frete))
     // fases sem oferta: o escritor simulado diz o que o mapa manda (o bloqueio exige)
     if (/número do pedido/.test(sys)) frases.push('Bitte nennen Sie Ihre Bestellnummer.')
     if (/quais produtos/.test(sys)) frases.push('Welchen Artikel meinen Sie?')
@@ -97,11 +111,11 @@ globalThis.fetch = async (url, opts) => {
     if (/5 dias úteis/.test(sys)) frases.push('Bitte noch maximal 5 Werktage Geduld.')
     const endConf = sys.match(/Endereço de entrega confirmado: ([^\n]+?)\.\n/)?.[1]
     if (endConf) frases.push(`Lieferadresse: ${endConf}.`)
-    if (prazoDinheiro) frases.push('Das Geld ist in 3 bis 14 Tagen wieder da.')
+    if (prazoDinheiro) frases.push(F.dinheiro)
     if (!frases.length) frases.push('Wir melden uns.')
-    let texto = `Hallo! ${frases.join(' ')}${prazo ? ` Lieferzeit ${prazo}.` : ''} Möchten Sie das annehmen?`
+    let texto = `${F.ola} ${frases.join(' ')}${prazo ? ` ${F.prazo(prazo)}` : ''} ${F.pergunta}`
     if (sabotagem) { texto = sabotagem; sabotagem = null }
-    return responder({ resposta: texto, acao_proposta: acao })
+    return responder({ resposta: texto, acao_proposta: acao, idioma: idiomaUsado })
   }
   return responder({ situacao: 'rastreio', resolucao: 'rastreio enviado', categoria: 'rastreio', idioma: 'de', resposta: 'Ihr Paket ist unterwegs.', confianca: 0.95, escalar_humano: false, aprova_reembolso: false, confirma_troca: false, encerrar: false, motivo: '', spam: false })
 }
@@ -263,16 +277,21 @@ test('auto-envio reconfere o rascunho: editado fora da fase ou com oferta mudada
     await api(`/api/tickets/${b.id}/rascunho`, { texto: 'Hallo, wir melden uns bald.' })
     // rascunho intacto
     const c = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c10@web.de', nome: 'C10', corpo: 'Schlecht.', lojaId: 'loja3' })
+    // cliente holandês cujo rascunho foi trocado por um texto em alemão (mesma etapa, mesmos números)
+    let d = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'nl' }, { de: 'c25@web.de', nome: 'C25', corpo: 'De kwaliteit is slecht, ik wil mijn geld terug.', lojaId: 'loja3' })
+    assert.equal(an(d).idioma, 'nl'); assert.match(d.rascunho, /omruil/)
+    await api(`/api/tickets/${d.id}/rascunho`, { texto: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 a 11 dias. Möchten Sie das annehmen?' })
     let fim = Date.now() + 15000
     while (Date.now() < fim) {
       await esperar(1000)
-      const [ta, tb, tc] = await Promise.all([ticket(a.id), ticket(b.id), ticket(c.id)])
-      if (ta.status === 'humano' && tb.status === 'humano' && tc.status === 'enviado') { a = ta; b = tb; break }
+      const [ta, tb, tc, td] = await Promise.all([ticket(a.id), ticket(b.id), ticket(c.id), ticket(d.id)])
+      if (ta.status === 'humano' && tb.status === 'humano' && tc.status === 'enviado' && td.status === 'humano') { a = ta; b = tb; break }
     }
-    a = await ticket(a.id); b = await ticket(b.id); const c2 = await ticket(c.id)
+    a = await ticket(a.id); b = await ticket(b.id); const c2 = await ticket(c.id); d = await ticket(d.id)
     assert.equal(a.status, 'humano'); assert.match(a.motivoEscalada, /não pertence mais à etapa/); assert.equal(an(a).etapa, null)
     assert.equal(b.status, 'humano'); assert.match(b.motivoEscalada, /não pertence mais à etapa|mudou a oferta/); assert.equal(an(b).etapa, null)
     assert.equal(c2.status, 'enviado'); assert.equal(an(c2).etapa, 'qual_troca')
+    assert.equal(d.status, 'humano'); assert.match(d.motivoEscalada, /idioma errado/); assert.equal(an(d).etapa, null, 'auto-envio no idioma errado não sai nem avança')
   } finally { delete process.env.ATENDO_SMTP_FAKE }
 })
 
@@ -421,6 +440,74 @@ test('Central consolidada no servidor: junção com pedidos sem ticket, dedupe, 
   assert.ok(r.linhas.some(l => !l.registro), 'inclui pedido sem conversa')
   r = await api('/api/central?jornada=qualidade&fase=reemb_25&desfecho=reembolso', null, 'GET')
   assert.ok(r.registros.every(x => x.jornada === 'qualidade' && x.faseAtual === 'reemb_25' && x.desfecho === 'reembolso'))
+})
+
+test('idioma do cliente manda: holandês com loja fixa em alemão, Bélgica (fr/nl), Áustria (de/en)', async () => {
+  // loja1 está configurada "Sempre em alemão" — no modo novo isso é ignorado
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'nl' }, { de: 'c17@web.de', nome: 'C17', corpo: 'De kwaliteit valt tegen, ik wil mijn geld terug.', lojaId: 'loja1' })
+  assert.equal(an(t).idioma, 'nl'); assert.equal(an(t).rascunhoIdioma, 'nl'); assert.match(t.rascunho, /omruil/); assert.doesNotMatch(t.rascunho, /Umtausch/)
+  assert.match(ultimoPromptEscrita, /OBRIGATORIAMENTE em holandês \(código "nl"\)/); assert.doesNotMatch(ultimoPromptEscrita, /em alemão/)
+  // francês da Bélgica
+  t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'fr-BE' }, { de: 'c18@web.de', nome: 'C18', corpo: 'La qualité est décevante, je souhaite un remboursement.', lojaId: 'loja1' })
+  assert.equal(an(t).idioma, 'fr'); assert.equal(an(t).idiomaOriginal, 'fr-BE'); assert.match(t.rascunho, /Bonjour/); assert.match(ultimoPromptEscrita, /código "fr"/)
+  // holandês da Bélgica
+  t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'nl-BE' }, { de: 'c19@web.de', nome: 'C19', corpo: 'De kwaliteit valt tegen, ik wil mijn geld terug.', lojaId: 'loja1' })
+  assert.equal(an(t).idioma, 'nl'); assert.equal(an(t).idiomaOriginal, 'nl-BE'); assert.match(t.rascunho, /omruil/)
+  // Áustria em alemão
+  t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'de-AT' }, { de: 'c20@web.de', nome: 'C20', corpo: 'Die Qualität ist schlecht, ich will mein Geld zurück.', lojaId: 'loja1' })
+  assert.equal(an(t).idioma, 'de'); assert.equal(an(t).idiomaOriginal, 'de-AT'); assert.match(t.rascunho, /Umtausch/)
+  // Áustria em inglês: o país não decide
+  t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'en' }, { de: 'c21@web.de', nome: 'C21', corpo: 'The quality is poor, I would like a refund.', lojaId: 'loja1' })
+  assert.equal(an(t).idioma, 'en'); assert.match(t.rascunho, /exchange/); assert.match(ultimoPromptEscrita, /código "en"/)
+})
+
+test('mensagem curta preserva o idioma; mensagem completa em outro idioma troca; confirmação fica no idioma da conversa', async () => {
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'de' }, { de: 'c22@web.de', nome: 'C22', corpo: 'Die Qualität ist schlecht, ich will mein Geld zurück.', lojaId: 'loja1' })
+  assert.equal(an(t).idioma, 'de')
+  await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
+  // "ok" — mesmo que a classificação diga pt e se diga confiável, o servidor não troca
+  t = await cliente({ intencao: 'recusa', idioma: 'pt', idiomaConfiavel: true }, { de: 'c22@web.de', corpo: 'ok', ticketId: t.id })
+  assert.equal(an(t).idioma, 'de'); assert.match(t.rascunho, /Gutschein/); assert.match(ultimoPromptEscrita, /código "de"/)
+  await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
+  // mensagem completa em holandês: acompanha
+  t = await cliente({ intencao: 'recusa', idioma: 'nl' }, { de: 'c22@web.de', corpo: 'Nee, dat wil ik niet. Ik wil liever een terugbetaling, geen kortingscode.', ticketId: t.id })
+  assert.equal(an(t).idioma, 'nl'); assert.equal(an(t).transicaoPendente.para, 'reemb_25'); assert.match(t.rascunho, /terugbetaling/); assert.match(ultimoPromptEscrita, /código "nl"/)
+  await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
+  // aceite (curto) → confirmação no idioma da conversa (holandês)
+  t = await cliente({ intencao: 'aceita', idioma: 'en', idiomaConfiavel: false }, { de: 'c22@web.de', corpo: 'ok', ticketId: t.id })
+  assert.equal(t.status, 'humano'); assert.equal(an(t).idioma, 'nl')
+  let r = await api(`/api/tickets/${t.id}/novo/confirmar`)
+  assert.equal(r.status, 200, r.erro); t = await ticket(t.id)
+  assert.equal(an(t).transicaoPendente.para, 'conf_reembolso'); assert.equal(an(t).rascunhoIdioma, 'nl')
+  assert.match(t.rascunho, /terugbetaling/); assert.match(t.rascunho, /3 tot 14 dagen/); assert.match(ultimoPromptEscrita, /código "nl"/)
+  // aprovar com texto editado em alemão: bloqueia; no idioma certo: sai
+  r = await comEnvio('ok', () => aprovar(t, { texto: 'Ihre Rückerstattung von 25% (25,00 €) wurde veranlasst — das Geld ist in 3 bis 14 Tagen wieder da.' }))
+  assert.equal(r.status, 400); assert.match(r.erro, /idioma errado/)
+  r = await comEnvio('ok', () => aprovar(t))
+  assert.equal(r.status, 200, r.erro); t = await ticket(t.id)
+  assert.equal(an(t).etapa, 'conf_reembolso'); assert.equal(t.status, 'enviado')
+})
+
+test('escritor no idioma errado: regenera uma vez; se insistir, vai ao dono sem enviar nem avançar — também na regeneração', async () => {
+  // duas chamadas em alemão para um cliente holandês: a regeneração automática não basta
+  idiomaSabotado = { idioma: 'de', vezes: 2 }
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'nl' }, { de: 'c23@web.de', nome: 'C23', corpo: 'De kwaliteit valt tegen, ik wil mijn geld terug.', lojaId: 'loja1' })
+  assert.equal(t.status, 'humano'); assert.match(t.motivoEscalada, /idioma errado/); assert.equal(t.rascunho, undefined); assert.equal(an(t).etapa, null); assert.equal(an(t).transicaoPendente, null)
+  assert.equal(idiomaSabotado.vezes, 0, 'houve exatamente uma regeneração')
+  assert.match(ultimoPromptEscrita, /ATENÇÃO: a resposta anterior saiu no idioma errado/)
+  // uma chamada errada só: a regeneração com instrução explícita resolve
+  idiomaSabotado = { idioma: 'de', vezes: 1 }
+  t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'nl' }, { de: 'c24@web.de', nome: 'C24', corpo: 'De kwaliteit valt tegen, ik wil mijn geld terug.', lojaId: 'loja1' })
+  assert.equal(t.status, 'aprovacao'); assert.match(t.rascunho, /omruil/); assert.equal(an(t).rascunhoIdioma, 'nl')
+  // regeneração manual: escritor insistindo em alemão → 400 e rascunho holandês mantido
+  idiomaSabotado = { idioma: 'de', vezes: 2 }
+  let r = await api(`/api/tickets/${t.id}/regenerar`, {})
+  assert.equal(r.status, 400); assert.match(r.erro, /idioma errado/); assert.match(r.erro, /mantido/)
+  t = await ticket(t.id); assert.match(t.rascunho, /omruil/); assert.equal(t.status, 'aprovacao')
+  idiomaSabotado = { idioma: 'de', vezes: 2 }
+  r = await api(`/api/tickets/${t.id}/regenerar`, { somenteTexto: true })
+  assert.equal(r.status, 400); assert.match(r.erro, /idioma errado/)
+  idiomaSabotado = null
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

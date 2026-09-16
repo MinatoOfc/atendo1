@@ -92,6 +92,15 @@ export interface AtendimentoNovo {
   aguardandoComprovacao?: boolean
   /** fase que a coleta / a foto está destravando */
   proximaAposColeta?: string | null
+  /** idioma-alvo da conversa (ISO 639-1), pela última mensagem completa do cliente */
+  idioma?: string | null
+  /** como veio da detecção (de-AT, nl-BE…) */
+  idiomaOriginal?: string | null
+  idiomaIncerto?: boolean
+  /** idioma declarado pela IA no rascunho atual */
+  rascunhoIdioma?: string | null
+  /** motivo pelo qual este rascunho nunca sai sozinho (ex.: idioma não validado localmente) */
+  aprovacaoObrigatoria?: string
   ofertaAtual: OfertaNovo | null
   ofertaEnviadaEm: string | null
   aguardando: 'cliente' | 'envio' | 'humano' | null

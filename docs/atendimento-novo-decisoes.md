@@ -215,6 +215,32 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     podemos reembolsar ou cancelar", "wir können leider nicht", "cannot");
     "se não chegar, podemos reenviar" continua sendo oferta.
 
+32. **Idioma do cliente (16/09)**: no modo novo a resposta sai SEMPRE no
+    idioma da última mensagem completa do cliente — a configuração "Sempre em
+    X" da loja vale só para o clássico. A 1ª chamada devolve o código ISO
+    (com região: de-AT, nl-BE, fr-BE) e `idiomaConfiavel`; o servidor
+    normaliza (`nl-BE` → `nl`, guardando o original para exibir), grava em
+    `atendimentoNovo.idioma` e só troca o alvo com uma mensagem completa
+    (`idiomaConfiavel` e ≥ 3 palavras; "ok", endereço, números e foto
+    preservam o último confiável; sem nenhum ainda, usa o detectado marcado
+    como incerto — nunca português/inglês por padrão). A 2ª chamada recebe
+    "Escreva OBRIGATORIAMENTE em holandês (código "nl")" e devolve no JSON o
+    idioma em que escreveu. Prova antes do envio (`conferirIdioma`): o
+    código declarado tem de ser o alvo E a detecção local por palavras
+    funcionais (de, nl, fr, it, es, en, pt) não pode apontar com força outro
+    idioma; falhou → uma regeneração com instrução explícita; falhou de novo
+    → fila humana "resposta gerada no idioma errado", sem rascunho e sem
+    mudar a fase. Vale na primeira resposta, coleta/foto/endereço,
+    regeneração (inclusive "só o texto"), aprovação (texto final, mesmo
+    editado à mão), auto-envio e confirmação depois do aceite. Idioma fora
+    do validador local (ex.: polonês): gera no idioma do cliente, confere só
+    números/códigos e fica obrigatoriamente na aprovação humana
+    (`aprovacaoObrigatoria`; nunca é agendado). Os validadores cobrem
+    holandês (omruilen/ruilen/vervangen, opnieuw verzenden/nieuwe zending,
+    terugbetaling, kortingscode/voucher, annuleren, aanbieden/wij kunnen/wij
+    zullen/graag/kosteloos, niet/nog niet/geen/helaas) além de de, fr, it,
+    es, en, pt.
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.

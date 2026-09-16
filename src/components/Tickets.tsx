@@ -252,6 +252,13 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
         {an.ofertaEnviadaEm && fase?.oferta && <span className="muted-sm"> · enviada {quando(an.ofertaEnviadaEm)}</span>}
       </LinhaFase>
       <LinhaFase rotulo="Aguardando">{aguardando}</LinhaFase>
+      <LinhaFase rotulo="Idioma da conversa">
+        {an.idioma
+          ? <>{nomeIdioma[an.idioma] ?? an.idioma}{an.idiomaOriginal && an.idiomaOriginal.toLowerCase() !== an.idioma ? ` (${an.idiomaOriginal})` : ''}{an.idiomaIncerto ? ' · ainda incerto (mensagem curta)' : ''}</>
+          : <span className="muted-sm">ainda não detectado</span>}
+        <span className="muted-sm"> · a resposta sai sempre neste idioma, mesmo com idioma fixo na loja</span>
+      </LinhaFase>
+      {an.aprovacaoObrigatoria && <LinhaFase rotulo="Aprovação obrigatória">{an.aprovacaoObrigatoria}</LinhaFase>}
       {an.ofertaAtual && <LinhaFase rotulo="Última oferta">{descreverOferta(an.ofertaAtual)}</LinhaFase>}
       <LinhaFase rotulo="Próxima ação">{proxima}</LinhaFase>
       {faltando.length > 0 && (

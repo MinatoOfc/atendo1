@@ -13,6 +13,7 @@ import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
   horarioMinimoEnvio, promptClassificar, promptEscrever, FASES, JORNADAS, PERCENTUAIS_CUPOM,
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
+  definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS,
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral } from '../shared/central.js'
@@ -572,17 +573,33 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
     return falhar(`A etapa "${FASES[faseId].titulo}" usa o cupom de ${cup.pct}%, que não está cadastrado nesta loja (Configurações → Loja)`)
   }
 
-  const p2 = promptEscrever({ loja, config: estado.config, faseId, faltando, an, pedido, ticket: t, instrucaoEstilo })
-  const e = await escreverNovo(p2.system, p2.user)
+  // idioma-alvo da conversa (última mensagem completa do cliente) — a configuração fixa da loja não vale aqui
+  const idiomaAlvo = an.idioma ?? normalizarIdioma(t.idioma) ?? null
+  const p2 = promptEscrever({ loja, config: estado.config, faseId, faltando, an, pedido, ticket: t, instrucaoEstilo, idiomaAlvo })
+  let e = await escreverNovo(p2.system, p2.user)
   if (e.erro) return falhar(`A IA não conseguiu escrever a resposta (${e.erro})`)
   somarCusto(t, e.custo); registrarGasto(estado, t.lojaId, e.custo)
+
+  // idioma: o código declarado no JSON e a detecção local têm de bater com o alvo;
+  // uma regeneração com instrução explícita, depois fila humana
+  let vi = conferirIdioma(e.r.resposta, idiomaAlvo, e.r.idioma)
+  if (!vi.ok) {
+    const p3 = promptEscrever({ loja, config: estado.config, faseId, faltando, an, pedido, ticket: t, instrucaoEstilo, idiomaAlvo, instrucaoIdioma: `a resposta anterior saiu no idioma errado (${vi.motivo})` })
+    const e2 = await escreverNovo(p3.system, p3.user)
+    if (e2.erro) return falhar(`A IA não conseguiu reescrever a resposta no idioma do cliente (${e2.erro})`)
+    somarCusto(t, e2.custo); registrarGasto(estado, t.lojaId, e2.custo)
+    e = e2
+    vi = conferirIdioma(e.r.resposta, idiomaAlvo, e.r.idioma)
+    if (!vi.ok) return falhar(`Resposta gerada no idioma errado (${vi.motivo})`)
+  }
 
   // bloqueios: ação proposta, percentuais, cupons e linguagem de confirmação
   if (e.r.acao_proposta && e.r.acao_proposta !== faseId) {
     return falhar(`A IA saiu da etapa permitida: propôs "${e.r.acao_proposta}" em vez de "${faseId}"`)
   }
-  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an, pedido, { faltando })
+  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an, pedido, { faltando, idioma: idiomaAlvo })
   if (!v.ok) return falhar(`A IA saiu da etapa permitida: ${v.motivo}`)
+  an.rascunhoIdioma = normalizarIdioma(e.r.idioma) ?? idiomaAlvo
 
   t.rascunho = String(e.r.resposta || '').trim()
   t.rascunhoTraducao = undefined
@@ -599,6 +616,11 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   an.proximoEnvioMinimo = new Date(minimo).toISOString()
   t.status = 'aprovacao'
   t.enviaEm = loja?.novoEnvioAutomatico && estado.config.automacaoAtiva ? minimo : undefined
+  // idioma que o validador local não lê: gera no idioma do cliente, mas NUNCA sai sozinho
+  if (idiomaAlvo && !IDIOMAS_VALIDADOS.has(idiomaAlvo)) {
+    an.aprovacaoObrigatoria = v.aviso || `idioma "${idiomaAlvo}" não é validado localmente — aprovação humana obrigatória`
+    t.enviaEm = undefined
+  } else an.aprovacaoObrigatoria = undefined
   return { ok: true, motivo: null }
 }
 
@@ -616,7 +638,9 @@ async function processarNovo(estado, t) {
   somarCusto(t, c.custo); registrarGasto(estado, t.lojaId, c.custo)
   const cls = c.r
   if (cls.spam && !identificado) return { spam: true }
-  if (cls.idioma) t.idioma = cls.idioma
+  // idioma-alvo: só uma mensagem completa troca; "ok"/endereço/foto preservam o último confiável
+  const idiomaAlvo = definirIdioma(an, cls, t.corpo)
+  if (idiomaAlvo) t.idioma = idiomaAlvo
   if (cls.resumo) { t.resumoSituacao = cls.resumo; t.situacaoTraducao = undefined }
 
   // 2. o servidor decide a única ação permitida
@@ -1037,14 +1061,17 @@ agendar(async () => {
         const anL = t.atendimentoNovo
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t), { faltando: anL.transicaoPendente.faltando ?? [] })
-          const dif = v.ok ? diferencaDeOferta(anL.rascunhoGerado ?? t.rascunho, t.rascunho, lojaL) : null
-          if (!v.ok || dif) {
+          if (anL.aprovacaoObrigatoria) { t.enviaEm = undefined; continue }
+          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t), { faltando: anL.transicaoPendente.faltando ?? [], idioma: anL.idioma ?? null })
+          const vi = v.ok ? conferirIdioma(t.rascunho || '', anL.idioma ?? null, anL.rascunhoIdioma ?? null) : { ok: true }
+          const dif = v.ok && vi.ok ? diferencaDeOferta(anL.rascunhoGerado ?? t.rascunho, t.rascunho, lojaL) : null
+          if (!v.ok || !vi.ok || dif) {
             t.status = 'humano'
             t.enviaEm = undefined
             t.motivoEscalada = !v.ok
               ? `Rascunho não pertence mais à etapa: ${v.motivo} — confira e envie você`
-              : `Rascunho editado mudou a oferta (${dif}) — confira e envie você`
+              : !vi.ok ? `Resposta no idioma errado (${vi.motivo}) — confira e envie você`
+                : `Rascunho editado mudou a oferta (${dif}) — confira e envie você`
             continue
           }
         }
@@ -2425,14 +2452,16 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
     if (bloqueio) return res.status(400).json({ erro: `Instrução recusada: ${bloqueio}.`, state: visao(req.wsId) })
     if (req.body.somenteTexto) {
       // escreve a MESMA ação para a caixa manual, sem mexer no rascunho nem no estado
-      const p = promptEscrever({ loja: lojaR, config: req.estado.config, faseId, faltando: anR.transicaoPendente.faltando ?? [], an: anR, pedido: pedidoDoTicket(req.estado, t), ticket: t, instrucaoEstilo: instrucao || null })
+      const p = promptEscrever({ loja: lojaR, config: req.estado.config, faseId, faltando: anR.transicaoPendente.faltando ?? [], an: anR, pedido: pedidoDoTicket(req.estado, t), ticket: t, instrucaoEstilo: instrucao || null, idiomaAlvo: anR.idioma ?? null })
       const e = await escreverNovo(p.system, p.user)
       if (e.erro) return res.status(400).json({ erro: e.erro, state: visao(req.wsId) })
       somarCusto(t, e.custo); registrarGasto(req.estado, t.lojaId, e.custo)
-      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t), { faltando: anR.transicaoPendente.faltando ?? [] })
+      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t), { faltando: anR.transicaoPendente.faltando ?? [], idioma: anR.idioma ?? null })
       if (!v.ok || (e.r.acao_proposta && e.r.acao_proposta !== faseId)) {
         return res.status(400).json({ erro: `A IA saiu da etapa permitida: ${v.motivo || 'ação diferente da permitida'}. Tente de novo.`, state: visao(req.wsId) })
       }
+      const vi = conferirIdioma(e.r.resposta, anR.idioma ?? null, e.r.idioma)
+      if (!vi.ok) return res.status(400).json({ erro: `Resposta gerada no idioma errado: ${vi.motivo}. Tente de novo.`, state: visao(req.wsId) })
       salvar(req.wsId)
       return res.json({ ok: true, texto: e.r.resposta, state: visao(req.wsId) })
     }
@@ -2545,9 +2574,13 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     if (anA?.transicaoPendente?.para) {
       const faseId = anA.transicaoPendente.para
       const lojaA = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t), { faltando: anA.transicaoPendente.faltando ?? [] })
+      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t), { faltando: anA.transicaoPendente.faltando ?? [], idioma: anA.idioma ?? null })
       if (!v.ok) {
         return res.status(400).json({ erro: `Não enviado — o texto não pertence à etapa "${FASES[faseId].titulo}": ${v.motivo}.`, state: visao(req.wsId) })
+      }
+      const vi = conferirIdioma(textoFinal, anA.idioma ?? null, textoFinal === (t.rascunho ?? '') ? (anA.rascunhoIdioma ?? null) : null)
+      if (!vi.ok) {
+        return res.status(400).json({ erro: `Não enviado — resposta no idioma errado: ${vi.motivo}.`, state: visao(req.wsId) })
       }
       const dif = diferencaDeOferta(anA.rascunhoGerado ?? t.rascunho, textoFinal, lojaA)
       if (dif && req.body.confirmarAlteracao !== true) {
