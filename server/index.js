@@ -15,6 +15,7 @@ import {
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
+import { calcularCentral } from '../shared/central.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
@@ -31,6 +32,28 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
+
+/* ---------------- Ciclo de vida (intervalos e encerramento) ---------------- */
+const intervalos = []
+const tarefasUnicas = []
+let encerrado = false
+const agendar = (fn, ms) => { const h = setInterval(fn, ms); intervalos.push(h); return h }
+// tarefa única de arranque (faxina, relatório semanal): não segura o processo vivo
+const agendarUmaVez = (fn, ms) => { const h = setTimeout(fn, ms); h.unref?.(); tarefasUnicas.push(h); return h }
+let servidorHttp = null
+/** Para intervalos e tarefas, descarrega gravações pendentes e fecha o servidor HTTP — os testes encerram sem process.exit. */
+export async function encerrar() {
+  encerrado = true
+  for (const h of intervalos) clearInterval(h)
+  for (const h of tarefasUnicas) clearTimeout(h)
+  intervalos.length = 0; tarefasUnicas.length = 0
+  for (const wsId of [...salvarPendentes.keys()]) await gravarAgora(wsId)
+  if (servidorHttp) {
+    const srv = servidorHttp; servidorHttp = null
+    srv.closeAllConnections?.()
+    await new Promise(r => srv.close(() => r()))
+  }
+}
 app.set('trust proxy', 1) // Railway fica atrás de proxy
 app.use(express.json({ limit: '1mb' }))
 
@@ -65,7 +88,7 @@ function gravarAgora(wsId) {
     .catch(err => {
       erroBanco = err.message
       console.error('[db] salvar falhou:', err.message)
-      setTimeout(() => salvar(wsId), 30_000) // retenta até conseguir
+      if (!encerrado) setTimeout(() => salvar(wsId), 30_000) // retenta até conseguir
     })
 }
 
@@ -137,6 +160,9 @@ function contasDe(wsId) {
   cacheContas.set(wsId, { chave, contas })
   return contas
 }
+
+/** Catálogo das fases para a página e para a Central (mesmo formato nos dois). */
+const catalogoFases = () => Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta, instrucao: f.instrucao, confirmacao: !!f.confirmacao, decisaoDono: FASES_HUMANAS.has(id) }]))
 
 const contaDaLoja = (wsId, lojaId) => {
   const contas = contasDe(wsId)
@@ -246,7 +272,7 @@ function visao(wsId) {
     resumosDiarios: estado.resumosDiarios ?? [],
     geminiDisponivel: !!process.env.GEMINI_API_KEY,
     // catálogo do modo novo: a conversa mostra fase, oferta e próximos passos por ele
-    fasesNovo: Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta, instrucao: f.instrucao, confirmacao: !!f.confirmacao, decisaoDono: FASES_HUMANAS.has(id) }])),
+    fasesNovo: catalogoFases(),
     jornadasNovo: JORNADAS,
     gastosIA: estado.gastosIA ?? {},
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
@@ -555,7 +581,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   if (e.r.acao_proposta && e.r.acao_proposta !== faseId) {
     return falhar(`A IA saiu da etapa permitida: propôs "${e.r.acao_proposta}" em vez de "${faseId}"`)
   }
-  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an)
+  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an, pedido)
   if (!v.ok) return falhar(`A IA saiu da etapa permitida: ${v.motivo}`)
 
   t.rascunho = String(e.r.resposta || '').trim()
@@ -892,7 +918,9 @@ async function sincronizar(wsId) {
       }
     }
 
-    if (algumEmail(wsId)) {
+    if (process.env.ATENDO_SIMULAR === '1') {
+      // testes e ensaio: nada entra pela rede nem pela demonstração — só /api/simular-email
+    } else if (algumEmail(wsId)) {
       for (const conta of contasDe(wsId)) {
         if (!conta.configurado) continue
         const emails = await conta.buscarNovos(estado.emailsProcessados)
@@ -942,11 +970,17 @@ async function sincronizar(wsId) {
 /* ---------------- Envio ---------------- */
 
 async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
-  const conta = contaDaLoja(wsId, ticket.lojaId ?? 'loja1')
+  const lojaId = ticket.lojaId ?? 'loja1'
   const contas = contasDe(wsId)
-  const canal = conta?.configurado || envioPorApi ? conta : contas.find(c => c.configurado)
   const an = ticket.atendimentoNovo
   const modoNovo = !!an?.transicaoPendente?.para
+  // modo novo: SÓ a conta da própria loja — nunca a de outra loja como reserva
+  const propria = contas.find(c => c.id === lojaId) ?? null
+  const conta = modoNovo ? propria : (propria ?? contas[0])
+  const canal = conta && (conta.configurado || envioPorApi) ? conta : (modoNovo ? null : contas.find(c => c.configurado))
+  if (modoNovo && !canal) {
+    throw new Error(`A loja desta conversa (${lojaId}) não tem caixa de e-mail configurada — no modo novo a resposta só sai pela conta da própria loja, nunca pela de outra`)
+  }
   // canal simulado só nos testes (ATENDO_SIMULAR=1): 'ok' envia, 'falha' quebra
   const simulado = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_SMTP_FAKE : null
   let enviou = false
@@ -990,7 +1024,7 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
 const enviando = new Set()
 const MAX_TENTATIVAS = 3
 
-setInterval(async () => {
+agendar(async () => {
   const agora = Date.now()
   for (const [wsId, estado] of workspaces) {
     const vencidos = estado.tickets.filter(t =>
@@ -1003,7 +1037,7 @@ setInterval(async () => {
         const anL = t.atendimentoNovo
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL)
+          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t))
           const dif = v.ok ? diferencaDeOferta(anL.rascunhoGerado ?? t.rascunho, t.rascunho, lojaL) : null
           if (!v.ok || dif) {
             t.status = 'humano'
@@ -1037,7 +1071,7 @@ setInterval(async () => {
 }, 5000)
 
 // Leitura periódica das caixas de todos os workspaces
-setInterval(() => {
+agendar(() => {
   for (const wsId of workspaces.keys()) {
     if (algumEmail(wsId)) sincronizar(wsId).catch(err => console.error(`[sync ${wsId}]`, err.message))
   }
@@ -1144,11 +1178,11 @@ async function faxinaAnexos() {
     }
   }
 }
-setInterval(faxinaAnexos, 6 * 3600_000)
-setTimeout(faxinaAnexos, 90_000)
+agendar(faxinaAnexos, 6 * 3600_000)
+agendarUmaVez(faxinaAnexos, 90_000)
 
 // Checagem periódica: logo depois da meia-noite (no fuso do lojista) o dia anterior é fechado
-setInterval(() => {
+agendar(() => {
   for (const wsId of workspaces.keys()) {
     try { atualizarResumos(wsId) } catch (err) { console.error(`[resumo ${wsId}]`, err.message) }
   }
@@ -2243,8 +2277,8 @@ async function atualizarReembolsosSemanal() {
     }
   }
 }
-setInterval(atualizarReembolsosSemanal, 6 * 3600_000)
-setTimeout(atualizarReembolsosSemanal, 120_000)
+agendar(atualizarReembolsosSemanal, 6 * 3600_000)
+agendarUmaVez(atualizarReembolsosSemanal, 120_000)
 
 // Fecha o caso SEM enviar e-mail: sai do atendimento humano/aprovações como resolvido
 app.post('/api/tickets/:id/resolver', (req, res) => {
@@ -2271,15 +2305,19 @@ app.post('/api/tickets/:id/lido', (req, res) => {
 app.post('/api/tickets/:id/novo/foto', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   const an = t.atendimentoNovo
-  if (!an || !an.fotoRecebida) {
-    return res.status(400).json({ erro: 'Esta conversa não tem imagem aguardando validação.', state: visao(req.wsId) })
+  if (!an || an.fluxo !== 'defeito' || !an.aguardandoComprovacao || !an.fotoRecebida || an.aguardando !== 'humano' || an.fotoValidada === true) {
+    return res.status(400).json({ erro: 'A validação de foto só existe no fluxo de defeito, com uma imagem aguardando a sua comprovação.', state: visao(req.wsId) })
+  }
+  const alvo = an.proximaAposColeta
+  if (!alvo || !FASES[alvo]) {
+    return res.status(400).json({ erro: 'Esta conversa não tem uma próxima etapa esperando a comprovação da imagem.', state: visao(req.wsId) })
   }
   const agora = new Date().toISOString()
+  an.aguardandoComprovacao = false
   if (req.body?.valida === true) {
     an.fotoValidada = true
     an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: 'Foto validada pelo lojista: comprova o defeito', em: agora, evento: 'foto_validada' })
     an.aguardando = null
-    const alvo = an.proximaAposColeta ?? 'def_troca'
     const faltando = faltaPara(alvo, an)
     await prepararRascunhoNovo(req.estado, t, faltando.length
       ? { faseId: 'coleta', faltando, resumo: 'foto validada' }
@@ -2324,21 +2362,39 @@ app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
 app.post('/api/tickets/:id/central/fase', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   const { fase, jornada, justificativa, remover } = req.body ?? {}
-  if (remover === true) { t.centralAjuste = undefined; salvar(req.wsId); return ok(req, res) }
+  const por = req.usuario?.nome || req.usuario?.email || 'lojista'
+  const em = new Date().toISOString()
+  const just = String(justificativa || '').trim().slice(0, 300) || null
+  const registrar = entrada => { t.centralHistorico = [...(t.centralHistorico ?? []), entrada].slice(-100) }
+  if (remover === true) {
+    if (!t.centralAjuste) return res.status(400).json({ erro: 'Esta conversa não tem correção manual para remover.', state: visao(req.wsId) })
+    registrar({ removido: true, fase: null, jornada: null, anterior: t.centralAjuste.fase ?? null, anteriorJornada: t.centralAjuste.jornada ?? null, por, em, justificativa: just })
+    t.centralAjuste = undefined
+    salvar(req.wsId); return ok(req, res)
+  }
   if (fase !== null && fase !== undefined && fase !== '' && !FASES[fase]) {
     return res.status(400).json({ erro: 'Fase desconhecida.', state: visao(req.wsId) })
   }
   if (jornada && !JORNADAS[jornada]) return res.status(400).json({ erro: 'Jornada desconhecida.', state: visao(req.wsId) })
   const anterior = t.centralAjuste?.fase ?? t.atendimentoNovo?.etapa ?? null
-  t.centralAjuste = {
-    fase: fase || null,
-    jornada: jornada || null,
-    por: req.usuario?.nome || req.usuario?.email || 'lojista',
-    em: new Date().toISOString(),
-    anterior,
-    justificativa: String(justificativa || '').trim().slice(0, 300) || null,
-  }
+  const anteriorJornada = t.centralAjuste?.jornada ?? null
+  // NÃO toca em atendimentoNovo.etapa, transicaoPendente nem na próxima oferta
+  t.centralAjuste = { fase: fase || null, jornada: jornada || null, por, em, anterior, justificativa: just }
+  registrar({ removido: false, fase: fase || null, jornada: jornada || null, anterior, anteriorJornada, por, em, justificativa: just })
   salvar(req.wsId); ok(req, res)
+})
+
+// Central operacional consolidada: os mesmos números que a página calcula, saídos
+// da mesma função (shared/central.js) sobre os dados do servidor.
+app.get('/api/central', (req, res) => {
+  const q = req.query ?? {}
+  const filtros = {
+    busca: String(q.busca ?? ''), lojaId: String(q.loja ?? 'todas'),
+    periodo: ['7', '30', '90'].includes(String(q.periodo)) ? String(q.periodo) : 'todas',
+    desfecho: String(q.desfecho ?? 'todos'), jornada: String(q.jornada ?? 'todas'), fase: String(q.fase ?? 'todas'),
+  }
+  const r = calcularCentral({ tickets: req.estado.tickets, pedidos: req.estado.pedidos ?? [], lojas: req.estado.lojas, fases: catalogoFases(), filtros })
+  res.json({ filtros: r.filtros, registros: r.registros, linhas: r.linhas, metricas: r.metricas, indicadores: r.indicadores })
 })
 
 app.post('/api/tickets/:id/rascunho', (req, res) => {
@@ -2373,7 +2429,7 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
       const e = await escreverNovo(p.system, p.user)
       if (e.erro) return res.status(400).json({ erro: e.erro, state: visao(req.wsId) })
       somarCusto(t, e.custo); registrarGasto(req.estado, t.lojaId, e.custo)
-      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR)
+      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t))
       if (!v.ok || (e.r.acao_proposta && e.r.acao_proposta !== faseId)) {
         return res.status(400).json({ erro: `A IA saiu da etapa permitida: ${v.motivo || 'ação diferente da permitida'}. Tente de novo.`, state: visao(req.wsId) })
       }
@@ -2489,7 +2545,7 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     if (anA?.transicaoPendente?.para) {
       const faseId = anA.transicaoPendente.para
       const lojaA = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA)
+      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t))
       if (!v.ok) {
         return res.status(400).json({ erro: `Não enviado — o texto não pertence à etapa "${FASES[faseId].titulo}": ${v.motivo}.`, state: visao(req.wsId) })
       }
@@ -2733,7 +2789,7 @@ async function iniciar() {
   segredo = await db.obterSegredo()
   await carregarWorkspaces()
 
-  app.listen(PORT, async () => {
+  servidorHttp = app.listen(PORT, async () => {
     console.log(`atendo servidor na porta ${PORT}`)
     console.log(`  banco:   ${db.usandoPostgres ? 'PostgreSQL' : 'arquivos locais (defina DATABASE_URL para usar o Postgres)'}`)
     console.log(`  workspaces: ${workspaces.size}`)

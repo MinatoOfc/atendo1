@@ -288,6 +288,7 @@ export function novoEstado() {
     fotoSolicitada: false,
     fotoRecebida: false,     // chegou uma imagem (ainda não é prova de nada)
     fotoValidada: null,      // true só depois de o lojista confirmar que mostra o defeito
+    aguardandoComprovacao: false, // imagem recebida no fluxo de defeito, esperando o lojista dizer se comprova
     ofertaAtual: null,
     ofertaEnviadaEm: null,
     aguardando: null,
@@ -607,6 +608,7 @@ function irPara(saida, alvo, agora) {
       if (!an.fotoRecebida) { an.fotoSolicitada = true; saida.fase = 'def_foto'; return saida }
       // imagem chegou, mas imagem não é prova: quem confirma que ela mostra o defeito é o lojista
       an.aguardando = 'humano'
+      an.aguardandoComprovacao = true
       saida.humano = 'Imagem recebida — confirme na conversa se ela comprova o defeito antes de a troca ser oferecida'
       return saida
     }
@@ -823,6 +825,7 @@ export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido
       `- Você NUNCA confirma reembolso, troca, reenvio ou cancelamento como fato consumado. Você OFERECE e PERGUNTA se o cliente aceita; quem confirma depois é o lojista.`,
       `- Só cite valores, percentuais e códigos que estejam nos dados abaixo. Nunca invente prazo, valor, política ou código.`,
       `- Não escreva "aprovado", "confirmado", "já está em andamento", "enviaremos", "o dinheiro chegará".`,
+      `- Nomeie a ação com a palavra própria no idioma do cliente (troca/Umtausch/exchange, reenvio/erneut senden/resend, reembolso/Rückerstattung/refund, cupom/Gutschein/coupon) e escreva o percentual, o valor em dinheiro, o prazo e o código EXATAMENTE como estão nos dados abaixo.`,
     ]),
     ``,
     `AÇÃO DESTA RESPOSTA — ${fase.titulo}:`,
@@ -889,13 +892,115 @@ export function validarEndereco(texto) {
 /* ------------------------------------------------------------------ */
 
 /** O texto pode sair nesta fase? (ação, percentuais, cupons e linguagem de confirmação) */
-export function conferirTextoDaFase(faseId, texto, loja, an = null) {
+/* ---- exigências positivas: o texto tem de conter o que a fase manda ---- */
+
+const RE_ACAO = {
+  troca: /\b(troca|trocar|trocamos|umtausch|tausch|austausch|ersatz|exchange|replace|replacement|[ée]change|remplac|cambio|reemplaz|scambio|sostitu|ruil|omruil|vervang)/i,
+  reenvio: /(reenvi|resend|re-send|erneut|nochmal|noch einmal|neu(?:e|en|es)?\s+(?:sendung|versand|lieferung|paket)|ersatzlieferung|ersatzsendung|renvo|nouvel envoi|reenv[ií]|rispedi|nuovo invio|opnieuw|nieuwe zending|ship(?:ping)?\s+(?:it\s+)?again|send(?:ing)?\s+(?:it\s+|you\s+)?again|another (?:package|parcel|shipment)|new (?:shipment|package|parcel))/i,
+  reembolso: /(reembols|refund|erstatt|rimbors|rembours|terugbetal|devolu[çc][aã]o do valor|devoluci[óo]n|money back|geld zur[üu]ck)/i,
+  cupom: /(cupom|cup[óo]n|coupon|gutschein|rabattcode|c[óo]digo de desconto|discount code|code promo|codice sconto|kortingscode|voucher)/i,
+  cancelamento: /(cancel|storn|annul)/i,
+}
+const acaoPrincipal = tipo => /troca/.test(tipo ?? '') ? 'troca' : /reenvio/.test(tipo ?? '') ? 'reenvio' : tipo ?? null
+const NOME_ACAO = { troca: 'troca', reenvio: 'reenvio', reembolso: 'reembolso', cupom: 'cupom', cancelamento: 'cancelamento' }
+
+const RE_DINHEIRO = /(?:(€|R\$|US\$|\$|£|EUR|BRL|USD|GBP)\s?(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?))|(?:(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s?(€|R\$|US\$|\$|£|EUR|BRL|USD|GBP|euros?)(?![a-z]))/gi
+
+/** Números com moeda citados no texto (17,50 € · €17.50 · EUR 1.500,00 · 1,500.00 USD). */
+export function valoresMonetarios(texto) {
+  const out = []
+  for (const m of String(texto || '').matchAll(RE_DINHEIRO)) {
+    const bruto = (m[2] ?? m[3] ?? '').trim()
+    const seps = bruto.match(/[.,]/g) ?? []
+    let n
+    if (seps.length === 0) n = Number(bruto)
+    else {
+      const ultimo = bruto.lastIndexOf(seps[seps.length - 1])
+      const depois = bruto.length - ultimo - 1
+      const decimal = seps.length > 1 ? seps[seps.length - 1] !== seps[0] || depois !== 3 : depois !== 3
+      n = decimal
+        ? Number(bruto.slice(0, ultimo).replace(/[.,]/g, '') + '.' + bruto.slice(ultimo + 1))
+        : Number(bruto.replace(/[.,]/g, ''))
+    }
+    if (Number.isFinite(n)) out.push(Math.round(n * 100) / 100)
+  }
+  return out
+}
+
+/** Valores em dinheiro que o servidor calculou para a fase (só esses podem aparecer). */
+export function valoresPermitidos(faseId, an, pedido) {
+  const valor = Number(pedido?.valor || 0)
+  if (!valor) return []
+  const oferta = ofertaDaFase(faseId, an)
+  const lista = [valor]
+  if (oferta?.pct) lista.push(valor * oferta.pct / 100)
+  if (faseId === 'reemb_50') lista.push(valor * 0.25)
+  return lista.map(v => Math.round(v * 100) / 100)
+}
+
+const RE_CUPOM_KW = /(cupom|cup[óo]n|coupon|gutschein(?:code)?|rabattcode|c[óo]digo|codice|code|kortingscode|voucher)/gi
+/** Códigos de cupom citados no texto (token só com maiúsculas/dígitos, com ao menos uma letra). */
+export function codigosCitados(texto) {
+  const out = new Set()
+  const s = String(texto || '')
+  for (const m of s.matchAll(RE_CUPOM_KW)) {
+    const resto = s.slice(m.index + m[0].length, m.index + m[0].length + 40)
+    const tok = resto.match(/^[\s:\-–—"“«'’]*([A-Za-z0-9]{4,20})\b/)?.[1]
+    if (tok && /^[A-Z0-9]+$/.test(tok) && /[A-Z]/.test(tok)) out.add(tok)
+  }
+  return [...out]
+}
+
+/**
+ * Confere o texto final de uma fase — bloqueios NEGATIVOS (percentual/cupom de
+ * outra etapa, fato consumado) e POSITIVOS (o que a fase exige tem de estar lá):
+ * percentual obrigatório, valor em dinheiro igual ao cálculo do servidor, código
+ * do cupom cadastrado (e nenhum inventado), ação nomeada e prazo obrigatório.
+ */
+export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = null) {
   const v = validarProposta(faseId, { acao_proposta: faseId, resposta: texto }, loja, an)
   if (!v.ok) return v
-  // só a fase de confirmação (depois do clique do dono) pode falar de fato consumado
-  if (FASES[faseId]?.confirmacao) return { ok: true, motivo: null }
-  const indevida = confirmacaoIndevida(texto)
-  if (indevida) return { ok: false, motivo: `o texto confirma ${indevida} como fato consumado — a oferta tem de ser apresentada como pergunta` }
+  const fase = FASES[faseId]
+  const s = String(texto || '')
+  // cupom inventado / código diferente do cadastrado
+  const cadastrados = new Set(Object.values(loja?.cupons ?? {}).filter(Boolean))
+  for (const c of codigosCitados(s)) {
+    if (!cadastrados.has(c)) return { ok: false, motivo: `o texto cita o código de cupom "${c}", que não está cadastrado na loja` }
+  }
+  // valores em dinheiro: só os calculados pelo servidor
+  const permitidos = valoresPermitidos(faseId, an, pedido)
+  if (permitidos.length) {
+    for (const n of valoresMonetarios(s)) {
+      if (!permitidos.some(p => Math.abs(p - n) < 0.011)) {
+        return { ok: false, motivo: `o texto cita o valor ${n.toFixed(2)}, que não corresponde ao cálculo do servidor (${permitidos.map(p => p.toFixed(2)).join(' / ')})` }
+      }
+    }
+  }
+  // fato consumado só na fase de confirmação (depois do clique do dono)
+  if (!fase?.confirmacao) {
+    const indevida = confirmacaoIndevida(s)
+    if (indevida) return { ok: false, motivo: `o texto confirma ${indevida} como fato consumado — a oferta tem de ser apresentada como pergunta` }
+  }
+  // exigências positivas da oferta (ou da opção aceita, na confirmação)
+  const oferta = ofertaDaFase(faseId, an)
+  if (!oferta) return { ok: true, motivo: null }
+  if (oferta.pct && oferta.tipo !== 'cancelamento' && !new RegExp(`\\b${oferta.pct}\\s?%`).test(s)) {
+    return { ok: false, motivo: `falta o percentual obrigatório da etapa (${oferta.pct}%)` }
+  }
+  const cup = cupomDaFase(faseId, loja, an)
+  if (cup.precisa && cup.codigo && !s.includes(cup.codigo)) {
+    return { ok: false, motivo: `falta o código do cupom cadastrado (${cup.codigo})` }
+  }
+  const acao = acaoPrincipal(oferta.tipo)
+  if (acao && RE_ACAO[acao] && !RE_ACAO[acao].test(s)) {
+    return { ok: false, motivo: `o texto não nomeia a ação da etapa (${NOME_ACAO[acao]})` }
+  }
+  if (oferta.prazo) {
+    const [min, max] = oferta.prazo.match(/\d+/g) ?? []
+    if (min && max && !new RegExp(`\\b${min}\\s*(?:[-–—]|a|à|to|bis|hasta|tot|e|und|and|ou|or|oder|\\/)\\s*${max}\\b`, 'i').test(s)) {
+      return { ok: false, motivo: `falta o prazo obrigatório da etapa (${oferta.prazo})` }
+    }
+  }
   return { ok: true, motivo: null }
 }
 

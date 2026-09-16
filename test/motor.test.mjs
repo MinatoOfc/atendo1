@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {
   novoEstado, decidir, confirmarTransicao, validarProposta, prazoDoPedido, somarDiasUteis,
   horarioMinimoEnvio, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
-  instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever,
+  instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados,
 } from '../server/atendimento.js'
 
 const loja = { id: 'l1', nome: 'Von Alder', moeda: 'EUR', cupons: { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }, prazoEntrega: { min: 5, max: 12, processamento: 3 } }
@@ -159,7 +159,7 @@ test('bloqueios: percentual, cupom e ação fora da fase; confirmação como fat
   assert.equal(validarProposta('reemb_50', { acao_proposta: 'reemb_50', resposta: 'Frete de devolução ≈ 17,50 €. Ofereço 50% (35,00 €).' }, loja).ok, true)
   assert.equal(validarProposta('qual_troca', { acao_proposta: 'qual_troca', resposta: 'Use DANKE15 ou KEEP35.' }, loja).ok, false)
   assert.equal(conferirTextoDaFase('reemb_25', 'Wir haben die Rückerstattung von 25% bereits veranlasst.', loja).ok, false, 'confirmação como fato consumado')
-  assert.equal(conferirTextoDaFase('reemb_25', 'Wir bieten 25% (17,50 €) an — möchten Sie das annehmen?', loja).ok, true)
+  assert.equal(conferirTextoDaFase('reemb_25', 'Wir bieten eine Rückerstattung von 25% (17,50 €) an — möchten Sie das annehmen?', loja).ok, true)
 })
 
 test('edição humana: diferença de oferta só quando percentual/cupom mudam', () => {
@@ -186,6 +186,42 @@ test('cadência e dias úteis', () => {
   const depois = { data: new Date(t0).toISOString(), resposta: 'oi', historico: [{ autor: 'atendo', corpo: 'x', data: new Date(t0 - 3600_000).toISOString() }] }
   assert.equal(horarioMinimoEnvio(depois, 10, t0 + 60_000), t0 + 5 * 3600_000)
   assert.equal(somarDiasUteis(new Date('2026-09-18T12:00:00Z'), 1).toISOString().slice(0, 10), '2026-09-21')
+})
+
+test('exigências positivas: percentual, valor do servidor, cupom cadastrado (nenhum inventado), ação nomeada e prazo', () => {
+  const an0 = novoEstado()
+  const conferir = (fase, txt) => conferirTextoDaFase(fase, txt, loja, an0, pedido1) // pedido de 70 €
+  // percentual obrigatório ausente
+  let v = conferir('reemb_40', 'Wir bieten Ihnen eine Rückerstattung von 28,00 € an. Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /percentual obrigatório/)
+  // valor em dinheiro diferente do cálculo do servidor (40% de 70 = 28,00)
+  v = conferir('reemb_40', 'Rückerstattung von 40% (30,00 €), Sie behalten das Produkt. Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /não corresponde ao cálculo/)
+  assert.equal(conferir('reemb_40', 'Rückerstattung von 40% (28,00 €), Sie behalten das Produkt. Ok?').ok, true)
+  assert.equal(conferir('reemb_40', 'Refund of 40% (€28.00 of €70.00). Ok?').ok, true, 'formatos de moeda diferentes')
+  // ação não nomeada
+  v = conferir('reemb_40', 'Wir bieten 40% (28,00 €) an. Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /não nomeia a ação/)
+  // troca + cupom + prazo
+  assert.equal(conferir('qual_troca', 'Kostenloser Umtausch, Lieferzeit 4 bis 11 Tage, Gutschein DANKE15. Ok?').ok, true)
+  v = conferir('qual_troca', 'Kostenloser Umtausch mit Gutschein DANKE15. Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /prazo obrigatório/)
+  v = conferir('qual_troca', 'Umtausch, 4 bis 11 Tage, Gutschein: FAKE99. Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /não está cadastrado/, 'cupom inventado')
+  v = conferir('qual_troca', 'Umtausch, 4 bis 11 Tage, Gutschein KEEP35. Ok?')
+  assert.equal(v.ok, false, 'código de outra etapa')
+  v = conferir('qual_troca', 'Umtausch, 4 bis 11 Tage, mit Gutschein. Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /falta o código do cupom/)
+  // 50%: frete só em dinheiro (25% de 70 = 17,50) e o valor de 50% (35,00)
+  assert.equal(conferir('reemb_50', 'Rücksendung kostet ca. 17,50 €. Wir bieten eine Rückerstattung von 50% (35,00 €). Ok?').ok, true)
+  v = conferir('reemb_50', 'Rücksendung kostet ca. 20,00 €. Rückerstattung von 50% (35,00 €)?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /não corresponde/)
+  // fases sem oferta não têm exigência positiva (só as negativas)
+  assert.equal(conferir('coleta', 'Welches Produkt meinen Sie?').ok, true)
+  assert.equal(conferir('endereco', 'Bitte senden Sie Straße, Hausnummer, PLZ und Stadt.').ok, true)
+  // utilitários
+  assert.deepEqual(valoresMonetarios('17,50 € und €1.500,00 und 1,500.00 USD und 12 EUR und 10115 Berlin'), [17.5, 1500, 1500, 12])
+  assert.deepEqual(codigosCitados('Gutschein: FAKE99, código postal 10115, coupon code SORRY25'), ['FAKE99', 'SORRY25'])
 })
 
 test('confirmação: só depois do aceite; fato consumado só ali e só com os números da opção aceita; depois, mensagem nova vai ao dono', () => {

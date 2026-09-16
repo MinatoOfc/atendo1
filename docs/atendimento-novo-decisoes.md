@@ -111,6 +111,48 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     seta do mapa entra em 8.2 no mesmo post-it de desculpas + 25%. O motor não
     repete essa mensagem e segue para o cupom de 40% (decisão 6).
 
+21. **Central operacional (revisão da Parte 7, 16/09)**: o cálculo é UM só,
+    puro e testado (`shared/central.js`), usado pela página e por
+    `GET /api/central`. "Todos os pedidos" é a junção pedido × caso: pedido
+    sem conversa aparece como "sem atendimento" / "sem fase". As métricas de
+    fase contam uma vez por pedido + fase (vários tickets, mensagens repetidas
+    ou conversas fundidas não duplicam) e só entram fases efetivamente
+    enviadas (`historicoEtapas` sem evento): rascunho pendente, fase inferida
+    e correção manual ficam fora de passaram/pararam/avançaram e aparecem em
+    contadores separados. Valores por moeda em cada fase e indicador. "Antes
+    do pipeline" virou "cenário hipotético sem retenção" (e "dados históricos
+    insuficientes" sem reembolso confirmado pelo motor) — nunca economia
+    comprovada. Filtros de jornada e fase atual somam-se aos demais.
+
+22. **Correção manual com auditoria**: cada correção e cada remoção fica em
+    `ticket.centralHistorico` (fase anterior, nova fase, jornada, usuário,
+    data, justificativa, remoção); `centralAjuste` é só a correção ativa.
+    Nada disso toca `atendimentoNovo.etapa`, `transicaoPendente` ou a próxima
+    oferta.
+
+23. **Texto final — exigências positivas**: além dos bloqueios negativos, o
+    texto de uma fase com oferta TEM de conter o percentual da etapa, só
+    valores em dinheiro calculados pelo servidor (valor pago, percentual em
+    dinheiro, frete estimado), o código do cupom cadastrado (nenhum código
+    inventado nem de outra etapa), a ação nomeada (troca / reenvio /
+    reembolso / cupom / cancelamento no idioma do cliente) e o prazo da
+    oferta. Vale em todo caminho de envio (chegada, regenerar, aprovar,
+    auto-envio) e na confirmação (com os números da opção aceita).
+
+24. **Canal de envio no modo novo**: só a conta de e-mail da própria loja
+    (`ticket.lojaId`); sem ela, nada sai — a conta de outra loja nunca é
+    usada como reserva. (O clássico mantém a reserva antiga.)
+
+25. **Foto**: a validação só existe no fluxo de defeito, com uma imagem
+    aguardando a comprovação (`aguardandoComprovacao`) e uma próxima etapa
+    definida; não há destino automático para `def_troca`. Os botões só
+    aparecem nesse caso.
+
+26. **Testes**: o pipeline encerra o servidor com `encerrar()` (intervalos,
+    tarefas de arranque, gravações pendentes e HTTP) em vez de
+    `process.exit`; uma falha real termina `npm test` com código diferente de
+    zero (test/saida.test.mjs prova isso com um processo filho).
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.

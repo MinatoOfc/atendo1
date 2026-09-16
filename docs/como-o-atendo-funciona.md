@@ -357,7 +357,12 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
 - **Bloqueios no servidor** (valem em todo caminho que gera ou envia texto —
   chegada de mensagem, "Gerar nova resposta", "Aprovar e enviar", auto-envio):
   ação proposta fora da fase, percentual ou cupom de outra etapa, e linguagem
-  de confirmação derrubam o texto. Cupom não cadastrado na loja também.
+  de confirmação derrubam o texto. Cupom não cadastrado na loja também. E o
+  texto TEM de conter o que a fase exige: o percentual da etapa, só valores
+  em dinheiro calculados pelo servidor, o código do cupom cadastrado (nenhum
+  inventado), a ação nomeada e o prazo da oferta.
+  No modo novo o e-mail sai SÓ pela conta da própria loja — sem ela, nada
+  sai; a conta de outra loja nunca serve de reserva.
   "Gerar nova resposta" no modo novo reescreve só a ação da fase pendente; a
   instrução do lojista só pode mexer em tom/tamanho. Edição manual que mude
   percentual ou cupom exige confirmação explícita e fica registrada no
@@ -380,25 +385,31 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   de fases. Na lista, cada conversa mostra a etiqueta da fase.
 - **Testes**: `npm test` roda o motor (funções puras) e o pipeline completo com
   servidor real, banco temporário, IA e canal de e-mail simulados.
-- **Central operacional** (`/central`, `src/pages/Central.tsx` +
-  `src/lib/central.ts`): visão de todas as lojas sobre os casos de devolução,
-  reembolso e entrega. Seis jornadas (Entrada geral, Tamanho, Qualidade,
-  Defeito/errado, Não recebeu, Cancelamento) com quantidade, valor e
-  percentual; indicadores por moeda (pedidos totais, com ticket, envolvidos em
-  reembolso, valor total, valor com ticket, valor dos pedidos reembolsados,
-  resultado antes e depois do pipeline — "antes" = se todos tivessem 100%,
-  "depois" = o efetivamente reembolsado —, reembolsos parciais, % com produto
+- **Central operacional** (`/central`, `src/pages/Central.tsx`; cálculo em
+  `shared/central.js`, o mesmo que o servidor devolve em `GET /api/central`):
+  visão de todas as lojas sobre os casos de devolução, reembolso e entrega.
+  Seis jornadas (Entrada geral, Tamanho, Qualidade, Defeito/errado, Não
+  recebeu, Cancelamento) com quantidade, valor e percentual; indicadores por
+  moeda (pedidos totais, com ticket, envolvidos em reembolso, valor total,
+  valor com ticket, valor dos pedidos reembolsados, **reembolsado de fato** e
+  o **cenário hipotético sem retenção** — se todos tivessem 100%; é hipótese,
+  não economia comprovada, e vira "dados históricos insuficientes" sem
+  reembolso confirmado pelo motor —, reembolsos parciais, % com produto
   identificado); duas visões: **Mapa do fluxo** (fases por jornada com
-  passaram / pararam / avançaram / valor, um pedido contado uma vez por fase)
-  e **Todos os pedidos** (tabela); filtros simultâneos de busca, loja, data do
-  pedido (7/30/90/todas) e desfecho/percentual; painel lateral da fase com a
-  descrição exata, totais, busca, abas e acesso à conversa. Toda a conta é feita
-  no navegador sobre os dados que o app já tem.
+  passaram / pararam / avançaram e o valor por moeda; conta **só fases
+  enviadas**, uma vez por pedido + fase, e mostra à parte quantos casos
+  inferidos/manuais apontam para a fase) e **Todos os pedidos** (junção dos
+  pedidos da Shopify com os casos: pedido sem conversa aparece como "sem
+  atendimento" / "sem fase"); filtros simultâneos de busca, loja, data do
+  pedido (7/30/90/todas), desfecho/percentual, jornada e fase atual; painel
+  lateral da fase com a descrição exata, totais por moeda, busca, abas e
+  acesso à conversa.
   Origem da fase: **confirmada** (motor do modo novo), **inferida** (caso do
   clássico, deduzido do relatório manual e do motivo lido pelo relatório de
   reembolsos — só a fase final, sem fingir que percorreu a escada) ou
-  **manual** (correção do dono na Central, gravada no workspace com quem,
-  quando, a anterior e a justificativa; não mexe no motor nem deixa o envio
+  **manual** (correção do dono na Central; cada correção e remoção fica no
+  histórico de auditoria `centralHistorico` com quem, quando, fase anterior,
+  nova fase, jornada e justificativa; não mexe no motor nem deixa o envio
   automático pular etapas). O card da conversa tem "Abrir na Central".
 
 Ainda por fazer: a migração dos casos antigos sem relatório como "fase

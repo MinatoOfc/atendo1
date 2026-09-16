@@ -275,7 +275,7 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
           an.enderecoConfirmado ? `endereço: ${an.enderecoConfirmado}` : an.enderecoInformado ? `endereço parcial: ${an.enderecoInformado}` : null,
         ].filter(Boolean).join(' · ') || <span className="muted-sm">nada ainda</span>}
       </LinhaFase>
-      {an.fotoRecebida && an.fotoValidada !== true && an.aguardando === 'humano' && (
+      {an.fluxo === 'defeito' && an.aguardandoComprovacao && an.fotoRecebida && an.fotoValidada !== true && an.aguardando === 'humano' && (
         <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--panel-soft)', borderRadius: 8 }}>
           <div style={{ fontSize: 12.5, marginBottom: 6 }}>
             O cliente mandou uma imagem. Ela <b>comprova o defeito</b>? Só depois da sua confirmação a troca é oferecida.

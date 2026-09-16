@@ -58,8 +58,21 @@ export interface Ticket {
   atendimentoNovo?: AtendimentoNovo
   /** motivo do reembolso lido pelo relatório de reembolsos (cache) */
   motivoReembolso?: { motivo: string; categoria: string; em: string; local?: boolean }
-  /** correção manual da classificação feita na Central operacional */
+  /** correção manual ATIVA da classificação feita na Central operacional */
   centralAjuste?: { fase: string | null; jornada: string | null; por: string; em: string; anterior: string | null; justificativa: string | null }
+  /** auditoria: cada correção manual e cada remoção, em ordem */
+  centralHistorico?: AjusteCentral[]
+}
+
+export interface AjusteCentral {
+  removido: boolean
+  fase: string | null
+  jornada: string | null
+  anterior: string | null
+  anteriorJornada?: string | null
+  por: string
+  em: string
+  justificativa: string | null
 }
 
 export interface OfertaNovo { tipo: string; pct: number | null; cupom: number | null; prazo: string | null; semDevolucao: boolean }
@@ -75,6 +88,10 @@ export interface AtendimentoNovo {
   fotoRecebida: boolean
   /** true só depois de você confirmar que a foto mostra o defeito */
   fotoValidada: boolean | null
+  /** imagem recebida no fluxo de defeito, esperando você dizer se comprova */
+  aguardandoComprovacao?: boolean
+  /** fase que a coleta / a foto está destravando */
+  proximaAposColeta?: string | null
   ofertaAtual: OfertaNovo | null
   ofertaEnviadaEm: string | null
   aguardando: 'cliente' | 'envio' | 'humano' | null
