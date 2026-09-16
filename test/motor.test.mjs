@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {
   novoEstado, decidir, confirmarTransicao, validarProposta, prazoDoPedido, somarDiasUteis,
   horarioMinimoEnvio, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
-  instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados, mencionaData,
+  instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados, mencionaData, ofertaIndevida, acoesDaOferta,
 } from '../server/atendimento.js'
 
 const loja = { id: 'l1', nome: 'Von Alder', moeda: 'EUR', cupons: { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }, prazoEntrega: { min: 5, max: 12, processamento: 3 } }
@@ -341,6 +341,57 @@ test('fases sem oferta e ofertas compostas: nenhuma informação do mapa pode se
   for (const id of Object.keys(FASES).filter(id => !FASES[id].oferta && FASES[id].instrucao && !FASES[id].confirmacao)) {
     assert.equal(c(id, 'Vielen Dank für Ihre Nachricht.', { faltando: ['pedido'] }).ok, false, `${id}: texto vazio de conteúdo não pode passar`)
   }
+})
+
+test('oferta indevida: fases sem oferta não podem oferecer nem prometer troca, reenvio, cupom, reembolso ou cancelamento', () => {
+  const an0 = novoEstado()
+  const c = (fase, txt, extra = {}) => conferirTextoDaFase(fase, txt, loja, extra.an ?? an0, 'pedido' in extra ? extra.pedido : pedido1, { faltando: extra.faltando })
+  const bloqueia = (fase, txt, re, extra) => { const v = c(fase, txt, extra); assert.equal(v.ok, false, `${fase} devia bloquear: ${txt}`); assert.match(v.motivo, re) }
+  const passa = (fase, txt, extra) => { const v = c(fase, txt, extra); assert.equal(v.ok, true, `${fase} devia passar: ${txt} — ${v.motivo}`) }
+  const noPrazo = 'Ihre Bestellung ist innerhalb der Lieferzeit und kommt voraussichtlich am 28.08.2026 an.'
+  // 1. dentro do prazo + troca gratuita → bloqueia
+  bloqueia('nc_no_prazo', noPrazo + ' Wir bieten Ihnen gerne einen kostenlosen Umtausch an.', /oferece ou promete troca/)
+  bloqueia('nc_no_prazo', 'Seu pedido está dentro do prazo, previsão 28/08/2026. Oferecemos uma troca gratuita.', /troca/)
+  // 2. dentro do prazo + reenvio → bloqueia
+  bloqueia('nc_no_prazo', noPrazo + ' Wir können das Paket erneut senden.', /oferece ou promete reenvio/)
+  bloqueia('nc_no_prazo', noPrazo + ' Wir werden Ihnen eine Rückerstattung veranlassen.', /reembolso/)
+  // 3. dentro do prazo explicando que ainda não pode reembolsar/cancelar → permite
+  passa('nc_no_prazo', noPrazo + ' Eine Rückerstattung oder Stornierung ist erst nach Ablauf der Lieferfrist möglich.')
+  passa('nc_no_prazo', 'Seu pedido está dentro do prazo, previsão 28/08/2026. O reembolso ou cancelamento só poderá ser feito depois do fim do prazo de entrega, conforme os termos.')
+  passa('nc_no_prazo', 'Your order is within the delivery window (expected August 28). Unfortunately we cannot refund or cancel before the delivery period ends.')
+  // 4. aguardar 2 dias + reenvio gratuito → bloqueia
+  const aguardar = 'Bitte warten Sie noch 2 Tage und fragen Sie bei Nachbarn oder der Rezeption nach.'
+  bloqueia('nr_entregue_aguardar', aguardar + ' Sonst können wir das Paket kostenlos erneut senden.', /oferece ou promete reenvio/)
+  bloqueia('nr_entregue_aguardar', 'Aguarde mais dois dias e verifique com vizinhos ou na portaria; se não chegar, podemos fazer um reenvio gratuito.', /reenvio/)
+  passa('nr_entregue_aguardar', aguardar)
+  // 5. coleta de dados + qualquer oferta → bloqueia
+  bloqueia('coleta', 'Bitte nennen Sie Ihre Bestellnummer, dann bieten wir Ihnen gerne eine Rückerstattung an.', /reembolso/, { faltando: ['pedido'] })
+  bloqueia('coleta', 'Welchen Artikel meinen Sie? Wir können ihn kostenlos umtauschen.', /troca/, { faltando: ['produtos'] })
+  bloqueia('coleta', 'Qual produto? Podemos enviar um cupom de desconto.', /cupom/, { faltando: ['produtos'] })
+  bloqueia('coleta', 'Bitte nennen Sie Ihre Bestellnummer; wir können die Bestellung gerne stornieren.', /cancelamento/, { faltando: ['pedido'] })
+  passa('coleta', 'Bitte nennen Sie Ihre Bestellnummer, damit wir Ihre Anfrage prüfen können.', { faltando: ['pedido'] })
+  bloqueia('tam_ajuste', 'Ist das Polo zu klein oder zu groß? Wir tauschen es gerne kostenlos um.', /troca/)
+  passa('tam_ajuste', 'Ist das Polo zu klein oder zu groß?')
+  // 6. pedido de foto + oferta antes da validação → bloqueia
+  bloqueia('def_foto', 'Bitte senden Sie ein Foto des Schadens; wir tauschen das Produkt dann kostenlos um.', /troca/)
+  bloqueia('def_foto', 'Envie uma foto do defeito. Vamos reenviar o produto sem custo.', /reenvio/)
+  passa('def_foto', 'Bitte senden Sie ein Foto des Schadens, damit wir den Fall prüfen können.')
+  // 7. endereço repetindo a opção aceita → permite
+  const anEnd = { ...novoEstado(), acaoAceita: 'tam_troca' }
+  passa('endereco', 'Ihr kostenloser Umtausch wird vorbereitet — bitte senden Sie Ihre vollständige Adresse.', { an: anEnd })
+  passa('endereco', 'Vamos providenciar a troca gratuita; envie seu endereço completo.', { an: anEnd })
+  // 8. endereço oferecendo opção diferente → bloqueia
+  bloqueia('endereco', 'Bitte Ihre vollständige Adresse; alternativ können wir Ihnen eine Rückerstattung anbieten.', /reembolso/, { an: anEnd })
+  bloqueia('endereco', 'Envie seu endereço completo. Se preferir, podemos reenviar o pedido.', /reenvio/, { an: anEnd })
+  // fases com oferta também não oferecem outra ação
+  bloqueia('reemb_25', 'Wir bieten eine Rückerstattung von 25% (17,50 €) an, oder wir bieten einen kostenlosen Umtausch. Ok?', /troca/)
+  passa('reemb_40', 'Bei einer Rücksendung wäre die volle Rückerstattung erst nach der Prüfung möglich; wir bieten daher 40% (28,00 €) Rückerstattung ohne Rücksendung. Ok?')
+  // utilitários
+  assert.deepEqual(acoesDaOferta(FASES.troca_20.oferta), ['troca', 'reembolso']); assert.deepEqual(acoesDaOferta(FASES.qual_troca.oferta), ['troca', 'cupom']); assert.deepEqual(acoesDaOferta(null), [])
+  assert.equal(ofertaIndevida('Wir bieten einen Umtausch an.', ['troca']), null)
+  assert.equal(ofertaIndevida('Wir bieten einen Umtausch an.', []), 'troca')
+  assert.equal(ofertaIndevida('Ein Umtausch ist leider nicht möglich.', []), null, 'explicação negativa não é oferta')
+  assert.equal(ofertaIndevida('Sie hatten nach einem Umtausch gefragt.', []), null, 'mera menção não é oferta')
 })
 
 test('confirmação: só depois do aceite; fato consumado só ali e só com os números da opção aceita; depois, mensagem nova vai ao dono', () => {

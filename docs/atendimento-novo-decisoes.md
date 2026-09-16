@@ -193,6 +193,19 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     O prompt entrega esses dados à IA (data provável, 2 dias, 5 dias úteis,
     endereço a repetir).
 
+31. **Oferta indevida (16/09)**: em toda fase, cláusula a cláusula, o texto
+    não pode OFERECER nem PROMETER troca, reenvio, cupom, reembolso ou
+    cancelamento fora da oferta da fase (ou da opção já aceita, no pedido de
+    endereço e nas confirmações). Uma cláusula é oferta quando cita a ação e
+    traz um marcador de oferta/promessa ("oferecemos", "podemos", "gratuita",
+    "wir können", "gerne", "alternativ"…) sem marcador de negação/limite
+    ("não", "ainda não", "só depois do prazo", "erst nach Ablauf", "cannot",
+    "leider"…). Assim, "dentro do prazo" pode explicar que reembolso ou
+    cancelamento ainda não é possível, e a mera menção ("você pediu uma
+    troca") não bloqueia. Antes dos dados obrigatórios, da foto validada ou do
+    fim do prazo, nenhuma oferta aparece (coleta, ajuste de tamanho, pedido de
+    foto, dentro do prazo, marcado como entregue).
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.

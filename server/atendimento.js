@@ -1007,6 +1007,45 @@ export function mencionaData(texto, iso) {
   return padroes.some(p => new RegExp(p, 'i').test(s))
 }
 
+/* ---- oferta indevida: promessa ou oferta de ação que a fase não permite ---- */
+
+// marcadores de oferta/promessa positiva (a ação está sendo oferecida ou garantida)
+const RE_OFERECE = /\b(oferec|ofrec|offr|offer|biet|propos|kostenlos|gratuit|gratis|gr[áa]tis|free\b|podemos|pode(?:r[ií]amos)?\b|we (?:can|could|will|would)|we'll|wir (?:k[oö]nn(?:en|ten)|werden|senden|schicken|tauschen|erstatten)|k[oö]nn(?:en|ten) wir|werden wir|senden wir|schicken wir|tauschen wir|erstatten wir|enviaremos|faremos|reenviaremos|trocaremos|reembolsaremos|cancelaremos|vamos\b|possiamo|potremmo|pouvons|pourrions|allons|podr[ií]amos|com prazer|gerne|happy to|glad to|erhalten sie|sie erhalten|sie bekommen|bekommen sie|receber[áa]|you(?:'ll| will) (?:get|receive)|providenci|arrange|veranlass|organis|garant|assegur|alternativ|como alternativa|as an alternative|stattdessen|instead)/i
+// marcadores de negação / limitação: a ação está sendo explicada como ainda não possível
+const RE_NEGA = /\b(n[aã]o|nicht|not|kein|keine|keinen|nie|niemals|never|pas|non|niet|geen|ainda n[aã]o|noch nicht|not yet|erst\b|s[oó] (?:depois|ap[oó]s|quando|poder)|only (?:after|once|when|possible)|nur (?:nach|wenn|sobald|m[oö]glich)|nach ablauf|ap[oó]s o (?:fim|t[ée]rmino|prazo)|after the (?:deadline|delivery|period)|infelizmente|leider|unfortunately|malheureusement|purtroppo|lamentablemente|helaas|imposs|nicht m[oö]glich|cannot|can't|can not|couldn't|antes d[oe]|before the|until|bis (?:zum|zur|der|die|das)|solange|enquanto)\b/i
+const SEPARA_CLAUSULAS = /[.!?;\n]|,|:|\s[—–-]\s|\b(?:mas|but|aber|pero|ma|however|jedoch|por[ée]m|oder|or|ou|o)\b/i
+
+/** Ações que uma oferta traz (troca, reenvio, reembolso, cupom, cancelamento). */
+export function acoesDaOferta(o) {
+  if (!o) return []
+  const a = []
+  if (/troca/.test(o.tipo)) a.push('troca')
+  if (/reenvio/.test(o.tipo)) a.push('reenvio')
+  if (/reembolso/.test(o.tipo) || (o.pct && o.tipo !== 'cancelamento' && o.tipo !== 'cupom')) a.push('reembolso')
+  if (o.tipo === 'cupom' || o.cupom) a.push('cupom')
+  if (o.tipo === 'cancelamento') a.push('cancelamento')
+  return [...new Set(a)]
+}
+
+/**
+ * Procura, cláusula a cláusula, uma ação NÃO permitida que esteja sendo oferecida
+ * ou prometida (tem marcador de oferta e nenhum de negação). Explicar que algo
+ * ainda não pode ser feito ("só depois do prazo") não é oferta. Devolve o nome
+ * da ação indevida ou null.
+ */
+export function ofertaIndevida(texto, permitidas = []) {
+  for (const bruta of String(texto || '').split(SEPARA_CLAUSULAS)) {
+    const c = bruta.trim()
+    if (!c) continue
+    for (const acao of Object.keys(RE_ACAO)) {
+      if (permitidas.includes(acao) || !RE_ACAO[acao].test(c)) continue
+      if (RE_NEGA.test(c)) continue
+      if (RE_OFERECE.test(c)) return NOME_ACAO[acao]
+    }
+  }
+  return null
+}
+
 /** Exigências das fases sem oferta. Devolve o motivo do bloqueio ou null. */
 function exigenciasSemOferta(faseId, s, { an, pedido, loja, faltando }) {
   const tem = re => re.test(s)
@@ -1088,6 +1127,10 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   // percentual + valor em dinheiro do servidor, frete (50%), cupom (código +
   // percentual), TODAS as ações da etapa, prazo da oferta e 3 a 14 dias na confirmação
   const oferta = ofertaDaFase(faseId, an)
+  // nenhuma ação fora da oferta desta fase (ou da opção já aceita) pode ser oferecida ou prometida
+  // no pedido de endereço, a opção que o cliente já aceitou pode ser repetida — nada além dela
+  const indevidaAqui = ofertaIndevida(s, acoesDaOferta(faseId === 'endereco' ? (FASES[an?.acaoAceita]?.oferta ?? null) : oferta))
+  if (indevidaAqui) return { ok: false, motivo: `o texto oferece ou promete ${indevidaAqui}, que não é permitido nesta etapa${oferta ? '' : ' (antes dos dados obrigatórios, da foto validada ou do prazo, nenhuma oferta pode aparecer)'}` }
   if (!oferta) {
     const motivo = exigenciasSemOferta(faseId, s, { an, pedido, loja, faltando: opcoes.faltando ?? an?.transicaoPendente?.faltando ?? [] })
     return motivo ? { ok: false, motivo } : { ok: true, motivo: null }

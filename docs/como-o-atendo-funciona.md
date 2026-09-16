@@ -369,7 +369,10 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   provável do servidor, "marcado como entregue" pede 2 dias e vizinhos/
   portaria, "atrasado" pede 5 dias úteis, e a confirmação de troca repete o
   endereço confirmado. Cupom exige a palavra "cupom", o código e o
-  percentual.
+  percentual. E nenhuma fase pode oferecer ou prometer uma ação fora da sua
+  oferta (troca, reenvio, cupom, reembolso, cancelamento): a detecção olha
+  cláusula a cláusula e distingue oferta/promessa ("podemos reenviar
+  gratuitamente") de explicação negativa ("o reembolso só depois do prazo").
   No modo novo o e-mail sai SÓ pela conta da própria loja — sem ela, nada
   sai; a conta de outra loja nunca serve de reserva.
   "Gerar nova resposta" no modo novo reescreve só a ação da fase pendente; a
