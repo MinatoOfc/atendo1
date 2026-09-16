@@ -20,7 +20,7 @@ export default defineConfig({
   fullyParallel: false,
   reporter: [['list']],
   expect: { toHaveScreenshot: { maxDiffPixelRatio: 0.005, animations: 'disabled', caret: 'hide', scale: 'css' } },
-  use: { headless: true, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', deviceScaleFactor: 1, colorScheme: 'light', viewport: { width: 1280, height: 720 } },
+  use: { headless: true, locale: 'pt-BR', timezoneId: 'America/Sao_Paulo', deviceScaleFactor: 1, colorScheme: 'dark', viewport: { width: 1280, height: 720 } },
   webServer: { command: 'node test/visual/servidor.mjs', port: 8798, reuseExistingServer: false, timeout: 60_000 },
   projects: [{ name: 'chromium', use: { browserName: 'chromium', ...(canal ? { channel: canal } : {}) } }],
 })

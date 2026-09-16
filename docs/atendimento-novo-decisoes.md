@@ -386,7 +386,7 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     vertical e cartões de quatro métricas; painel "Leitura da jornada" de 300px
     fixo à direita; drawer de 720px com quatro métricas, busca, "Ver:
     passaram/pararam/avançaram", lista de pedidos e seletor de fase atribuída;
-    tabela de nove colunas). Cores, tipografia, botões, bordas e sombras são os
+    tabela de nove colunas). Cores (tema escuro padrão do Atendo), tipografia, botões, bordas e sombras são os
     do Atendo, não os da referência. Dados sempre reais: pedidos, casos, moedas
     separadas (nunca somadas), fases enviadas, inferências e correções
     marcadas. Regras e decisões ocupam cartões iguais, com números derivados do
