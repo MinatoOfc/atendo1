@@ -1013,7 +1013,10 @@ export function mencionaData(texto, iso) {
 const RE_OFERECE = /\b(oferec|ofrec|offr|offer|biet|propos|kostenlos|gratuit|gratis|gr[áa]tis|free\b|podemos|pode(?:r[ií]amos)?\b|we (?:can|could|will|would)|we'll|wir (?:k[oö]nn(?:en|ten)|werden|senden|schicken|tauschen|erstatten)|k[oö]nn(?:en|ten) wir|werden wir|senden wir|schicken wir|tauschen wir|erstatten wir|enviaremos|faremos|reenviaremos|trocaremos|reembolsaremos|cancelaremos|vamos\b|possiamo|potremmo|pouvons|pourrions|allons|podr[ií]amos|com prazer|gerne|happy to|glad to|erhalten sie|sie erhalten|sie bekommen|bekommen sie|receber[áa]|you(?:'ll| will) (?:get|receive)|providenci|arrange|veranlass|organis|garant|assegur|alternativ|como alternativa|as an alternative|stattdessen|instead)/i
 // marcadores de negação / limitação: a ação está sendo explicada como ainda não possível
 const RE_NEGA = /\b(n[aã]o|nicht|not|kein|keine|keinen|nie|niemals|never|pas|non|niet|geen|ainda n[aã]o|noch nicht|not yet|erst\b|s[oó] (?:depois|ap[oó]s|quando|poder)|only (?:after|once|when|possible)|nur (?:nach|wenn|sobald|m[oö]glich)|nach ablauf|ap[oó]s o (?:fim|t[ée]rmino|prazo)|after the (?:deadline|delivery|period)|infelizmente|leider|unfortunately|malheureusement|purtroppo|lamentablemente|helaas|imposs|nicht m[oö]glich|cannot|can't|can not|couldn't|antes d[oe]|before the|until|bis (?:zum|zur|der|die|das)|solange|enquanto)\b/i
-const SEPARA_CLAUSULAS = /[.!?;\n]|,|:|\s[—–-]\s|\b(?:mas|but|aber|pero|ma|however|jedoch|por[ée]m|oder|or|ou|o)\b/i
+// frases: só pontuação forte. Segmentos: só conjunções adversativas/consecutivas —
+// vírgula, dois-pontos, travessão, artigos e "ou/or/oder" NÃO separam o marcador da ação.
+const RE_FRASES = /[.!?;\n]+/
+const RE_SEGMENTOS = /\b(?:mas|por[ée]m|contudo|entretanto|todavia|ent[ãa]o|portanto|but|however|yet|therefore|then|aber|jedoch|doch|sondern|daher|deshalb|deswegen|dann|pero|sino|entonces|ma|per[òo]|tuttavia|quindi|mais|toutefois|cependant|donc|alors)\b/i
 
 /** Ações que uma oferta traz (troca, reenvio, reembolso, cupom, cancelamento). */
 export function acoesDaOferta(o) {
@@ -1034,13 +1037,26 @@ export function acoesDaOferta(o) {
  * da ação indevida ou null.
  */
 export function ofertaIndevida(texto, permitidas = []) {
-  for (const bruta of String(texto || '').split(SEPARA_CLAUSULAS)) {
-    const c = bruta.trim()
-    if (!c) continue
-    for (const acao of Object.keys(RE_ACAO)) {
-      if (permitidas.includes(acao) || !RE_ACAO[acao].test(c)) continue
-      if (RE_NEGA.test(c)) continue
-      if (RE_OFERECE.test(c)) return NOME_ACAO[acao]
+  const global = re => new RegExp(re.source, 'gi')
+  for (const frase of String(texto || '').split(RE_FRASES)) {
+    for (const bruta of frase.split(RE_SEGMENTOS)) {
+      const seg = bruta.trim()
+      if (!seg) continue
+      // posição em palavras (o marcador de oferta alcança toda ação do mesmo segmento)
+      const palavra = i => seg.slice(0, i).split(/\s+/).length - 1
+      const ofertas = [...seg.matchAll(global(RE_OFERECE))].map(m => palavra(m.index))
+      if (!ofertas.length) continue
+      // a negação vale pela última palavra do marcador ("ainda não", "erst nach", "cannot")
+      const negacoes = [...seg.matchAll(global(RE_NEGA))].map(m => palavra(m.index + m[0].length - 1))
+      for (const acao of Object.keys(RE_ACAO)) {
+        if (permitidas.includes(acao)) continue
+        for (const m of seg.matchAll(global(RE_ACAO[acao]))) {
+          const a = palavra(m.index)
+          // oferecida = há marcador de oferta sem negação entre (ou colada a) marcador e ação
+          const oferecida = ofertas.some(o => !negacoes.some(n => n >= Math.min(a, o) - 1 && n <= Math.max(a, o) + 1))
+          if (oferecida) return NOME_ACAO[acao]
+        }
+      }
     }
   }
   return null

@@ -394,6 +394,35 @@ test('oferta indevida: fases sem oferta não podem oferecer nem prometer troca, 
   assert.equal(ofertaIndevida('Sie hatten nach einem Umtausch gefragt.', []), null, 'mera menção não é oferta')
 })
 
+test('oferta indevida: artigo, vírgula, dois-pontos, travessão e "ou/or/oder" não separam o marcador da ação', () => {
+  // as três frases que passavam indevidamente
+  assert.equal(ofertaIndevida('Oferecemos o reembolso integral.', []), 'reembolso')
+  assert.equal(ofertaIndevida('Podemos oferecer ao cliente o reembolso.', []), 'reembolso')
+  assert.equal(ofertaIndevida('Vamos providenciar o reenvio do produto.', []), 'reenvio')
+  // pontuação intermediária
+  assert.equal(ofertaIndevida('Oferecemos, sem custo, o reenvio.', []), 'reenvio')
+  assert.equal(ofertaIndevida('Podemos oferecer: um reembolso.', []), 'reembolso')
+  assert.equal(ofertaIndevida('Podemos oferecer — sem burocracia — a troca.', []), 'troca')
+  assert.equal(ofertaIndevida('Wir bieten Ihnen, ohne Kosten, einen Umtausch an.', []), 'troca')
+  // alternativas: a segunda ação não perde o marcador da primeira
+  assert.ok(['reembolso', 'troca'].includes(ofertaIndevida('We can offer a refund or an exchange.', [])), 'as duas ações são oferecidas')
+  assert.equal(ofertaIndevida('We can offer a refund or an exchange.', ['reembolso']), 'troca')
+  assert.equal(ofertaIndevida('Wir bieten eine Rückerstattung oder einen Umtausch an.', ['reembolso']), 'troca')
+  assert.equal(ofertaIndevida('Oferecemos o reembolso ou o reenvio.', ['reembolso']), 'reenvio')
+  // negação e menção continuam distintas
+  assert.equal(ofertaIndevida('Não podemos reembolsar ou cancelar antes do prazo.', []), null, 'negação alcança as duas ações')
+  assert.equal(ofertaIndevida('Não podemos reembolsar, mas podemos trocar.', []), 'troca', 'a adversativa abre uma oferta nova')
+  assert.equal(ofertaIndevida('Você pediu um reembolso.', []), null, 'mera menção')
+  assert.equal(ofertaIndevida('Wir können das Paket leider nicht erneut senden.', []), null, 'negação alemã depois do verbo')
+  assert.equal(ofertaIndevida('Unfortunately we cannot refund or cancel before the delivery period ends.', []), null)
+  assert.equal(ofertaIndevida('Ainda não podemos reembolsar; o prazo termina em 28/08.', []), null)
+  assert.equal(ofertaIndevida('Se não chegar em 2 dias, podemos fazer um reenvio gratuito.', []), 'reenvio', 'a negação da condição não protege a oferta')
+  assert.equal(ofertaIndevida('Infelizmente não temos estoque, então oferecemos o reembolso.', []), 'reembolso')
+  // dentro da fase: frase completa da fase + oferta no meio da mesma frase
+  const v = conferirTextoDaFase('nc_no_prazo', 'Seu pedido está dentro do prazo, previsão 28/08/2026, e oferecemos o reembolso integral.', loja, novoEstado(), pedido1, {})
+  assert.equal(v.ok, false); assert.match(v.motivo, /reembolso/)
+})
+
 test('confirmação: só depois do aceite; fato consumado só ali e só com os números da opção aceita; depois, mensagem nova vai ao dono', () => {
   let r = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'qualidade' })
   r = rodada(r.an, { intencao: 'recusa' }); r = rodada(r.an, { intencao: 'recusa' })

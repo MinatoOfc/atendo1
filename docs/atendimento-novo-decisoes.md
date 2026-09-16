@@ -205,6 +205,15 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     troca") não bloqueia. Antes dos dados obrigatórios, da foto validada ou do
     fim do prazo, nenhuma oferta aparece (coleta, ajuste de tamanho, pedido de
     foto, dentro do prazo, marcado como entregue).
+    Análise (revisão de 16/09): a frase é dividida só por pontuação forte
+    (. ! ? ;) e por conjunções adversativas/consecutivas ("mas", "então",
+    "aber", "dann", "but", "however"…). Vírgula, dois-pontos, travessão,
+    artigos ("o reembolso") e alternativas ("ou/or/oder") NÃO separam o
+    marcador de oferta da ação — "Oferecemos, sem custo, o reenvio" e "We can
+    offer a refund or an exchange" bloqueiam as duas ações. A negação só
+    protege quando está entre o marcador e a ação ou colada a um deles ("não
+    podemos reembolsar ou cancelar", "wir können leider nicht", "cannot");
+    "se não chegar, podemos reenviar" continua sendo oferta.
 
 ## Bloqueios implementados no servidor (seção 11)
 
