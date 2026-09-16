@@ -14,6 +14,8 @@ process.env.DATA_DIR = DIR
 process.env.PORT = '8799'
 process.env.ANTHROPIC_API_KEY = 'sk-ant-teste'
 process.env.ATENDO_SIMULAR = '1'
+// este arquivo testa o fluxo com o envio automático LIBERADO (fora do piloto); o piloto em si está em test/piloto.test.mjs
+process.env.ATENDO_LIBERAR_AUTOENVIO = '1'
 delete process.env.DATABASE_URL
 delete process.env.ATENDO_SMTP_FAKE
 // contas de e-mail configuradas (a sincronização é desligada com ATENDO_SIMULAR e o
@@ -811,7 +813,7 @@ test('envio automático: só no novo, com confirmação, bloqueado no piloto; to
     // nenhuma conversa nova ganha enviaEm depois da reativação
     const t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c34@web.de', nome: 'C34', corpo: 'Schlecht.', lojaId: 'loja6' })
     assert.equal(t.motor, 'novo'); assert.equal(t.status, 'aprovacao'); assert.equal(t.enviaEm, undefined, 'sem envio automático agendado')
-  } finally { delete process.env.ATENDO_LIBERAR_AUTOENVIO }
+  } finally { process.env.ATENDO_LIBERAR_AUTOENVIO = '1' }
   await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
 })
 

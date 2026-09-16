@@ -170,6 +170,8 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
     let confirmacaoEnviada = null
     let inferidaPor = null // 'relatorio' | 'ia' | null
     let motivoCategoria = 'nao_informado' // categoria FECHADA (a página externa só mostra isto, nunca o texto)
+    const fluxo = an?.fluxo ?? null
+    const subfluxo = an?.subfluxo ?? null
 
     if (an?.fluxo) {
       origem = 'confirmada'
@@ -254,7 +256,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       faseConfirmada, faseInferida, faseManual, origem, trilha,
       pendente: an?.transicaoPendente?.para ?? null,
       desfecho, percentual, reembolsado, concluido, comVoce, acaoPendente, escalouAoDono,
-      situacaoReembolso, confirmacaoEnviada, inferidaPor, inferencia: inf, motivoCategoria,
+      situacaoReembolso, confirmacaoEnviada, inferidaPor, inferencia: inf, motivoCategoria, fluxo, subfluxo,
       dataMs: new Date(pedido?.criadoEm ? pedido.criadoEm + 'T12:00:00' : t.data).getTime(),
       ajuste: t.centralAjuste ?? null,
       historicoAjustes: t.centralHistorico ?? [],

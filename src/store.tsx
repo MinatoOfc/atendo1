@@ -119,6 +119,8 @@ export interface AtendimentoNovo {
   rascunhoIdioma?: string | null
   /** motivo pelo qual este rascunho nunca sai sozinho (ex.: idioma não validado localmente) */
   aprovacaoObrigatoria?: string
+  /** envio automático bloqueado (piloto): o rascunho fica em Aprovações */
+  envioBloqueado?: string
   ofertaAtual: OfertaNovo | null
   ofertaEnviadaEm: string | null
   aguardando: 'cliente' | 'envio' | 'humano' | null

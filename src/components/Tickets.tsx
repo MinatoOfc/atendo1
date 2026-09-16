@@ -291,6 +291,7 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
         <span className="muted-sm"> · a resposta sai sempre neste idioma, mesmo com idioma fixo na loja</span>
       </LinhaFase>
       {an.aprovacaoObrigatoria && <LinhaFase rotulo="Aprovação obrigatória">{an.aprovacaoObrigatoria}</LinhaFase>}
+      {an.envioBloqueado && <LinhaFase rotulo="Envio automático">{an.envioBloqueado}</LinhaFase>}
       {an.ofertaAtual && <LinhaFase rotulo="Última oferta">{descreverOferta(an.ofertaAtual)}</LinhaFase>}
       <LinhaFase rotulo="Próxima ação">{proxima}</LinhaFase>
       {faltando.length > 0 && (

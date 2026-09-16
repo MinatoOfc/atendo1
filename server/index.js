@@ -179,6 +179,28 @@ const CUPONS_NECESSARIOS = [...new Set(Object.values(FASES).map(f => f.oferta?.c
 /** Durante o piloto o envio automático fica bloqueado; só libera com ATENDO_LIBERAR_AUTOENVIO=1. */
 const envioAutomaticoLiberado = () => process.env.ATENDO_LIBERAR_AUTOENVIO === '1'
 
+/**
+ * Arranque sem ATENDO_LIBERAR_AUTOENVIO=1: toda loja fica com envio automático
+ * desligado (mesmo se o estado salvo dizia true) e os agendamentos automáticos
+ * do MOTOR NOVO são cancelados — o rascunho continua em Aprovações. O clássico
+ * não é tocado.
+ */
+function neutralizarAutoEnvioNoPiloto() {
+  if (envioAutomaticoLiberado()) return
+  for (const [wsId, estado] of workspaces) {
+    let mudou = false
+    for (const l of estado.lojas ?? []) if (l.novoEnvioAutomatico === true) { l.novoEnvioAutomatico = false; mudou = true }
+    for (const t of estado.tickets ?? []) {
+      if (t.atendimentoNovo?.transicaoPendente?.para && t.enviaEm) {
+        t.enviaEm = undefined
+        t.atendimentoNovo.envioBloqueado = 'envio automático bloqueado durante o piloto'
+        mudou = true
+      }
+    }
+    if (mudou) { console.log(`[piloto] ${wsId}: envio automático do modo novo neutralizado`); salvar(wsId) }
+  }
+}
+
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
 function prontidaoModoNovo(wsId, loja) {
   const faltando = []
@@ -646,7 +668,10 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   const minimo = horarioMinimoEnvio(t, estado.config.atrasoMinutos)
   an.proximoEnvioMinimo = new Date(minimo).toISOString()
   t.status = 'aprovacao'
-  t.enviaEm = loja?.novoEnvioAutomatico && estado.config.automacaoAtiva ? minimo : undefined
+  // agenda só com a loja ligada, a automação geral ligada E o envio automático liberado (fora do piloto)
+  t.enviaEm = loja?.novoEnvioAutomatico && estado.config.automacaoAtiva && envioAutomaticoLiberado() ? minimo : undefined
+  if (loja?.novoEnvioAutomatico && !envioAutomaticoLiberado()) an.envioBloqueado = 'envio automático bloqueado durante o piloto'
+  else an.envioBloqueado = undefined
   // idioma que o validador local não lê: gera no idioma do cliente, mas NUNCA sai sozinho
   if (idiomaAlvo && !IDIOMAS_VALIDADOS.has(idiomaAlvo)) {
     an.aprovacaoObrigatoria = v.aviso || `idioma "${idiomaAlvo}" não é validado localmente — aprovação humana obrigatória`
@@ -1099,6 +1124,8 @@ agendar(async () => {
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
           if (anL.aprovacaoObrigatoria) { t.enviaEm = undefined; continue }
+          // reconfere a liberação no momento do envio: bloqueado → fica em Aprovações, sem enviar
+          if (!envioAutomaticoLiberado()) { t.enviaEm = undefined; anL.envioBloqueado = 'envio automático bloqueado durante o piloto'; continue }
           const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t), { faltando: anL.transicaoPendente.faltando ?? [], idioma: anL.idioma ?? null })
           const vi = v.ok ? conferirIdioma(t.rascunho || '', anL.idioma ?? null, anL.rascunhoIdioma ?? null) : { ok: true }
           const dif = v.ok && vi.ok ? diferencaDeOferta(anL.rascunhoGerado ?? t.rascunho, t.rascunho, lojaL) : null
@@ -3050,6 +3077,7 @@ async function iniciar() {
   await db.iniciarDb()
   segredo = await db.obterSegredo()
   await carregarWorkspaces()
+  neutralizarAutoEnvioNoPiloto()
 
   servidorHttp = app.listen(PORT, async () => {
     console.log(`atendo servidor na porta ${PORT}`)

@@ -281,6 +281,7 @@ export function novoEstado() {
   return {
     versao: 1,
     fluxo: null,
+    subfluxo: null,          // não recebido: 'status' | 'cancelamento' | 'nao_chegou' | 'recusado' | 'entregue'
     etapa: null,
     produtosAfetados: [],
     motivo: null,
@@ -529,6 +530,10 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
     const fluxo = escolherFluxo(cls, pedido, loja, agora)
     if (!fluxo) { saida.humano = 'Fora do mapa do atendimento novo — responda você'; return saida }
     an.fluxo = fluxo
+    // cenário do mapa dentro de "não recebido" (o mapa visual separa os caminhos)
+    an.subfluxo = fluxo === 'nao_recebido_status' ? (cls.intencao === 'pergunta_status' ? 'status' : 'cancelamento')
+      : fluxo === 'nao_recebido_reembolso' ? ((cls.situacaoEntrega === 'voltou_remetente' || cls.situacaoEntrega === 'recusou_na_porta') ? 'recusado' : 'nao_chegou')
+        : fluxo === 'entregue_nao_recebido' ? 'entregue' : null
     let alvo = faseInicialDoFluxo(fluxo)
     if (fluxo === 'nao_recebido_status') alvo = prazoDoPedido(pedido, loja, agora).vencido ? 'nc_atrasado_25' : 'nc_no_prazo'
     return irPara(saida, alvo, agora)

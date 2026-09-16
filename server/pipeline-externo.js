@@ -15,7 +15,7 @@
  * Nenhuma rota de escrita existe aqui.
  */
 import { calcularCentral, metricasPorFase, indicadores, relacaoComFase, ORDEM_JORNADAS } from '../shared/central.js'
-import { MAPA_VISUAL, itensDaJornada } from '../shared/mapa.js'
+import { MAPA_VISUAL, itensDaJornada, metricasPorItem, SEGMENTOS } from '../shared/mapa.js'
 
 const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
@@ -77,6 +77,8 @@ export function dadosPipeline({ estado, fases, jornadas, filtros }) {
   const metricas = q ? metricasPorFase(registros, fases) : base.metricas
   const kpis = q ? indicadores(linhas) : base.indicadores
   const total = registros.length
+  // métricas por ITEM visual (fase real × segmento do caso) — nunca o total global da fase
+  const porItem = metricasPorItem(registros, fases, metricasPorFase, relacaoComFase)
   const porFase = {}
   for (const id of Object.keys(fases)) {
     const grupo = { passaram: [], pararam: [], avancaram: [], emAberto: [] }
@@ -105,6 +107,8 @@ export function dadosPipeline({ estado, fases, jornadas, filtros }) {
     indicadores: kpis,
     metricas: Object.fromEntries(Object.entries(metricas).map(([id, m]) => [id, { ...m, pctPassaram: total ? Math.round((m.passaram / total) * 1000) / 10 : 0 }])),
     porFase,
+    porItem,
+    segmentos: SEGMENTOS,
     totalCasos: total,
     registros: registros.map(publico),
     linhas: linhasPub.filter((_, i) => casa([linhasPub[i].pedidoNumero, linhasPub[i].produto, linhasPub[i].registro?.motivo, linhasPub[i].lojaNome])),
@@ -133,7 +137,7 @@ export function paginaPipeline({ catalogo, lojas }) {
           <div class="fase-cab"><span class="ordem">${i.ordem}</span><span class="tipo">${NOME_TIPO[i.tipo]}</span></div>
           <div class="fase-titulo">${escapar(i.titulo)}</div>
           <div class="mini desc">${escapar(i.descricao)}</div>
-          ${i.fase ? `<div class="mini">fase do motor: <code>${i.fase}</code>${i.fase !== i.id ? ` — ${escapar(titulo(i.fase))}` : ''}</div>
+          ${i.fase ? `<div class="mini">fase do motor: <code>${i.fase}</code> — ${escapar(titulo(i.fase))} · casos: ${escapar(SEGMENTOS[i.segmento] ?? i.segmento)}</div>
           <div class="nums"><span><b data-n="passaram">0</b> passaram</span><span><b data-n="pararam">0</b> pararam</span><span><b data-n="avancaram">0</b> avançaram</span></div>
           <div class="mini" data-n="pct"></div>
           <div class="mini" data-n="valor">—</div>
@@ -260,7 +264,7 @@ export function paginaPipeline({ catalogo, lojas }) {
 <script>
 (function () {
   'use strict';
-  var estado = { dados: null, aba: 'mapa', fase: null, rel: 'passaram', buscaFase: '' };
+  var estado = { dados: null, aba: 'mapa', item: null, rel: 'passaram', buscaFase: '' };
   var $ = function (s, el) { return (el || document).querySelector(s); };
   var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
   var NOME_DESFECHO = { em_aberto: 'Em aberto', reembolso: 'Reembolso', troca: 'Troca', reenvio: 'Reenvio', cupom: 'Cupom', cancelamento: 'Cancelamento', encerrado: 'Encerrado' };
@@ -312,13 +316,16 @@ export function paginaPipeline({ catalogo, lojas }) {
     });
     // itens do mapa com fase (já estão no HTML): só os números
     $$('.fase[data-fase]').forEach(function (b) {
-      var id = b.getAttribute('data-fase'); var m = d.metricas[id] || { passaram: 0, pararam: 0, avancaram: 0, emAberto: 0, valorPorMoeda: {}, inferidos: 0, manuais: 0, pctPassaram: 0 };
+      var item = b.getAttribute('data-item'); var m = d.porItem[item] || { passaram: 0, pararam: 0, avancaram: 0, emAberto: 0, valorPorMoeda: {}, inferidos: 0, manuais: 0, pctPassaram: 0, totalSegmento: 0 };
       texto($('[data-n=passaram]', b), m.passaram); texto($('[data-n=pararam]', b), m.pararam); texto($('[data-n=avancaram]', b), m.avancaram);
-      texto($('[data-n=pct]', b), m.pctPassaram + '% dos casos filtrados' + (m.emAberto ? ' · ' + m.emAberto + ' em aberto' : ''));
+      texto($('[data-n=pct]', b), m.pctPassaram + '% dos ' + m.totalSegmento + ' caso(s) deste caminho' + (m.emAberto ? ' · ' + m.emAberto + ' em aberto' : ''));
       texto($('[data-n=valor]', b), porMoeda(m.valorPorMoeda));
       texto($('[data-n=fora]', b), (m.inferidos || m.manuais) ? ((m.inferidos ? m.inferidos + ' inferido(s)' : '') + (m.inferidos && m.manuais ? ' · ' : '') + (m.manuais ? m.manuais + ' manual(is)' : '') + ' — fora das métricas') : '');
-      b.classList.toggle('on', estado.fase === id);
+      b.classList.toggle('on', estado.item === item);
     });
+    // jornada filtrada: o mapa mostra só aquela jornada (mais a Entrada geral, que é comum a todas) — cada jornada pode ser lida sozinha
+    var fj = $('#f-jornada').value;
+    d.catalogo.ordem.forEach(function (jn) { var sec = $('section.jornada[data-jornada="' + jn + '"]'); if (sec) sec.hidden = !(fj === 'todas' || fj === jn || jn === 'entrada'); });
     d.catalogo.ordem.forEach(function (jn) { var s = $('[data-jornada-resumo="' + jn + '"]'); if (s) texto(s, (d.indicadores[0] ? (d.indicadores[0].porJornada.filter(function (x) { return x.chave === jn; })[0] || {}).pedidos || 0 : 0) + ' caso(s) nos filtros'); });
     // tabela
     var tb = $('#linhas'); tb.innerHTML = '';
@@ -344,10 +351,11 @@ export function paginaPipeline({ catalogo, lojas }) {
     desenharPainel();
   }
   function desenharPainel() {
-    var p = $('#painel'); var d = estado.dados; var id = estado.fase;
-    if (!id || !d || !d.catalogo.fases[id]) { p.hidden = true; return; }
-    p.hidden = false; var f = d.catalogo.fases[id]; var m = d.metricas[id]; var g = d.porFase[id] || { passaram: [], pararam: [], avancaram: [], emAberto: [] };
-    texto($('#painel-titulo'), f.titulo); texto($('#painel-desc'), f.instrucao || 'Fase de decisão do dono — não há texto automático.');
+    var p = $('#painel'); var d = estado.dados; var itemId = estado.item;
+    var item = itemId && d ? d.catalogo.mapa.filter(function (x) { return x.id === itemId; })[0] : null;
+    if (!item || !item.fase || !d.catalogo.fases[item.fase]) { p.hidden = true; return; }
+    p.hidden = false; var f = d.catalogo.fases[item.fase]; var m = d.porItem[itemId]; var g = (m && m.chaves) || { passaram: [], pararam: [], avancaram: [], emAberto: [] };
+    texto($('#painel-titulo'), item.titulo); texto($('#painel-desc'), (d.segmentos[item.segmento] || item.segmento) + ' · fase do motor: ' + f.titulo + ' — ' + (f.instrucao || 'decisão do dono, sem texto automático'));
     var nums = $('#painel-nums'); nums.innerHTML = ''; [['passaram', m.passaram], ['pararam', m.pararam], ['avançaram', m.avancaram]].forEach(function (x) { var s = el('span'); s.appendChild(el('b', '', x[1])); s.appendChild(document.createTextNode(' ' + x[0])); nums.appendChild(s); });
     texto($('#painel-valor'), 'Valor dos pedidos, por moeda: ' + porMoeda(m.valorPorMoeda) + ((m.inferidos || m.manuais) ? ' · ' + m.inferidos + ' inferidos · ' + m.manuais + ' manuais fora das métricas' : ''));
     $$('#painel-abas .chip').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-rel') === estado.rel); });
@@ -369,8 +377,8 @@ export function paginaPipeline({ catalogo, lojas }) {
     estado.aba = b.getAttribute('data-aba'); $$('[data-aba]').forEach(function (x) { x.classList.toggle('on', x === b); });
     $('#mapa').classList.toggle('oculto', estado.aba !== 'mapa'); $('#pedidos').classList.toggle('oculto', estado.aba !== 'pedidos');
   }); });
-  $$('.fase[data-fase]').forEach(function (b) { b.addEventListener('click', function () { estado.fase = b.getAttribute('data-fase'); estado.rel = 'passaram'; estado.buscaFase = ''; $('#painel-busca').value = ''; desenhar(); }); });
-  $('#painel-fechar').addEventListener('click', function () { estado.fase = null; desenhar(); });
+  $$('.fase[data-fase]').forEach(function (b) { b.addEventListener('click', function () { estado.item = b.getAttribute('data-item'); estado.rel = 'passaram'; estado.buscaFase = ''; $('#painel-busca').value = ''; desenhar(); }); });
+  $('#painel-fechar').addEventListener('click', function () { estado.item = null; desenhar(); });
   $$('#painel-abas .chip').forEach(function (b) { b.addEventListener('click', function () { estado.rel = b.getAttribute('data-rel'); desenharPainel(); }); });
   $('#painel-busca').addEventListener('input', function (e) { estado.buscaFase = e.target.value; desenharPainel(); });
   carregar();

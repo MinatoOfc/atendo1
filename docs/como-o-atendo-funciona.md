@@ -458,10 +458,17 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   somente leitura, com as jornadas, fases, indicadores, filtros e painel por
   fase da Central, calculados no servidor pelo mesmo `shared/central.js`,
   sem dados pessoais e com token longo revogável. A página desenha o mapa
-  visual completo (`shared/mapa.js`: 62 itens — regras, coletas, decisões,
-  ofertas, confirmações e decisões do dono — na ordem do mapa mental); só os
-  30 itens ligados a uma fase real do motor carregam números. O motivo sai
+  visual completo (`shared/mapa.js`: 85 itens em 6 jornadas completas e
+  independentes — Entrada geral, Tamanho, Qualidade, Defeito / produto errado,
+  Não recebeu / atraso, Cancelamento — na ordem da apresentação do mapa); só
+  os 59 itens ligados a uma fase real do motor carregam números, e cada
+  número é **por item** (fase real × caminho do caso): o 40% de Tamanho conta
+  só casos de tamanho, Produto errado nunca entra em Defeito. O motivo sai
   como categoria fechada e o produto vem do catálogo do pedido.
+- **Envio automático no piloto**: sem `ATENDO_LIBERAR_AUTOENVIO=1` nenhuma
+  resposta do motor novo sai sozinha — nem no agendamento, nem no laço de
+  envio, nem depois de um reinício com estado antigo; o rascunho fica em
+  Aprovações com a linha "envio automático bloqueado durante o piloto".
 
 Piloto (item 9): ainda desligado.
 

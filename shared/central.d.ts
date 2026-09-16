@@ -20,6 +20,9 @@ export interface Caso {
   motivo: string | null
   /** categoria fechada do motivo (tamanho_pequeno, qualidade, defeito…) — o link externo só mostra isto */
   motivoCategoria: string
+  /** fluxo e subfluxo reais do motor (null no clássico) */
+  fluxo: string | null
+  subfluxo: string | null
   jornada: string
   faseAtual: string | null
   faseTitulo: string

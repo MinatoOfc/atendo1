@@ -302,14 +302,40 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     correção manual continuam fora das métricas de fases enviadas.
 
 36. **Mapa visual completo (16/09)**: `shared/mapa.js` é o catálogo de TODOS os
-    itens do mapa mental — 62 itens (regras, coletas, decisões, ofertas,
-    confirmações e decisões do dono), cada um com id estável, jornada, grupo,
-    ordem, título, descrição, tipo, fase real do motor (quando existe) e
-    destinos. As 28 fases do motor aparecem todas; 26 são efetivamente
-    enviáveis (100% e cancelamento são decisão do dono). Regra e decisão nunca
-    contam como fase enviada. A página externa desenha esse catálogo; o teste
-    `test/mapa.test.mjs` guarda a lista fechada e ordenada e falha se um item
-    for removido, omitido, duplicado ou trocado de lugar.
+    itens da apresentação do mapa (Miro + site de exemplo) — 85 itens em 6
+    jornadas, cada uma COMPLETA e INDEPENDENTE: Entrada geral (16), Tamanho
+    (8: ajuste → troca → troca+20% → 40 → 50 → 60 → 70 → 100), Qualidade (9:
+    troca alternativa → cupom 35% → 25 → 40 → 50 → 60 → 70 → 100), Defeito /
+    produto errado (18: dois subfluxos inteiros — foto → validação humana →
+    troca → troca+20% → escada; confirmar produto → produto correto+15% →
+    35% → 25% → escada), Não recebeu / atraso (32: só status dentro/fora do
+    prazo, não chegou/voltou, marcado entregue, recusado na porta,
+    processado no prazo, prazo vencido, não processado) e Cancelamento (2).
+    Nenhum cartão compacta dois passos do mapa; uma fase do motor pode
+    aparecer em várias jornadas (troca_20, reemb_40…100, qual_cupom_35,
+    nr_reenvio_*), sempre com id próprio por jornada. Cada item tem id
+    estável, jornada, grupo, **segmento** (que casos ele conta), ordem,
+    título, descrição, tipo, fase real (quando existe) e destinos; destinos
+    só apontam para a própria jornada ou para a Entrada geral (aceite,
+    endereço, confirmações); só a Entrada geral encaminha para uma jornada.
+    As 28 fases do motor aparecem todas (59 itens com fase, 26 regras e
+    decisões sem fase); 26 fases são efetivamente enviáveis (100% e
+    cancelamento são decisão do dono). `test/mapa.test.mjs` guarda a lista
+    fechada e ordenada (falha em remoção, omissão, duplicata ou troca de
+    ordem), as contagens por jornada e a independência das jornadas.
+
+36b. **Métricas por item visual, não por fase global**: `metricasPorItem`
+    (shared/mapa.js) cruza a fase real do registro com o **segmento** do
+    item (fluxo/subfluxo reais do motor, guardados no registro da Central:
+    tamanho, qualidade, defeito, errado, nr_status, nr_cancelamento,
+    nr_nao_chegou, nr_recusado, nr_entregue, cancelamento). Um caso de
+    Tamanho parado no 40% conta só no "40%" de Tamanho; Qualidade só em
+    Qualidade; Defeito só em Defeito; Produto errado nunca entra nos números
+    de Defeito, mesmo compartilhando a jornada técnica. O funil de cada
+    jornada é coerente (nenhuma etapa maior que a anterior; parou + avançou
+    + em aberto = passaram) e o percentual é sobre os casos daquele caminho.
+    A página externa e o JSON (`porItem`) usam só isso; o total global da
+    fase não aparece em cartão nenhum.
 
 37. **Link externo sem texto livre**: o JSON público leva só categoria fechada
     do motivo (rótulo gerado no servidor: tamanho pequeno/grande, qualidade,
@@ -321,7 +347,17 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
 38. **Envio automático no piloto**: toda ativação do modo novo zera
     `novoEnvioAutomatico` (mesmo se estava ligado antes de voltar ao
     clássico); ligar exige loja no novo, confirmação explícita e a variável
-    `ATENDO_LIBERAR_AUTOENVIO=1` — sem ela, fica bloqueado durante o piloto.
+    `ATENDO_LIBERAR_AUTOENVIO=1`. Sem ela o bloqueio vale em três pontos:
+    (a) no agendamento — `prepararRascunhoNovo` só cria `enviaEm` com
+    `envioAutomaticoLiberado()`; (b) no laço de auto-envio — reconfere antes
+    de enviar; se não estiver liberado, não envia, remove `enviaEm` das
+    conversas do motor novo, mantém o rascunho em Aprovações e registra
+    "envio automático bloqueado durante o piloto"; (c) no arranque do
+    servidor — todas as lojas passam a desligado (um `true` persistido é
+    neutralizado), os agendamentos do motor novo são cancelados e o clássico
+    não é tocado. `test/piloto.test.mjs` sobe o servidor sem a variável com
+    um estado salvo (loja no novo com automático ligado, conversa do novo
+    com `enviaEm` vencido, conversa clássica agendada) e prova tudo isso.
 
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
