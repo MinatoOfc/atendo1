@@ -274,6 +274,33 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     "inferido" — fora do reembolsado de fato. Dá para refazer ou remover a
     inferência de um caso.
 
+34. **Alternância antigo × novo por loja (16/09)**: o modo muda só pela rota
+    própria (`POST /api/lojas/:id/modo`), individual por loja, com validação
+    no servidor antes de ativar o novo — conta de e-mail própria da loja,
+    prazo em dias úteis e todos os cupons que o mapa usa (15, 25, 30, 35,
+    40%) — e confirmação explícita; a rota genérica da loja recusa
+    `modoAtendimento`. Cada troca grava `modoDesde` e uma entrada em
+    `modoHistorico` (modo anterior, novo, usuário, loja, data). O envio
+    automático do novo nunca liga com a troca. O clássico nunca some. Cada
+    conversa nasce com `ticket.motor` (modo da loja naquele dia) e continua
+    nele até terminar: trocar a loja vale só para conversas novas; ao voltar
+    ao clássico, as conversas do novo seguem suas fases com estado,
+    histórico, endereço, foto e decisão pendente preservados. Migrar uma
+    conversa aberta do clássico para o novo é ação manual, individual e
+    confirmada (`POST /api/tickets/:id/migrar-motor`), começa pela triagem e
+    fica em `motorHistorico`; nunca automática, nunca ao contrário.
+
+35. **Pipeline em link externo (16/09)**: `GET /p/:wsId/:token` (página) e
+    `/dados` (JSON), somente leitura, com o MESMO cálculo da Central
+    (`shared/central.js`, `server/pipeline-externo.js`) sobre os dados reais
+    — nada simulado. Token de 32 bytes por workspace (`tokenPipeline`),
+    comparado em tempo constante; gerar novo ou revogar derruba o endereço
+    antigo na hora; o token não vai para o HTML nem para logs; workspace
+    errado dá 404. O JSON sai sanitizado: sem nome, e-mail, endereço,
+    telefone, texto de conversa, rascunho ou resposta; a busca externa olha
+    só pedido, produto, motivo e loja. Rascunho pendente, inferência e
+    correção manual continuam fora das métricas de fases enviadas.
+
 ## Bloqueios implementados no servidor (seção 11)
 
 - O prompt recebe só a fase atual e a ação permitida.

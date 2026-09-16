@@ -17,6 +17,7 @@ import {
 } from './atendimento.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
+import { paginaPipeline, dadosPipeline, filtrosDaConsulta } from './pipeline-externo.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
@@ -165,6 +166,28 @@ function contasDe(wsId) {
 /** Catálogo das fases para a página e para a Central (mesmo formato nos dois). */
 const catalogoFases = () => Object.fromEntries(Object.entries(FASES).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, aoAceitar: f.aoAceitar, aoRecusar: f.aoRecusar, oferta: f.oferta, instrucao: f.instrucao, confirmacao: !!f.confirmacao, decisaoDono: FASES_HUMANAS.has(id) }]))
 
+/**
+ * Motor de UMA conversa: fica gravado em ticket.motor no momento em que ela
+ * nasce (pelo modo da loja naquele dia) e não muda quando a loja troca de modo.
+ * Conversas antigas sem o campo: novo se já têm estado do motor, senão clássico.
+ */
+const motorDaConversa = t => (t?.motor === 'novo' || t?.motor === 'classico') ? t.motor : (t?.atendimentoNovo ? 'novo' : 'classico')
+
+/** Cupons que o mapa usa (percentuais das fases com cupom). */
+const CUPONS_NECESSARIOS = [...new Set(Object.values(FASES).map(f => f.oferta?.cupom).filter(Boolean))].sort((a, b) => a - b)
+
+/** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
+function prontidaoModoNovo(wsId, loja) {
+  const faltando = []
+  const propria = contasDe(wsId).find(c => c.id === loja.id) ?? null
+  if (!propria || !(propria.configurado || envioPorApi)) faltando.push({ chave: 'email', texto: 'conta de e-mail própria da loja (Configurações → E-mail)' })
+  const p = loja.prazoEntrega
+  if (!p || !(Number(p.min) > 0) || !(Number(p.max) >= Number(p.min))) faltando.push({ chave: 'prazo', texto: 'prazo de entrega em dias úteis (mínimo e máximo)' })
+  const semCupom = CUPONS_NECESSARIOS.filter(pct => !String(loja.cupons?.[String(pct)] ?? '').trim())
+  if (semCupom.length) faltando.push({ chave: 'cupons', texto: `cupom de ${semCupom.map(p => p + '%').join(', ')}` })
+  return { pronto: faltando.length === 0, faltando }
+}
+
 const contaDaLoja = (wsId, lojaId) => {
   const contas = contasDe(wsId)
   return contas.find(c => c.id === lojaId) ?? contas[0]
@@ -234,6 +257,9 @@ function visaoLojas(wsId, estado) {
       idioma: l.idioma || 'auto',
       iaModelo: l.iaModelo || 'claude',
       modoAtendimento: l.modoAtendimento === 'novo' ? 'novo' : 'classico',
+      modoDesde: l.modoDesde ?? null,
+      modoHistorico: l.modoHistorico ?? [],
+      prontidaoNovo: prontidaoModoNovo(wsId, l),
       novoEnvioAutomatico: l.novoEnvioAutomatico === true,
       prazoEntrega: l.prazoEntrega ?? null,
       cupons: l.cupons ?? {},
@@ -279,6 +305,7 @@ function visao(wsId) {
     opcoesRelatorio: estado.opcoesRelatorio ?? [],
     opcoesInstrucao: estado.opcoesInstrucao ?? [],
     relatorioLink: estado.tokenRelatorio ? `/r/${wsId}/${estado.tokenRelatorio}` : null,
+    pipelineLink: estado.tokenPipeline ? `/p/${wsId}/${estado.tokenPipeline}` : null,
     linkMostraHoje: estado.linkMostraHoje !== false,
     reembolsosLink: estado.tokenRelatorio && estado.relatorioReembolsos ? `/r/${wsId}/${estado.tokenRelatorio}/reembolsos` : null,
     reembolsosEm: estado.relatorioReembolsos?.geradoEm ?? null,
@@ -721,8 +748,10 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
   // e-mail passou no filtro local: guarda as imagens (a faxina limpa órfãs)
   if (wsId && anexos?.length) base.anexos = await guardarAnexos(wsId, anexos)
 
+  // o motor da conversa nasce com ela (modo da loja HOJE) e não muda depois
+  base.motor = modoDaLoja(estado.lojas.find(l => l.id === lojaId))
   // loja no modo novo: o motor de etapas cuida de tudo (classificar, decidir, escrever)
-  if (modoDaLoja(estado.lojas.find(l => l.id === lojaId)) === 'novo') {
+  if (base.motor === 'novo') {
     const rn = await processarNovo(estado, base)
     if (rn.spam) { base.status = 'spam'; base.anexos = undefined }
     return base
@@ -898,7 +927,8 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos }, w
     t.status = 'humano'
     t.motivoEscalada = 'IA pausada nesta conversa — responda manualmente ou retome a IA'
     t.motivoTraducao = undefined
-  } else if (modoDaLoja(estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))) === 'novo') {
+  } else if (motorDaConversa(t) === 'novo') {
+    // a conversa segue no motor em que começou, mesmo que a loja tenha trocado de modo
     // mensagem nova reinicia a cadência e recalcula o rascunho (regra 8)
     const rn = await processarNovo(estado, t)
     if (rn.spam) { t.status = 'spam'; t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined }
@@ -1218,6 +1248,44 @@ agendar(() => {
 /* ---------------- Link público do relatório manual ----------------
    O lojista cria um link secreto e manda para o chefe: a página mostra os
    relatórios manuais por dia, sempre atualizados, sem login. Revogável. */
+
+/* ---------------- Link externo do pipeline (somente leitura) ----------------
+   Token longo (32 bytes) e revogável; a página e os dados saem sanitizados
+   (sem nome, e-mail, endereço ou texto de conversa). Nada de escrita. */
+
+app.post('/api/pipeline-link', (req, res) => {
+  const { acao } = req.body ?? {}
+  if (acao === 'revogar') req.estado.tokenPipeline = undefined
+  else if (acao === 'novo') req.estado.tokenPipeline = crypto.randomBytes(32).toString('hex')
+  else req.estado.tokenPipeline = req.estado.tokenPipeline || crypto.randomBytes(32).toString('hex')
+  salvar(req.wsId); ok(req, res)
+})
+
+async function workspaceDoLinkPipeline(wsId, token) {
+  let estado = workspaces.get(wsId)
+  if (!estado) {
+    try { const c = await db.carregarWorkspace(wsId); if (c) { workspaces.set(wsId, c); estado = c } } catch { /* cai no 404 */ }
+  }
+  const a = Buffer.from(String(token || ''))
+  const b = Buffer.from(String(estado?.tokenPipeline || ''))
+  if (!estado || !b.length || a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
+  return estado
+}
+
+app.get('/p/:wsId/:token', async (req, res) => {
+  const estado = await workspaceDoLinkPipeline(req.params.wsId, req.params.token)
+  res.set('Cache-Control', 'no-store'); res.set('X-Robots-Tag', 'noindex')
+  if (!estado) return res.status(404).send('Link inválido ou revogado.')
+  const lojas = estado.lojas.map(l => ({ id: l.id, nome: l.nome, moeda: l.moeda || 'EUR' }))
+  res.type('html').send(paginaPipeline({ catalogo: { ordem: ['entrada', 'tamanho', 'qualidade', 'defeito_errado', 'nao_recebido', 'cancelamento'], jornadas: JORNADAS, fases: catalogoFases() }, lojas }))
+})
+
+app.get('/p/:wsId/:token/dados', async (req, res) => {
+  const estado = await workspaceDoLinkPipeline(req.params.wsId, req.params.token)
+  res.set('Cache-Control', 'no-store')
+  if (!estado) return res.status(404).json({ erro: 'Link inválido ou revogado.' })
+  res.json(dadosPipeline({ estado, fases: catalogoFases(), jornadas: JORNADAS, filtros: filtrosDaConsulta(req.query) }))
+})
 
 app.post('/api/relatorio-link', (req, res) => {
   const { acao } = req.body ?? {}
@@ -1925,6 +1993,57 @@ app.post('/api/shopify/testar', async (req, res) => {
 
 const IDIOMAS_RESPOSTA = ['auto', 'pt', 'en', 'es', 'fr', 'de', 'it', 'nl']
 
+/* ---------------- Modo de atendimento por loja (antigo × novo) ----------------
+   Individual por loja; o clássico nunca some; envio automático do novo continua
+   desligado por padrão; ativar o novo exige e-mail próprio, prazo e cupons, e
+   confirmação explícita; cada troca fica na auditoria da loja. Conversas em
+   andamento continuam no motor em que nasceram. */
+
+app.get('/api/lojas/:id/modo', (req, res) => {
+  const loja = req.estado.lojas.find(l => l.id === req.params.id)
+  if (!loja) return res.status(404).json({ erro: 'loja não encontrada' })
+  res.json({ modo: modoDaLoja(loja), desde: loja.modoDesde ?? null, prontidao: prontidaoModoNovo(req.wsId, loja), historico: loja.modoHistorico ?? [], cuponsNecessarios: CUPONS_NECESSARIOS })
+})
+
+app.post('/api/lojas/:id/modo', (req, res) => {
+  const loja = req.estado.lojas.find(l => l.id === req.params.id)
+  if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
+  const { modo, confirmar } = req.body ?? {}
+  if (modo !== 'novo' && modo !== 'classico') return res.status(400).json({ erro: 'Modo inválido.', state: visao(req.wsId) })
+  const atual = modoDaLoja(loja)
+  if (modo === atual) return ok(req, res)
+  if (modo === 'novo') {
+    const pr = prontidaoModoNovo(req.wsId, loja)
+    if (!pr.pronto) return res.status(400).json({ erro: `Esta loja ainda não pode ativar o modo novo. Falta: ${pr.faltando.map(f => f.texto).join('; ')}.`, faltando: pr.faltando, state: visao(req.wsId) })
+  }
+  if (confirmar !== true) return res.status(400).json({ erro: 'A mudança de modo precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
+  const em = new Date().toISOString()
+  loja.modoAtendimento = modo
+  loja.modoDesde = em
+  loja.modoHistorico = [...(loja.modoHistorico ?? []), { de: atual, para: modo, por: req.usuario?.nome || req.usuario?.email || 'lojista', lojaId: loja.id, em }].slice(-100)
+  // o envio automático do novo NUNCA liga sozinho com a troca de modo
+  if (modo === 'novo' && loja.novoEnvioAutomatico !== true) loja.novoEnvioAutomatico = false
+  salvar(req.wsId); ok(req, res)
+})
+
+/* Migração MANUAL de uma conversa aberta do clássico para o novo: individual,
+   confirmada, começa pela triagem. Nunca automática; nunca ao contrário. */
+app.post('/api/tickets/:id/migrar-motor', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  const loja = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+  if (modoDaLoja(loja) !== 'novo') return res.status(400).json({ erro: 'A loja desta conversa está no clássico — só dá para migrar conversas de uma loja no modo novo.', state: visao(req.wsId) })
+  if (motorDaConversa(t) === 'novo') return res.status(400).json({ erro: 'Esta conversa já está no motor novo.', state: visao(req.wsId) })
+  if (!['inbox', 'aprovacao', 'humano'].includes(t.status)) return res.status(400).json({ erro: 'Só conversas abertas (caixa, aprovação ou com você) podem ser migradas.', state: visao(req.wsId) })
+  if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'A migração desta conversa precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
+  const em = new Date().toISOString()
+  t.motorHistorico = [...(t.motorHistorico ?? []), { de: 'classico', para: 'novo', por: req.usuario?.nome || req.usuario?.email || 'lojista', em }]
+  t.motor = 'novo'
+  t.atendimentoNovo = novoEstado() // começa pela triagem
+  t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined; t.decisaoPendente = undefined; t.motivoEscalada = undefined
+  await processarNovo(req.estado, t)
+  salvar(req.wsId); ok(req, res)
+})
+
 app.post('/api/lojas', (req, res) => {
   const { id, nome, ativa, idioma, assinatura, iaModelo, modoAtendimento, novoEnvioAutomatico, prazoEntrega, cupons } = req.body ?? {}
   const loja = req.estado.lojas.find(l => l.id === id)
@@ -1933,8 +2052,8 @@ app.post('/api/lojas', (req, res) => {
   if (typeof ativa === 'boolean' && loja.id !== 'loja1') loja.ativa = ativa
   if (typeof idioma === 'string' && IDIOMAS_RESPOSTA.includes(idioma)) loja.idioma = idioma
   if (typeof iaModelo === 'string' && ['claude', 'gemini'].includes(iaModelo)) loja.iaModelo = iaModelo
-  // modo de atendimento desta loja: o clássico é o padrão e nunca some
-  if (modoAtendimento === 'novo' || modoAtendimento === 'classico') loja.modoAtendimento = modoAtendimento
+  // o modo de atendimento só muda pela rota própria (validação, confirmação e auditoria)
+  if (modoAtendimento !== undefined) return res.status(400).json({ erro: 'O modo de atendimento muda em Configurações → Loja → "Mudar modo", com confirmação.', state: visao(req.wsId) })
   // modo novo: envio automático (desligado por padrão no piloto), prazo em dias úteis e cupons por percentual
   if (typeof novoEnvioAutomatico === 'boolean') loja.novoEnvioAutomatico = novoEnvioAutomatico
   if (prazoEntrega && typeof prazoEntrega === 'object') {
@@ -2538,7 +2657,7 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
   // Modo novo: nunca o pipeline clássico. Reescreve SOMENTE a ação da fase
   // pendente; a instrução só pode mexer em tom/tamanho; passa pelos mesmos bloqueios.
   const lojaR = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-  if (modoDaLoja(lojaR) === 'novo') {
+  if (motorDaConversa(t) === 'novo') {
     const anR = t.atendimentoNovo
     const faseId = anR?.transicaoPendente?.para
     if (!faseId) {

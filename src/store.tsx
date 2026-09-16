@@ -64,6 +64,9 @@ export interface Ticket {
   centralHistorico?: AjusteCentral[]
   /** Parte 8: fase/jornada/desfecho inferidos pela IA para casos antigos — só a Central usa; nunca muda o atendimento */
   inferenciaCentral?: InferenciaCentral
+  /** motor em que esta conversa nasceu (não muda quando a loja troca de modo) */
+  motor?: 'classico' | 'novo'
+  motorHistorico?: { de: string; para: string; por: string; em: string }[]
 }
 
 export interface InferenciaCentral {
@@ -207,6 +210,12 @@ export interface Loja {
   iaModelo?: string
   /** "classico" (o atendimento atual) ou "novo" (a reformulação) */
   modoAtendimento?: string
+  /** desde quando o modo atual está ativo (ISO) */
+  modoDesde?: string | null
+  /** auditoria das trocas de modo */
+  modoHistorico?: { de: string; para: string; por: string; lojaId: string; em: string }[]
+  /** o que falta para ativar o novo (conferido no servidor) */
+  prontidaoNovo?: { pronto: boolean; faltando: { chave: string; texto: string }[] }
   /** modo novo: rascunhos saem sozinhos na cadência (desligado no piloto) */
   novoEnvioAutomatico?: boolean
   /** modo novo: prazo de entrega prometido, em dias úteis */
@@ -304,6 +313,8 @@ interface ServerState {
   opcoesInstrucao?: string[]
   /** caminho do link público do relatório manual (ex.: /r/ws-x/token) ou null */
   relatorioLink?: string | null
+  /** link externo do pipeline (somente leitura), ou null quando não existe/foi revogado */
+  pipelineLink?: string | null
   /** link público do último relatório de reembolsos gerado (mesmo token) */
   reembolsosLink?: string | null
   /** quando esse relatório foi gerado (ISO) */
@@ -412,6 +423,12 @@ interface Store extends ServerState {
   /** Central operacional: correção manual da classificação de um caso */
   corrigirFaseCentral: (id: string, patch: { fase?: string | null; jornada?: string | null; justificativa?: string; remover?: boolean }) => void
   /** Parte 8: quantos casos históricos existem, quantos já têm inferência e quantos faltam */
+  /** troca o modo da loja (individual, com validação e confirmação no servidor) */
+  mudarModoLoja: (id: string, modo: 'classico' | 'novo') => Promise<{ erro?: string; faltando?: { chave: string; texto: string }[] }>
+  /** migração manual e confirmada de UMA conversa aberta do clássico para o novo (começa pela triagem) */
+  migrarConversaParaNovo: (id: string) => Promise<{ erro?: string }>
+  /** link externo do pipeline: gerar (cria se não houver), novo (troca o token) ou revogar */
+  configurarPipelineLink: (acao: 'gerar' | 'novo' | 'revogar') => Promise<void>
   statusMigracaoCentral: () => Promise<{ candidatos: number; inferidos: number; pendentes: number; iaConfigurada: boolean; ultima: { em: string; lidos: number; custoIA: number; por: string } | null }>
   /** Parte 8: roda a inferência da IA num lote de casos antigos (ou num só) — nunca automática */
   migrarCasosHistoricos: (opcoes: { limite?: number; forcar?: boolean; ticketId?: string; remover?: boolean }) => Promise<{ lidos?: number; restantes?: number; custoIA?: number; aviso?: string | null; erro?: string }>
@@ -694,6 +711,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     validarFotoNovo: (id, valida) => api(`/tickets/${id}/novo/foto`, 'POST', { valida }).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     confirmarAceiteNovo: id => api(`/tickets/${id}/novo/confirmar`, 'POST', {}).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     corrigirFaseCentral: (id, patch) => api(`/tickets/${id}/central/fase`, 'POST', patch).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
+    mudarModoLoja: async (id, modo) => {
+      const r = await api(`/lojas/${id}/modo`, 'POST', { modo, confirmar: true }) as { erro?: string; faltando?: { chave: string; texto: string }[]; state?: ServerState }
+      aplicar(r)
+      return r
+    },
+    migrarConversaParaNovo: async id => {
+      const r = await api(`/tickets/${id}/migrar-motor`, 'POST', { confirmar: true })
+      if (r.erro) alert(r.erro)
+      aplicar(r)
+      return r
+    },
+    configurarPipelineLink: acao => api('/pipeline-link', 'POST', { acao }).then(aplicar),
     statusMigracaoCentral: () => fetch('/api/central/migracao').then(r => r.json()),
     migrarCasosHistoricos: async opcoes => {
       const r = await api('/central/migrar', 'POST', opcoes) as { lidos?: number; restantes?: number; custoIA?: number; aviso?: string | null; erro?: string; state?: ServerState }

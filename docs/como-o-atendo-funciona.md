@@ -446,6 +446,19 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   aparece como "inferida (IA)", fora das métricas de fases enviadas e fora do
   reembolsado de fato. Dá para inferir, refazer ou remover por caso.
 
+- **Antigo × novo por loja** (Configurações → Loja): dois cartões,
+  "Atendimento antigo — clássico" e "Atendimento novo — pipeline atual", com
+  o modo ativo e desde quando, a prontidão conferida no servidor (e-mail
+  próprio, prazo, cupons — com o que falta listado), confirmação visual antes
+  de mudar e histórico de trocas. Cada conversa fica no motor em que nasceu;
+  migrar uma conversa aberta para o novo é ação manual e confirmada dentro
+  da própria conversa.
+- **Pipeline em link externo** (Configurações → Loja → "Pipeline em link
+  externo": gerar, copiar, gerar novo, revogar): página "Pipeline completo",
+  somente leitura, com as jornadas, fases, indicadores, filtros e painel por
+  fase da Central, calculados no servidor pelo mesmo `shared/central.js`,
+  sem dados pessoais e com token longo revogável.
+
 Piloto (item 9): ainda desligado.
 
 ---

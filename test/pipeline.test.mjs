@@ -18,7 +18,7 @@ delete process.env.DATABASE_URL
 delete process.env.ATENDO_SMTP_FAKE
 // contas de e-mail configuradas (a sincronização é desligada com ATENDO_SIMULAR e o
 // envio passa pelo canal simulado — nada toca a rede): loja1, loja2 e loja3 têm; loja4 NÃO
-for (const [suf, nome] of [['', 'loja1'], ['2', 'loja2'], ['3', 'loja3']]) {
+for (const [suf, nome] of [['', 'loja1'], ['2', 'loja2'], ['3', 'loja3'], ['6', 'loja6']]) {
   process.env[`EMAIL${suf}_USER`] = `${nome}@teste.local`; process.env[`EMAIL${suf}_PASS`] = 'senha-falsa'
   process.env[`EMAIL${suf}_IMAP_HOST`] = 'imap.invalido.test'; process.env[`EMAIL${suf}_SMTP_HOST`] = 'smtp.invalido.test'
 }
@@ -37,9 +37,11 @@ estado.lojas = [
   { id: 'loja2', nome: 'Loja Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' },
   { id: 'loja3', nome: 'Loja Nova Automática', ativa: true, moeda: 'EUR', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: true },
   { id: 'loja4', nome: 'Loja Nova Sem Email', ativa: true, moeda: 'USD', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
+  { id: 'loja5', nome: 'Loja Só Prazo', ativa: true, moeda: 'EUR', idioma: 'auto', prazoEntrega: { min: 5, max: 12, processamento: 3 } }, // sem e-mail, sem cupons
+  { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' })]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -643,6 +645,124 @@ test('Parte 8: migração dos casos históricos por clique, em lotes, sem altera
   r = await api('/api/central/migrar', { ticketId: 'h903', remover: true }); assert.equal(r.status, 200)
   st = await api('/api/central/migracao', null, 'GET'); assert.deepEqual([st.inferidos, st.pendentes], [4, 1])
   r = await api('/api/central/migrar', { ticketId: 'h904' }); assert.equal(r.status, 400, 'fora dos casos')
+})
+
+test('modo por loja: loja sem e-mail, prazo ou cupom não ativa o novo; troca exige confirmação; auditoria; as outras lojas não mudam', async () => {
+  // loja4 (sem e-mail), loja5 (sem e-mail e sem cupons), loja6 (sem prazo e sem cupons)
+  let r = await api('/api/lojas/loja5/modo', { modo: 'novo', confirmar: true })
+  assert.equal(r.status, 400); assert.match(r.erro, /não pode ativar/); assert.deepEqual(r.faltando.map(f => f.chave), ['email', 'cupons'])
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true })
+  assert.equal(r.status, 400); assert.deepEqual(r.faltando.map(f => f.chave), ['prazo', 'cupons']); assert.match(r.erro, /15%, 25%, 30%, 35%, 40%/)
+  let m = await api('/api/lojas/loja6/modo', null, 'GET')
+  assert.equal(m.modo, 'classico'); assert.equal(m.prontidao.pronto, false); assert.deepEqual(m.cuponsNecessarios, [15, 25, 30, 35, 40])
+  // a rota genérica de loja NÃO troca o modo
+  r = await api('/api/lojas', { id: 'loja6', modoAtendimento: 'novo' })
+  assert.equal(r.status, 400); assert.match(r.erro, /Mudar modo/)
+  // completa a preparação (prazo + cupons) e confere a prontidão
+  await api('/api/lojas', { id: 'loja6', prazoEntrega: { min: 5, max: 12, processamento: 3 }, cupons: CUPONS })
+  m = await api('/api/lojas/loja6/modo', null, 'GET'); assert.equal(m.prontidao.pronto, true)
+  // sem confirmação não muda
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo' })
+  assert.equal(r.status, 400); assert.equal(r.precisaConfirmar, true)
+  // com confirmação muda — só esta loja, com "desde" e auditoria; envio automático continua desligado
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true })
+  assert.equal(r.status, 200, r.erro)
+  const lojas = r.state.lojas
+  const l6 = lojas.find(l => l.id === 'loja6')
+  assert.equal(l6.modoAtendimento, 'novo'); assert.ok(l6.modoDesde); assert.equal(l6.novoEnvioAutomatico, false)
+  assert.equal(l6.modoHistorico.length, 1); assert.deepEqual([l6.modoHistorico[0].de, l6.modoHistorico[0].para, l6.modoHistorico[0].por, l6.modoHistorico[0].lojaId], ['classico', 'novo', 'Teste', 'loja6']); assert.ok(l6.modoHistorico[0].em)
+  assert.equal(lojas.find(l => l.id === 'loja2').modoAtendimento, 'classico'); assert.equal(lojas.find(l => l.id === 'loja5').modoAtendimento, 'classico'); assert.equal(lojas.find(l => l.id === 'loja1').modoAtendimento, 'novo')
+  // volta ao clássico (sempre permitido, com confirmação)
+  r = await api('/api/lojas/loja6/modo', { modo: 'classico' }); assert.equal(r.status, 400)
+  r = await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true }); assert.equal(r.status, 200)
+  assert.equal(r.state.lojas.find(l => l.id === 'loja6').modoHistorico.length, 2)
+})
+
+test('alternância antigo → novo → antigo: cada conversa fica no motor em que nasceu; migração só manual e confirmada', async () => {
+  // loja6 no clássico: conversa A nasce clássica
+  let a = await cliente(null, { de: 'c31@web.de', nome: 'C31', corpo: 'Wo ist mein Paket?', lojaId: 'loja6' })
+  assert.equal(a.motor, 'classico'); assert.equal(a.atendimentoNovo, undefined); assert.equal(a.status, 'aprovacao')
+  // loja6 → novo (já preparada no teste anterior)
+  let r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200, r.erro)
+  // mensagem nova em A: continua no clássico (sem motor novo, sem fase)
+  a = await cliente(null, { de: 'c31@web.de', corpo: 'Immer noch nichts.', ticketId: a.id })
+  assert.equal(a.motor, 'classico'); assert.equal(a.atendimentoNovo, undefined); assert.match(a.rascunho ?? '', /Paket/)
+  // conversa B nasce no novo
+  let b = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c32@web.de', nome: 'C32', corpo: 'Schlecht.', lojaId: 'loja6' })
+  assert.equal(b.motor, 'novo'); assert.equal(an(b).transicaoPendente.para, 'qual_troca')
+  await comEnvio('ok', () => aprovar(b)); b = await ticket(b.id); assert.equal(an(b).etapa, 'qual_troca')
+  // loja6 volta ao clássico
+  r = await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true }); assert.equal(r.status, 200)
+  // B continua no novo: recusa avança a fase, com histórico preservado
+  b = await cliente({ intencao: 'recusa' }, { de: 'c32@web.de', corpo: 'Nein.', ticketId: b.id })
+  assert.equal(b.motor, 'novo'); assert.equal(an(b).transicaoPendente.para, 'qual_cupom_35'); assert.equal(an(b).historicoEtapas.length, 1); assert.equal(an(b).etapa, 'qual_troca')
+  await comEnvio('ok', () => aprovar(b)); b = await ticket(b.id); assert.equal(an(b).etapa, 'qual_cupom_35')
+  // aceite no novo com a loja no clássico: endereço e decisão pendente continuam sendo do novo
+  b = await cliente({ intencao: 'aceita' }, { de: 'c32@web.de', corpo: 'Ok, den Gutschein.', ticketId: b.id })
+  assert.equal(b.status, 'humano'); assert.equal(an(b).acaoAceita, 'qual_cupom_35'); assert.equal(an(b).aguardando, 'humano')
+  // conversa C nasce clássica de novo
+  const c = await cliente(null, { de: 'c33@web.de', nome: 'C33', corpo: 'Tracking?', lojaId: 'loja6' })
+  assert.equal(c.motor, 'classico'); assert.equal(c.atendimentoNovo, undefined)
+  // migração manual: só com a loja no novo, só conversa clássica aberta, só confirmada
+  r = await api(`/api/tickets/${c.id}/migrar-motor`, { confirmar: true }); assert.equal(r.status, 400); assert.match(r.erro, /loja .* clássico/)
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200)
+  r = await api(`/api/tickets/${c.id}/migrar-motor`, {}); assert.equal(r.status, 400); assert.equal(r.precisaConfirmar, true)
+  r = await api(`/api/tickets/${b.id}/migrar-motor`, { confirmar: true }); assert.equal(r.status, 400); assert.match(r.erro, /já está no motor novo/)
+  fila.push({ intencao: 'pergunta_status', motivo: 'nao_recebido' }) // a triagem do novo classifica a mensagem atual de C
+  r = await api(`/api/tickets/${c.id}/migrar-motor`, { confirmar: true }); assert.equal(r.status, 200, r.erro)
+  const c2 = await ticket(c.id)
+  assert.equal(c2.motor, 'novo'); assert.ok(c2.atendimentoNovo); assert.equal(an(c2).etapa, null, 'começa pela triagem'); assert.equal(an(c2).fluxo, 'entregue_nao_recebido', 'triagem do novo: pedido consta entregue e o cliente pergunta onde está')
+  assert.deepEqual([c2.motorHistorico[0].de, c2.motorHistorico[0].para, c2.motorHistorico[0].por], ['classico', 'novo', 'Teste'])
+  // A (clássica, aberta) NÃO foi migrada junto: migração nunca é automática
+  const a2 = await ticket(a.id); assert.equal(a2.motor, 'classico'); assert.equal(a2.atendimentoNovo, undefined)
+  await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
+})
+
+test('link externo do pipeline: somente leitura, mesmos números da Central, todas as jornadas e fases, sem dados pessoais, token revogável', async () => {
+  const raw = async (caminho, metodo = 'GET') => { const r = await realFetch(base + caminho, { method: metodo }); return { status: r.status, texto: await r.text(), tipo: r.headers.get('content-type') || '' } }
+  // sem link ainda
+  let r = await api('/api/state', null, 'GET'); assert.equal(r.state.pipelineLink, null)
+  r = await api('/api/pipeline-link', { acao: 'gerar' }); assert.equal(r.status, 200)
+  const link = r.state.pipelineLink
+  assert.match(link, /^\/p\/teste\/[0-9a-f]{64}$/, 'token longo (32 bytes)')
+  // a página: cabeçalho, abas, todas as jornadas e TODAS as fases (renderizadas no servidor)
+  let pg = await raw(link)
+  assert.equal(pg.status, 200); assert.match(pg.tipo, /text\/html/)
+  assert.match(pg.texto, /Pipeline completo/); assert.match(pg.texto, /Mapa do fluxo/); assert.match(pg.texto, /Todos os pedidos/)
+  const st = (await api('/api/state', null, 'GET')).state
+  for (const nome of Object.values(st.jornadasNovo)) assert.ok(pg.texto.includes(nome), `jornada "${nome}" na página`)
+  for (const [id, f] of Object.entries(st.fasesNovo)) { assert.ok(pg.texto.includes(`data-fase="${id}"`), `fase ${id} na página`); assert.ok(pg.texto.includes(f.titulo.replace(/&/g, '&amp;').replace(/'/g, '&#39;')), `título de ${id}`) }
+  assert.ok(!pg.texto.includes(link.split('/').pop()), 'o token não aparece no HTML')
+  // os dados: mesmos números da Central interna para os mesmos filtros
+  for (const q of ['', '?loja=loja1', '?loja=loja2&periodo=todas', '?jornada=qualidade&fase=reemb_25&desfecho=reembolso', '?desfecho=25']) {
+    const ext = JSON.parse((await raw(link + '/dados' + q)).texto)
+    const int = await api('/api/central' + q, null, 'GET')
+    const nucleo = ms => Object.fromEntries(Object.entries(ms).map(([k, v]) => [k, { passaram: v.passaram, pararam: v.pararam, avancaram: v.avancaram, emAberto: v.emAberto, valorPorMoeda: v.valorPorMoeda, inferidos: v.inferidos, manuais: v.manuais }]))
+    assert.deepEqual(nucleo(ext.metricas), nucleo(int.metricas), `métricas iguais (${q})`)
+    assert.deepEqual(ext.indicadores, int.indicadores, `indicadores iguais (${q})`)
+    assert.equal(ext.registros.length, int.registros.length); assert.equal(ext.linhas.length, int.linhas.length)
+    assert.deepEqual(ext.registros.map(x => x.chave), int.registros.map(x => x.chave))
+    // percentuais por fase sobre os casos filtrados; painel por fase coerente com as métricas
+    for (const [id, m] of Object.entries(ext.metricas)) { assert.equal(m.pctPassaram, ext.totalCasos ? Math.round((m.passaram / ext.totalCasos) * 1000) / 10 : 0); assert.equal(ext.porFase[id].passaram.length, m.passaram); assert.equal(ext.porFase[id].pararam.length, m.pararam); assert.equal(ext.porFase[id].avancaram.length, m.avancaram) }
+  }
+  // sem dados pessoais nem texto de conversa — no HTML e no JSON
+  const dados = (await raw(link + '/dados')).texto
+  for (const proibido of ['@web.de', '@teste.local', 'Hauptstr', 'Schlecht', 'Umtausch', 'Cliente 1', '"cliente"', '"de":', '"corpo"', '"historico"', '"enderecoConfirmado"', '"enderecoInformado"', '"rascunho"', '"resposta"']) {
+    assert.ok(!dados.includes(proibido), `JSON externo não pode conter "${proibido}"`); assert.ok(!pg.texto.includes(proibido), `HTML externo não pode conter "${proibido}"`)
+  }
+  assert.ok(dados.includes('"registros"') && dados.includes('"linhas"') && dados.includes('"metricas"'))
+  // nenhuma rota de escrita pelo link
+  for (const caminho of [link + '/dados', link]) { const w = await raw(caminho, 'POST'); assert.ok(w.status === 404 || w.status === 405, `POST ${caminho} → ${w.status}`) }
+  // token inválido, workspace errado e token de outro workspace: 404
+  assert.equal((await raw('/p/teste/' + 'a'.repeat(64))).status, 404)
+  assert.equal((await raw('/p/outro-ws/' + link.split('/').pop())).status, 404)
+  assert.equal((await raw('/p/outro-ws/' + link.split('/').pop() + '/dados')).status, 404)
+  // gerar novo link: o antigo morre na hora
+  r = await api('/api/pipeline-link', { acao: 'novo' }); const link2 = r.state.pipelineLink
+  assert.notEqual(link2, link); assert.equal((await raw(link)).status, 404); assert.equal((await raw(link2)).status, 200)
+  // revogar: o endereço para de funcionar imediatamente
+  r = await api('/api/pipeline-link', { acao: 'revogar' }); assert.equal(r.state.pipelineLink, null)
+  assert.equal((await raw(link2)).status, 404); assert.equal((await raw(link2 + '/dados')).status, 404)
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

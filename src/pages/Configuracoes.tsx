@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import {
   Mail, ShoppingBag, Zap, PenLine, Database, Check, Unplug, Sparkles, Copy,
   AlertTriangle, Search, Store, UserRound, LogOut, LayoutGrid, Users2, Inbox,
-  Plug, Bell, Palette, CreditCard, Sun, Moon, BookOpen, ArrowRight,
+  Plug, Bell, Palette, CreditCard, Sun, Moon, BookOpen, ArrowRight, Link2, X, ShieldCheck, History,
 } from 'lucide-react'
 import { useStore } from '../store'
-import type { Diagnostico } from '../store'
+import type { Diagnostico, Loja } from '../store'
+import { Modal } from '../components/Shared'
 
 // Definido FORA do componente da página: definir componentes dentro do render
 // faz o React recriá-los a cada tecla digitada — os campos perdem o foco e a
@@ -100,6 +101,118 @@ const nomesProvedores: Record<string, string> = {
  */
 /** Ajustes do modo novo, por loja: envio automático, prazo em dias úteis e cupons. */
 const PERCENTUAIS_CUPOM = ['10', '15', '25', '30', '35', '40'] as const
+const fmtQuando = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+
+/** Seletor do modo de atendimento: individual por loja, com prontidão conferida no servidor,
+ *  confirmação visual antes de trocar, "ativo desde" e auditoria. O clássico nunca some. */
+function SeletorModo({ loja }: { loja: Loja }) {
+  const s = useStore()
+  const [confirmando, setConfirmando] = useState<'classico' | 'novo' | null>(null)
+  const [erro, setErro] = useState<string | null>(null)
+  const [salvando, setSalvando] = useState(false)
+  const modo = loja.modoAtendimento === 'novo' ? 'novo' : 'classico'
+  const pr = loja.prontidaoNovo ?? { pronto: false, faltando: [] }
+  const confirmar = async () => {
+    if (!confirmando) return
+    setSalvando(true); setErro(null)
+    const r = await s.mudarModoLoja(loja.id, confirmando)
+    setSalvando(false)
+    if (r.erro) setErro(r.erro); else setConfirmando(null)
+  }
+  const Opcao = ({ valor, titulo, desc }: { valor: 'classico' | 'novo'; titulo: string; desc: string }) => (
+    <div className="card" style={{ padding: 12, flex: 1, minWidth: 240, borderColor: modo === valor ? 'var(--purple)' : undefined }}>
+      <div className="row spread" style={{ gap: 8 }}>
+        <b style={{ fontSize: 13.5 }}>{titulo}</b>
+        {modo === valor
+          ? <span className="tag tag-green">ativo{loja.modoDesde ? ` desde ${fmtQuando(loja.modoDesde)}` : ''}</span>
+          : <button className="btn btn-sm" disabled={valor === 'novo' && !pr.pronto} title={valor === 'novo' && !pr.pronto ? 'Complete a preparação abaixo' : `Mudar esta loja para o ${titulo.toLowerCase()}`}
+              onClick={() => { setErro(null); setConfirmando(valor) }}>Mudar para este</button>}
+      </div>
+      <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5, marginBottom: 0 }}>{desc}</p>
+    </div>
+  )
+  return (
+    <>
+      <div className="row gap-8" style={{ flexWrap: 'wrap', alignItems: 'stretch' }}>
+        <Opcao valor="classico" titulo="Atendimento antigo — clássico" desc="O atendimento original: pergunta o motivo, oferece troca ou 60%/100% e passa para você aprovar. Fica guardado e nunca é apagado." />
+        <Opcao valor="novo" titulo="Atendimento novo — pipeline atual" desc="Motor de etapas: a IA só classifica, o servidor escolhe a única ação permitida, uma etapa por resposta, sem saltos; todo aceite vem para você. Envio automático desligado por padrão." />
+      </div>
+      <div style={{ marginTop: 10, fontSize: 12.5 }}>
+        <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
+          <ShieldCheck size={13} color={pr.pronto ? 'var(--green)' : 'var(--text-3)'} />
+          <b>Pronta para o novo:</b>
+          {pr.pronto
+            ? <span className="tag tag-green">sim — e-mail próprio, prazo e cupons conferidos</span>
+            : <span className="tag tag-amber">ainda não</span>}
+        </div>
+        {!pr.pronto && (
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+            {pr.faltando.map(f => <li key={f.chave}>Falta: {f.texto}</li>)}
+          </ul>
+        )}
+        <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+          A escolha vale só para esta loja e só para <b>conversas novas</b>: uma conversa continua no motor em que começou até terminar.
+          Ao voltar para o clássico, as conversas já iniciadas no novo seguem suas fases sem perder nada. Migrar uma conversa aberta
+          para o novo é ação manual, individual e confirmada, dentro da própria conversa.
+        </p>
+        {(loja.modoHistorico?.length ?? 0) > 0 && (
+          <details style={{ marginTop: 4 }}>
+            <summary className="muted-sm" style={{ cursor: 'pointer' }}><History size={12} style={{ verticalAlign: -2 }} /> Histórico de trocas ({loja.modoHistorico!.length})</summary>
+            <ol style={{ margin: '4px 0 0', paddingLeft: 18, fontSize: 12, lineHeight: 1.6 }}>
+              {[...loja.modoHistorico!].reverse().map((h, i) => <li key={i}>{h.de} → <b>{h.para}</b> · {h.por} · {fmtQuando(h.em)}</li>)}
+            </ol>
+          </details>
+        )}
+      </div>
+      {confirmando && (
+        <Modal title={`Mudar "${loja.nome}" para o ${confirmando === 'novo' ? 'atendimento novo' : 'atendimento antigo (clássico)'}?`} onClose={() => setConfirmando(null)}>
+          <p style={{ lineHeight: 1.55, fontSize: 13.5 }}>
+            {confirmando === 'novo'
+              ? <>A partir de agora, <b>conversas novas</b> desta loja entram no motor de etapas. As conversas em andamento continuam no clássico. O envio automático do novo fica <b>desligado</b>: cada resposta passa pela sua aprovação. As outras lojas não mudam.</>
+              : <>A partir de agora, <b>conversas novas</b> desta loja voltam ao atendimento clássico. As conversas já iniciadas no novo continuam seguindo suas fases, com histórico, endereço, foto e decisões pendentes preservados. As outras lojas não mudam.</>}
+          </p>
+          {erro && <p className="muted-sm" style={{ color: 'var(--red)' }}>{erro}</p>}
+          <div className="row spread" style={{ marginTop: 12 }}>
+            <button className="btn" onClick={() => setConfirmando(null)}>Cancelar</button>
+            <button className="btn btn-primary" disabled={salvando} onClick={confirmar}><Check size={14} /> {salvando ? 'Mudando…' : 'Confirmar mudança'}</button>
+          </div>
+        </Modal>
+      )}
+    </>
+  )
+}
+
+/** Link externo do pipeline: somente leitura, token longo e revogável. */
+function LinkPipeline() {
+  const s = useStore()
+  const [copiado, setCopiado] = useState(false)
+  const url = s.pipelineLink ? window.location.origin + s.pipelineLink : null
+  return (
+    <div className="card mb-16" style={{ padding: 16 }}>
+      <div className="row spread" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <div className="row gap-8"><Link2 size={14} color="var(--purple)" /><b style={{ fontSize: 13.5 }}>Pipeline em link externo</b></div>
+        {!url && <button className="btn btn-sm btn-primary" onClick={() => s.configurarPipelineLink('gerar')}><Link2 size={13} /> Gerar link externo</button>}
+      </div>
+      {url && (
+        <div className="row gap-8" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+          <input readOnly value={url} onFocus={e => e.currentTarget.select()}
+            style={{ flex: 1, minWidth: 220, border: '1px solid var(--border)', borderRadius: 8, padding: '7px 11px', fontSize: 12.5, background: 'var(--panel-soft)', color: 'var(--text-2)' }} />
+          <button className="btn btn-sm" onClick={() => { navigator.clipboard.writeText(url); setCopiado(true); window.setTimeout(() => setCopiado(false), 2500) }}>
+            {copiado ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar link</>}
+          </button>
+          <button className="btn btn-sm" title="Troca o token: o endereço antigo para de funcionar na hora" onClick={() => s.configurarPipelineLink('novo')}>Gerar novo link</button>
+          <button className="btn btn-sm btn-danger" title="O link para de funcionar imediatamente" onClick={() => s.configurarPipelineLink('revogar')}><X size={13} /> Revogar link</button>
+        </div>
+      )}
+      <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.5, marginBottom: 0 }}>
+        Página "Pipeline completo" com as mesmas jornadas, fases, indicadores e filtros da Central, calculados no servidor sobre os dados reais.
+        Somente leitura: não aprova, não envia, não altera fases nem pedidos, e não mostra nome, e-mail, endereço ou texto das conversas.
+        Revogar ou gerar novo link derruba o endereço antigo na hora.
+      </p>
+    </div>
+  )
+}
+
 function ConfigModoNovo({ lojaId }: { lojaId: string }) {
   const s = useStore()
   const loja = s.lojas.find(l => l.id === lojaId)
@@ -634,25 +747,14 @@ export default function Configuracoes() {
           <Sparkles size={14} color="var(--purple)" />
           <b style={{ fontSize: 13.5 }}>Modo de atendimento desta loja</b>
           <span className={'tag ' + (lojaSel?.modoAtendimento === 'novo' ? 'tag-amber' : 'tag-green')}>
-            {lojaSel?.modoAtendimento === 'novo' ? 'Novo' : 'Clássico'}
+            {lojaSel?.modoAtendimento === 'novo' ? 'Atendimento novo' : 'Atendimento antigo (clássico)'}
           </span>
+          {lojaSel?.modoDesde && <span className="muted-sm">desde {fmtQuando(lojaSel.modoDesde)}</span>}
         </div>
-        <div className="field" style={{ maxWidth: 340, marginBottom: 0 }}>
-          <select value={lojaSel?.modoAtendimento ?? 'classico'}
-            onChange={e => s.atualizarLoja(lojaId, { modoAtendimento: e.target.value })}>
-            <option value="classico">Clássico — o atendimento atual</option>
-            <option value="novo">Novo — motor de etapas</option>
-          </select>
-        </div>
-        <p className="muted-sm" style={{ marginTop: 8, lineHeight: 1.55 }}>
-          O <b>clássico</b> é o atendimento original: pergunta o motivo da devolução, oferece troca ou 60%/100%, e
-          passa para você aprovar reembolso e confirmar troca. Ele fica guardado e nunca é apagado. O <b>novo</b> é o
-          motor de etapas: a IA só classifica o que o cliente disse, o sistema escolhe a única ação permitida naquela
-          etapa (troca → cupom → 25% → 40% → 50% → 60% → 70% → você), uma etapa por resposta, sem saltos, e todo
-          aceite vem para você decidir. Cada loja escolhe o seu — dá para testar o novo em uma loja só.
-        </p>
+        {lojaSel && <SeletorModo loja={lojaSel} />}
         <ConfigModoNovo lojaId={lojaId} />
       </div>
+      <LinkPipeline />
       <div className="field mb-16" style={{ maxWidth: 340 }}>
         <label>Modelo de IA desta loja</label>
         <select value={lojaSel?.iaModelo ?? 'claude'} onChange={e => s.atualizarLoja(lojaId, { iaModelo: e.target.value })}>
