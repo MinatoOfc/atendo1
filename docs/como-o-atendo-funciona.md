@@ -459,7 +459,17 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   somente leitura, com as jornadas, fases, indicadores, filtros e painel por
   fase da Central, calculados no servidor pelo mesmo `shared/central.js`,
   sem dados pessoais e com token longo revogável. A página desenha o mapa
-  visual completo (`shared/mapa.js`: 85 itens em 6 jornadas completas e
+  visual completo. A página segue a estrutura e o comportamento do painel
+  operacional de referência (barra lateral fixa com as seis jornadas, uma
+  jornada por vez, filtros fixos ao rolar, funil de cinco cartões, faixa de
+  indicadores, percentual por tipo de caso, fluxo conectado, painel "Leitura
+  da jornada", drawer de 720px e tabela de pedidos) com as cores, a
+  tipografia e os componentes do Atendo; ajustes de fase feitos nela ficam só
+  no navegador ("Limpar ajustes"). Testes visuais permanentes com Playwright
+  (`npm run test:visual`: capturas em 1280×720 e 390×844 com números e datas
+  mascarados, diferença máxima de 0,5%, e comparação estrutural com a
+  referência). O catálogo
+  (`shared/mapa.js`: 85 itens em 6 jornadas completas e
   independentes — Entrada geral, Tamanho, Qualidade, Defeito / produto errado,
   Não recebeu / atraso, Cancelamento — na ordem da apresentação do mapa); só
   os 59 itens ligados a uma fase real do motor carregam números, e cada

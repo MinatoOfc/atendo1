@@ -375,6 +375,31 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     horário simulado para os testes de prazo; e-mails reais usam o relógio do
     servidor. Testes: unitário (motor) e ponta a ponta pelo pipeline real.
 
+40. **Página externa com a estrutura da referência e a cara do Atendo (16/09)**:
+    a página do link externo reproduz a composição, as proporções, a navegação
+    e o comportamento do painel operacional de referência (barra lateral fixa
+    de 272px com as seis jornadas, contagem, valor e percentual; somente uma
+    jornada visível por vez; cabeçalho com "Mapa do fluxo / Todos os pedidos" e
+    "Limpar ajustes"; barra de filtros fixa ao rolar; aviso "Funil conectado aos
+    dados disponíveis"; cinco cartões do funil; faixa de cinco indicadores;
+    "Percentual por tipo de caso" com barras; fluxo em coluna de 621px com linha
+    vertical e cartões de quatro métricas; painel "Leitura da jornada" de 300px
+    fixo à direita; drawer de 720px com quatro métricas, busca, "Ver:
+    passaram/pararam/avançaram", lista de pedidos e seletor de fase atribuída;
+    tabela de nove colunas). Cores, tipografia, botões, bordas e sombras são os
+    do Atendo, não os da referência. Dados sempre reais: pedidos, casos, moedas
+    separadas (nunca somadas), fases enviadas, inferências e correções
+    marcadas. Regras e decisões ocupam cartões iguais, com números derivados do
+    caminho e fora das métricas oficiais. Ajustes de fase feitos na página ficam
+    só no navegador (localStorage); "Limpar ajustes" remove apenas isso; nada
+    escreve no servidor. Testes visuais permanentes (Playwright,
+    `npm run test:visual`, fora do `npm test`): capturas de regressão em
+    1280×720 e 390×844 (Entrada, Tamanho, Não recebeu, drawer, Todos os
+    pedidos) com números e datas mascarados e 0,5% de diferença máxima, mais a
+    comparação estrutural com a referência (medidas, contagens, fixação e
+    comportamento; cores ignoradas de propósito) e capturas lado a lado em
+    test/visual/saida.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

@@ -15,7 +15,7 @@
  * Nenhuma rota de escrita existe aqui.
  */
 import { calcularCentral, metricasPorFase, indicadores, relacaoComFase, ORDEM_JORNADAS } from '../shared/central.js'
-import { MAPA_VISUAL, itensDaJornada, metricasPorItem, SEGMENTOS } from '../shared/mapa.js'
+import { MAPA_VISUAL, itensDaJornada, metricasPorItem, SEGMENTOS, segmentoDoRegistro } from '../shared/mapa.js'
 
 const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
@@ -58,7 +58,7 @@ export function dadosPipeline({ estado, fases, jornadas, filtros }) {
   const publico = r => ({
     chave: r.chave, pedidoNumero: numeroPublico(r.pedidoNumero), lojaId: r.lojaId, lojaNome: r.lojaNome, moeda: r.moeda,
     pedidoValor: r.pedidoValor, produto: r.pedidoId ? produtoPorPedido.get(r.pedidoId) ?? null : null,
-    motivo: motivoPublico(r.motivoCategoria), jornada: r.jornada,
+    motivo: motivoPublico(r.motivoCategoria), jornada: r.jornada, segmento: segmentoDoRegistro(r),
     faseAtual: r.faseAtual, faseTitulo: r.faseTitulo, origem: r.origem, inferidaPor: r.inferidaPor,
     desfecho: r.desfecho, percentual: r.percentual, reembolsado: r.reembolsado, situacaoReembolso: r.situacaoReembolso,
     concluido: r.concluido, comVoce: r.comVoce, dataMs: r.dataMs, conversas: r.tickets?.length ?? 1,
@@ -99,7 +99,7 @@ export function dadosPipeline({ estado, fases, jornadas, filtros }) {
     geradoEm: new Date().toISOString(),
     filtros,
     catalogo: {
-      ordem: ORDEM_JORNADAS, jornadas,
+      ordem: ORDEM_JORNADAS, jornadas, descricoes: DESCRICAO_JORNADA,
       fases: Object.fromEntries(Object.entries(fases).map(([id, f]) => [id, { titulo: f.titulo, jornada: f.jornada, instrucao: f.instrucao ?? null, confirmacao: !!f.confirmacao }])),
       mapa: MAPA_VISUAL,
     },
@@ -118,34 +118,39 @@ export function dadosPipeline({ estado, fases, jornadas, filtros }) {
 const escapar = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const NOME_TIPO = { regra: 'regra', coleta: 'coleta', decisao: 'decisão', oferta: 'oferta', confirmacao: 'confirmação', humano: 'decisão do dono' }
 
-/** HTML da página. Sem token no corpo: a página busca "dados" pelo caminho relativo ao próprio endereço. */
+/** Descrição curta de cada jornada (cabeçalho do painel do fluxo). */
+export const DESCRICAO_JORNADA = {
+  entrada: 'Triagem e regras gerais do pipeline, comuns a todas as jornadas.',
+  tamanho: 'Tamanho ou caimento errado: troca gratuita e, se recusada, a escada completa até a decisão do dono.',
+  qualidade: 'Qualidade, preferência ou motivo não informado: alternativa, cupom e a escada de 25% a 70%.',
+  defeito_errado: 'Produto danificado (com foto) ou item recebido errado, cada um com o seu caminho completo.',
+  nao_recebido: 'Todos os cenários de entrega: status, não chegou ou voltou, marcado como entregue, recusa, prazo e processamento.',
+  cancelamento: 'Cancelamento de pedido ainda não processado, sempre com decisão do dono.',
+}
+/** Cor de cada jornada — paleta padrão do Atendo (etiquetas do painel). */
+const TOM_JORNADA = { entrada: 'var(--purple)', tamanho: '#447acb', qualidade: '#9065b0', defeito_errado: 'var(--red)', nao_recebido: 'var(--amber)', cancelamento: 'var(--green)' }
+
+/**
+ * HTML da página externa. Estrutura, composição e comportamento seguem a
+ * referência operacional (barra lateral fixa com as jornadas, uma jornada por
+ * vez, filtros fixos, funil, faixa de indicadores, distribuição por tipo de
+ * caso, fluxo conectado, painel "Leitura da jornada", drawer e tabela); as
+ * cores, a tipografia e os componentes são os do Atendo. Sem token no corpo:
+ * a página busca "dados" pelo caminho relativo ao próprio endereço.
+ */
 export function paginaPipeline({ catalogo, lojas }) {
   const ordem = catalogo.ordem
-  const titulo = id => catalogo.fases[id]?.titulo ?? id
+  const tituloFase = id => catalogo.fases[id]?.titulo ?? id
   // o mapa visual inteiro vai no HTML (servidor): a página nunca depende só do JS para mostrar as etapas
-  const mapaInicial = ordem.map(j => {
+  const fluxos = ordem.map(j => {
     const itens = itensDaJornada(j)
     const grupos = [...new Set(itens.map(i => i.grupo))]
-    return `
-    <section class="jornada" data-jornada="${j}">
-      <h2>${escapar(catalogo.jornadas[j] ?? j)} <span class="mini" data-jornada-resumo="${j}"></span></h2>
-      ${grupos.map(g => `
-      <div class="grupo"><div class="grupo-titulo">${escapar(g)}</div>
-      <div class="fases">
-        ${itens.filter(i => i.grupo === g).map(i => `
-        <${i.fase ? 'button type="button"' : 'div'} class="fase tipo-${i.tipo}${i.fase ? '' : ' sem-fase'}" data-item="${i.id}"${i.fase ? ` data-fase="${i.fase}"` : ''}>
-          <div class="fase-cab"><span class="ordem">${i.ordem}</span><span class="tipo">${NOME_TIPO[i.tipo]}</span></div>
-          <div class="fase-titulo">${escapar(i.titulo)}</div>
-          <div class="mini desc">${escapar(i.descricao)}</div>
-          ${i.fase ? `<div class="mini">fase do motor: <code>${i.fase}</code> — ${escapar(titulo(i.fase))} · casos: ${escapar(SEGMENTOS[i.segmento] ?? i.segmento)}</div>
-          <div class="nums"><span><b data-n="passaram">0</b> passaram</span><span><b data-n="pararam">0</b> pararam</span><span><b data-n="avancaram">0</b> avançaram</span></div>
-          <div class="mini" data-n="pct"></div>
-          <div class="mini" data-n="valor">—</div>
-          <div class="mini" data-n="fora"></div>` : `<div class="mini nao-conta">${i.tipo === 'humano' ? 'decisão do dono — não é fase enviada' : `${NOME_TIPO[i.tipo]} — não é fase enviada, não entra nas métricas`}</div>`}
-          ${i.destinos.length ? `<div class="mini">→ ${i.destinos.map(d => escapar(MAPA_VISUAL.find(x => x.id === d)?.titulo ?? d)).join(' · ')}</div>` : ''}
-        </${i.fase ? 'button' : 'div'}>`).join('')}
-      </div></div>`).join('')}
-    </section>`
+    return `<div class="flow-canvas" data-jornada="${j}"${j === ordem[0] ? '' : ' hidden'}>${grupos.map(g => `<section class="flow-group"><h3 class="group-title">${escapar(g)}</h3><div class="stage-list">${itens.filter(i => i.grupo === g).map(i => {
+      const dica = i.fase
+        ? `Fase do motor: ${tituloFase(i.fase)} · casos: ${SEGMENTOS[i.segmento] ?? i.segmento}${i.tipo === 'humano' ? ' · decisão do dono' : ''}`
+        : `${NOME_TIPO[i.tipo]} do mapa — não é fase enviada; os números vêm do caminho e não entram nas métricas oficiais`
+      return `<button type="button" class="stage tipo-${i.tipo}${i.fase ? '' : ' derivada'}" data-item="${i.id}"${i.fase ? ` data-fase="${i.fase}"` : ''} title="${escapar(dica)}"><span class="stage-index">${String(i.ordem).padStart(2, '0')}</span><span class="stage-copy"><strong>${escapar(i.titulo)}</strong><span>${escapar(i.descricao)}</span></span><span class="stage-metrics"><span class="metric"><strong data-num><b data-n="passaram">0</b> <em data-n="passaram-pct">0%</em></strong><span>passaram</span></span><span class="metric"><strong data-num><b data-n="pararam">0</b> <em data-n="pararam-pct">0%</em></strong><span>pararam</span></span><span class="metric"><strong data-num><b data-n="avancaram">0</b> <em data-n="avancaram-pct">0%</em></strong><span>avançaram</span></span><span class="metric"><strong class="stage-value" data-num data-n="valor">—</strong><span>valor</span></span></span></button>`
+    }).join('')}</div></section>`).join('')}</div>`
   }).join('')
 
   return `<!doctype html>
@@ -154,233 +159,419 @@ export function paginaPipeline({ catalogo, lojas }) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#f7f7f5">
 <title>Pipeline completo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#f6f7fb; --panel:#fff; --border:#e4e6ee; --text:#1c1f2b; --muted:#6b7080; --purple:#6b5cf6; --purple-soft:#eeebff; --green:#e6f7ee; --amber:#fff3d6; --red:#fde8e8; --blue:#e7f0ff; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:14px 16px 40px; }
-  h1 { font-size:20px; margin:0 0 4px; }
-  h2 { font-size:15px; margin:18px 0 8px; }
-  .muted { color:var(--muted); font-size:12.5px; }
-  .mini { color:var(--muted); font-size:11.5px; }
-  code { font-size:11px; background:#eef0f5; padding:0 4px; border-radius:4px; }
-  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
-  .wrap { max-width:1180px; margin:0 auto; }
-  .topo { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start; margin-bottom:12px; }
-  .abas { display:flex; gap:6px; flex-wrap:wrap; }
-  .chip { border:1px solid var(--border); background:var(--panel); border-radius:999px; padding:6px 12px; font-size:12.5px; cursor:pointer; color:var(--text); max-width:100%; }
-  .chip.on { background:var(--text); color:#fff; border-color:var(--text); }
-  select.chip { appearance:auto; }
-  .filtros { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
-  .filtros input { flex:1; min-width:180px; max-width:100%; border:1px solid var(--border); border-radius:999px; padding:7px 12px; font-size:13px; }
-  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-bottom:10px; }
-  .kpi .r { text-transform:uppercase; letter-spacing:.04em; font-size:10.5px; color:var(--muted); }
-  .kpi .v { font-size:18px; margin-top:2px; }
-  .jornadas { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-bottom:6px; }
-  .jornadas .card { cursor:pointer; }
-  .jornadas .card.on { border-color:var(--purple); box-shadow:0 0 0 2px var(--purple-soft); }
-  .legenda { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 4px; }
-  .grupo { margin-bottom:10px; }
-  .grupo-titulo { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:6px 0 6px; }
-  .fases { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:8px; }
-  .fase { text-align:left; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:grid; gap:4px; font:inherit; color:inherit; align-content:start; }
-  button.fase { cursor:pointer; }
-  button.fase.on { border-color:var(--purple); box-shadow:0 0 0 2px var(--purple-soft); }
-  .fase.sem-fase { background:#fbfbfd; border-style:dashed; }
-  .fase-cab { display:flex; justify-content:space-between; align-items:center; }
-  .ordem { font-size:11px; color:var(--muted); }
-  .tipo { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; border-radius:999px; padding:1px 8px; background:#eef0f5; }
-  .tipo-oferta .tipo { background:var(--purple-soft); } .tipo-confirmacao .tipo { background:var(--green); } .tipo-humano .tipo { background:var(--amber); } .tipo-decisao .tipo { background:var(--blue); } .tipo-coleta .tipo { background:#f1f5f9; }
-  .fase-titulo { font-weight:600; font-size:12.5px; }
-  .nao-conta { font-style:italic; }
-  .nums { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
-  .nums b { color:var(--text); }
-  .tabela { overflow-x:auto; }
-  table { width:100%; border-collapse:collapse; font-size:12.5px; min-width:760px; }
-  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--border); vertical-align:top; }
-  th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
-  .tag { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; background:#eef0f5; }
-  .tag.green { background:var(--green); } .tag.amber { background:var(--amber); } .tag.red { background:var(--red); }
-  .painel { position:fixed; top:0; right:0; bottom:0; width:380px; max-width:100vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.18); padding:16px; z-index:20; overflow:auto; }
-  .painel[hidden] { display:none; }
-  .painel .fechar { float:right; border:0; background:none; font-size:18px; cursor:pointer; }
-  .item { border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:12.5px; margin-bottom:6px; }
-  .item .l { display:flex; justify-content:space-between; gap:8px; }
-  .oculto { display:none; }
-  @media (max-width:768px) { .painel { width:100vw; } body { padding:10px 12px 32px; } }
+  /* tokens do Atendo (src/index.css) — a página externa usa a identidade padrão do painel */
+  :root{--bg:#f7f7f5;--panel:#ffffff;--panel-soft:#fafaf9;--hover:#f1f1ef;--border:#e9e9e7;--border-soft:#f1f1ef;--text:#37352f;--text-2:#73726e;--text-3:#9f9e9b;--purple:#2383e2;--purple-soft:#e7f3f8;--purple-border:#cfe4f5;--grad:linear-gradient(92deg,#2383e2 0%,#2f8ee8 100%);--green:#448361;--amber:#cb912f;--red:#d44c47;--ok-bg:#edf3ec;--warn-bg:#fbf3db;--warn-border:#eeddb1;--danger-bg:#fdebec;--danger-border:#f2c5c2;--shadow:0 1px 2px rgba(15,15,15,.03),0 3px 12px rgba(15,15,15,.05);--ring:rgba(35,131,226,.14);--radius:18px;--sidebar:272px}
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;min-width:320px;background:var(--bg);color:var(--text);font:16px/1.45 Inter,-apple-system,"Segoe UI",sans-serif}
+  button,input,select{font:inherit}
+  button,select{color:inherit}
+  button{cursor:pointer}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--ring);outline-offset:2px}
+  .hidden{display:none!important}
+
+  .app{min-height:100vh;display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr)}
+  .sidebar{position:sticky;top:0;height:100vh;padding:22px 16px;border-right:1px solid var(--border);background:var(--panel);overflow-y:auto;z-index:5}
+  .brand{display:flex;align-items:center;gap:12px;padding:0 7px 22px}
+  .mark{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:var(--grad);color:#fff;box-shadow:0 1px 3px color-mix(in srgb,var(--purple) 35%,transparent)}
+  .mark svg{width:23px}
+  .brand strong{display:block;font-size:1rem;letter-spacing:-.02em}
+  .brand span{display:block;color:var(--text-2);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:800}
+  .nav-label{margin:8px 8px 10px;color:var(--text-3);font-size:.7rem;text-transform:uppercase;letter-spacing:.12em;font-weight:800}
+  .nav-list{display:grid;gap:7px}
+  .nav-item{width:100%;display:grid;grid-template-columns:35px 1fr auto;gap:10px;align-items:center;padding:11px;border:1px solid transparent;border-radius:13px;background:transparent;text-align:left;transition:.18s ease}
+  .nav-item:hover{background:var(--hover);border-color:var(--border)}
+  .nav-item.active{background:var(--purple-soft);border-color:var(--purple-border)}
+  .nav-icon{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:var(--panel-soft);border:1px solid var(--border);color:var(--tone,var(--purple));font-weight:800;font-size:.78rem}
+  .nav-copy strong{display:block;font-size:.84rem}
+  .nav-copy span{display:block;color:var(--text-2);font-size:.7rem;margin-top:2px}
+  .nav-count{font-size:.78rem;font-weight:800;color:var(--text-2);font-variant-numeric:tabular-nums;text-align:right}
+  .sidebar-note{margin-top:18px;padding:13px;border:1px solid var(--warn-border);border-radius:13px;background:var(--warn-bg);color:var(--text);font-size:.76rem}
+  .sidebar-note strong{display:block;margin-bottom:4px}
+  .sidebar-note p{margin:0;color:var(--text-2)}
+
+  .main{min-width:0;padding:24px 28px 50px}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:18px}
+  .title-wrap .eyebrow{margin:0 0 4px;color:var(--purple);font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;font-weight:800}
+  .title-wrap h1{margin:0;font-size:clamp(1.55rem,2.4vw,2.25rem);line-height:1.08;letter-spacing:-.045em}
+  .title-wrap p{margin:7px 0 0;color:var(--text-2);font-size:.86rem}
+  .top-actions{display:flex;gap:9px;align-items:center;flex:0 0 auto}
+  .button{border:1px solid var(--border);background:var(--panel);border-radius:11px;padding:9px 13px;color:var(--text);font-size:.84rem;font-weight:600;white-space:nowrap}
+  .button:hover{background:var(--hover)}
+  .view-switch{display:flex;padding:3px;border:1px solid var(--border);border-radius:12px;background:var(--panel-soft)}
+  .view-button{border:0;background:transparent;border-radius:9px;padding:7px 11px;color:var(--text-2);font-size:.8rem;white-space:nowrap}
+  .view-button.active{background:var(--panel);color:var(--text);box-shadow:var(--shadow)}
+
+  .toolbar{position:sticky;top:10px;z-index:4;display:grid;grid-template-columns:minmax(220px,1fr) 160px 170px 145px auto;gap:9px;margin-bottom:16px;padding:10px;border:1px solid var(--border);border-radius:14px;background:var(--panel);box-shadow:var(--shadow)}
+  .control{width:100%;height:42px;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft);padding:0 12px;color:var(--text)}
+  .search-wrap{position:relative}
+  .search-wrap svg{position:absolute;left:12px;top:12px;width:18px;color:var(--text-2)}
+  .search-wrap input{padding-left:39px}
+  .filter-result{display:flex;align-items:center;justify-content:flex-end;color:var(--text-2);font-size:.77rem;white-space:nowrap}
+
+  .notice{display:flex;gap:11px;align-items:flex-start;margin-bottom:16px;padding:13px 15px;border:1px solid var(--warn-border);border-radius:14px;background:var(--warn-bg)}
+  .notice i{width:8px;height:8px;flex:0 0 auto;margin-top:6px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 5px rgba(203,145,47,.14)}
+  .notice strong{display:block;color:var(--text);font-size:.84rem}
+  .notice p{margin:2px 0 0;color:var(--text-2);font-size:.77rem}
+  .kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:12px}
+  .kpi{min-width:0;padding:15px;border:1px solid var(--border);border-radius:15px;background:var(--panel);box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .kpi::after{content:"";position:absolute;width:95px;height:70px;right:-25px;bottom:-35px;border-radius:50%;background:var(--glow,rgba(35,131,226,.08));filter:blur(14px)}
+  .kpi>span{display:block;color:var(--text-2);font-size:.68rem;text-transform:uppercase;letter-spacing:.07em;font-weight:800}
+  .kpi strong{display:block;min-width:0;font-size:1.45rem;line-height:1;letter-spacing:-.045em;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kpi>small{display:block;margin-top:7px;color:var(--text-3);font-size:.7rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kpi-main{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-top:9px}
+  .kpi-main em{flex:0 0 auto;padding:5px 7px;border-radius:999px;background:var(--purple-soft);border:1px solid var(--purple-border);color:var(--purple);font-size:.7rem;font-style:normal;font-weight:800;font-variant-numeric:tabular-nums}
+  .kpi-main .pending{font-size:.95rem;line-height:1.15;letter-spacing:-.02em}
+  .kpi strong.multi{font-size:.95rem;line-height:1.15;white-space:normal}
+  .kpi strong.multi .linha{display:block}
+  .pipe-stat strong.multi{font-size:.78rem}
+  .pipeline-strip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;margin-bottom:16px;border:1px solid var(--border);border-radius:14px;background:var(--border);overflow:hidden}
+  .pipe-stat{padding:12px 14px;background:var(--panel)}
+  .pipe-stat span{display:block;color:var(--text-2);font-size:.65rem;text-transform:uppercase;letter-spacing:.06em}
+  .pipe-stat strong{display:block;margin-top:4px;font-size:.98rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pipe-stat small{display:block;margin-top:3px;color:var(--text-3);font-size:.65rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .case-mix{margin-bottom:16px;padding:15px 17px;border:1px solid var(--border);border-radius:15px;background:var(--panel);box-shadow:var(--shadow)}
+  .case-mix-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .case-mix h2{margin:0;font-size:.9rem}
+  .case-mix p{margin:2px 0 0;color:var(--text-2);font-size:.72rem}
+  .case-bars{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .case-bar{min-width:0}
+  .case-bar-top{display:flex;justify-content:space-between;gap:8px;margin-bottom:6px;font-size:.69rem}
+  .case-bar-top span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+  .case-bar-top strong{color:var(--purple);font-variant-numeric:tabular-nums}
+  .case-track{height:6px;border-radius:999px;background:var(--hover);overflow:hidden}
+  .case-track i{display:block;height:100%;width:var(--share);border-radius:inherit;background:linear-gradient(90deg,var(--tone),var(--purple))}
+
+  .flow-shell{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px}
+  .panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);box-shadow:var(--shadow)}
+  .panel-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:18px 19px;border-bottom:1px solid var(--border)}
+  .panel-head h2{margin:0 0 4px;font-size:1.05rem;letter-spacing:-.02em}
+  .panel-head p{margin:0;color:var(--text-2);font-size:.78rem}
+  .panel-total{text-align:right}
+  .panel-total strong{display:block;font-size:1.15rem}
+  .panel-total span{color:var(--text-2);font-size:.72rem}
+
+  .flow-canvas{padding:20px 18px 22px;min-height:500px}
+  .flow-group{position:relative;margin-bottom:22px}
+  .flow-group:last-child{margin-bottom:0}
+  .group-title{display:flex;align-items:center;gap:9px;margin:0 0 10px 8px;color:var(--text-2);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:800}
+  .group-title::after{content:"";height:1px;flex:1;background:var(--border)}
+  .stage-list{display:grid;gap:10px;position:relative}
+  .stage-list::before{content:"";position:absolute;left:21px;top:22px;bottom:22px;width:2px;background:linear-gradient(var(--purple),var(--border))}
+  .stage{position:relative;display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:13px;align-items:center;width:100%;padding:13px 14px 13px 7px;border:1px solid var(--border);border-radius:14px;background:var(--panel-soft);text-align:left;transition:.16s ease;color:inherit}
+  .stage:hover{transform:translateX(3px);border-color:var(--purple-border);background:var(--panel)}
+  .stage.selected{border-color:var(--purple);box-shadow:0 0 0 3px var(--ring)}
+  .stage-index{z-index:1;width:32px;height:32px;display:grid;place-items:center;border-radius:10px;background:var(--purple-soft);color:var(--purple);font-weight:800;font-size:.78rem;border:1px solid var(--purple-border)}
+  .tipo-humano .stage-index{background:var(--warn-bg);color:var(--amber);border-color:var(--warn-border)}
+  .tipo-confirmacao .stage-index{background:var(--ok-bg);color:var(--green);border-color:#cfe3d4}
+  .tipo-regra .stage-index,.tipo-decisao .stage-index{background:var(--panel);color:var(--text-2);border-color:var(--border)}
+  .stage-copy strong{display:block;font-size:.88rem}
+  .stage-copy span{display:block;margin-top:3px;color:var(--text-2);font-size:.73rem;line-height:1.4}
+  .stage-metrics{display:grid;grid-template-columns:repeat(4,68px);gap:7px}
+  .metric{text-align:center;padding:7px 5px;border-radius:10px;background:var(--panel);border:1px solid var(--border)}
+  .metric strong{display:block;font-size:.84rem;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .metric strong b{font-weight:inherit}
+  .metric strong em{color:var(--green);font-size:.62rem;font-style:normal;margin-left:2px}
+  .metric:nth-child(2) strong em{color:var(--red)}
+  .metric:nth-child(3) strong em{color:var(--purple)}
+  .metric span{display:block;color:var(--text-2);font-size:.57rem;text-transform:uppercase;letter-spacing:.05em;margin-top:1px}
+  .stage-value{color:var(--amber)!important}
+  .stage.derivada .metric strong{color:var(--text-2)}
+
+  .insight-panel{align-self:start;position:sticky;top:24px;overflow:hidden}
+  .insight-body{padding:17px}
+  .health{display:grid;place-items:center;padding:10px 0 18px}
+  .ring{width:134px;aspect-ratio:1;display:grid;place-items:center;border-radius:50%;background:conic-gradient(var(--purple) 0 var(--progress),var(--hover) var(--progress) 100%);position:relative}
+  .ring::before{content:"";width:92px;aspect-ratio:1;border-radius:50%;background:var(--panel);border:1px solid var(--border)}
+  .ring-label{position:absolute;text-align:center}
+  .ring-label strong{display:block;font-size:1.5rem;line-height:1}
+  .ring-label span{display:block;color:var(--text-2);font-size:.67rem;margin-top:3px}
+  .insight-list{display:grid;gap:9px}
+  .insight-row{display:grid;grid-template-columns:1fr auto;gap:10px;padding:11px;border-radius:11px;background:var(--panel-soft);border:1px solid var(--border-soft)}
+  .insight-row span{color:var(--text-2);font-size:.74rem}
+  .insight-row strong{font-size:.8rem;font-variant-numeric:tabular-nums;text-align:right}
+  .legend{display:grid;gap:8px;margin-top:16px;padding-top:15px;border-top:1px solid var(--border)}
+  .legend div{display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:.71rem}
+  .legend i{width:8px;height:8px;border-radius:50%;background:var(--dot);flex:0 0 auto}
+
+  .orders-view{display:none}
+  .orders-view.active{display:block}
+  .flow-view.hidden{display:none}
+  .orders-panel{overflow:hidden}
+  .orders-table-wrap{overflow:auto;max-height:calc(100vh - 290px)}
+  table{width:100%;border-collapse:collapse;min-width:1120px}
+  th,td{padding:12px 14px;border-bottom:1px solid var(--border);text-align:left}
+  th{position:sticky;top:0;z-index:1;background:var(--panel-soft);color:var(--text-2);font-size:.69rem;text-transform:uppercase;letter-spacing:.07em}
+  td{font-size:.8rem}
+  .order-id{font-weight:800;color:var(--purple)}
+  .money{font-weight:800;color:var(--amber);white-space:nowrap}
+  .reason{max-width:340px;color:var(--text)}
+  .product-chip{display:inline-flex;padding:4px 7px;border-radius:8px;background:#f6f3f9;border:1px solid #e6dff0;color:#9065b0;font-size:.68rem}
+  .date-missing{color:var(--text-3);font-size:.7rem}
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;background:var(--purple-soft);border:1px solid var(--purple-border);color:var(--purple);font-size:.68rem;white-space:nowrap}
+  .badge.manual{color:var(--green);background:var(--ok-bg);border-color:#cfe3d4}
+  .badge.warn{color:var(--amber);background:var(--warn-bg);border-color:var(--warn-border)}
+  .badge.local{color:#9065b0;background:#f6f3f9;border-color:#e6dff0}
+  .row-button{border:0;background:transparent;color:var(--purple);font-size:.73rem;font-weight:700;padding:5px}
+  .sub{font-size:.69rem;color:var(--text-2)}
+
+  .backdrop{position:fixed;inset:0;background:rgba(15,15,15,.45);backdrop-filter:blur(3px);z-index:20;opacity:0;pointer-events:none;transition:.2s}
+  .backdrop.open{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;z-index:21;top:0;right:0;width:min(720px,92vw);height:100vh;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--border);box-shadow:-28px 0 80px rgba(15,15,15,.18);transform:translateX(103%);transition:.24s ease}
+  .drawer.open{transform:translateX(0)}
+  .drawer-head{padding:20px;border-bottom:1px solid var(--border)}
+  .drawer-topline{display:flex;justify-content:space-between;gap:15px}
+  .drawer-kicker{color:var(--purple);font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;font-weight:800}
+  .drawer h2{margin:5px 0;font-size:1.28rem;letter-spacing:-.03em}
+  .drawer-head p{margin:0;color:var(--text-2);font-size:.78rem}
+  .close{width:38px;height:38px;flex:0 0 auto;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft);font-size:1.2rem}
+  .drawer-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:15px}
+  .drawer-stat{padding:10px;border:1px solid var(--border);border-radius:11px;background:var(--panel-soft)}
+  .drawer-stat span{display:block;color:var(--text-2);font-size:.64rem;text-transform:uppercase;letter-spacing:.07em}
+  .drawer-stat strong{display:block;margin-top:3px;font-size:1rem}
+  .drawer-tools{display:grid;grid-template-columns:1fr auto;gap:9px;padding:13px 20px;border-bottom:1px solid var(--border)}
+  .drawer-tools input{height:40px;border:1px solid var(--border);border-radius:10px;background:var(--panel-soft);padding:0 11px;color:var(--text)}
+  .drawer-list{flex:1;overflow:auto;padding:12px 14px 25px}
+  .order-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:13px;margin-bottom:9px;border:1px solid var(--border);border-radius:13px;background:var(--panel-soft)}
+  .order-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .order-top strong{color:var(--purple)}
+  .order-card .store{color:var(--text-2);font-size:.71rem}
+  .order-card p{margin:7px 0 0;color:var(--text);font-size:.76rem}
+  .order-side{text-align:right}
+  .order-side .money{display:block;font-size:.94rem}
+  .order-side .pct{display:block;color:var(--text-2);font-size:.68rem;margin-top:2px}
+  .phase-select{grid-column:1/-1;display:grid;grid-template-columns:130px 1fr;gap:8px;align-items:center;padding-top:10px;border-top:1px solid var(--border)}
+  .phase-select label{color:var(--text-2);font-size:.7rem}
+  .phase-select select{height:36px;border:1px solid var(--border);border-radius:9px;background:var(--panel);padding:0 9px;font-size:.72rem}
+  .empty{padding:35px 15px;text-align:center;color:var(--text-2);font-size:.82rem}
+
+  @media(max-width:1120px){.flow-shell{grid-template-columns:1fr}.insight-panel{position:static}.insight-body{display:grid;grid-template-columns:160px 1fr;gap:18px}.legend{margin:0;padding:0 0 0 15px;border-top:0;border-left:1px solid var(--border)}.kpis,.pipeline-strip{grid-template-columns:repeat(3,1fr)}.toolbar{grid-template-columns:minmax(200px,1fr) repeat(3,150px)}.filter-result{display:none}.case-bars{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:860px){.app{grid-template-columns:1fr}.sidebar{position:static;height:auto;border-right:0;border-bottom:1px solid var(--border);padding:14px}.brand{padding-bottom:12px}.nav-label,.sidebar-note{display:none}.nav-list{display:flex;overflow-x:auto;gap:7px}.nav-item{flex:0 0 205px}.main{padding:20px 16px 42px}.kpis,.pipeline-strip{grid-template-columns:1fr 1fr}.toolbar{position:static;grid-template-columns:1fr 1fr}.search-wrap{grid-column:1/-1}.case-bars{grid-template-columns:1fr 1fr}.stage{grid-template-columns:40px minmax(0,1fr)}.stage-metrics{grid-column:2;grid-template-columns:repeat(4,minmax(52px,1fr))}.insight-body{grid-template-columns:1fr}.legend{border-left:0;border-top:1px solid var(--border);padding:15px 0 0}.topbar{flex-direction:column}.top-actions{width:100%;justify-content:space-between}.orders-table-wrap{max-height:none}}
+  @media(max-width:560px){.main{padding:16px 12px 36px}.kpis{gap:8px}.kpi{padding:13px}.kpi strong{font-size:1.25rem}.kpi-main .pending{font-size:.82rem}.toolbar{grid-template-columns:1fr}.search-wrap{grid-column:auto}.case-bars{grid-template-columns:1fr}.flow-canvas{padding:15px 10px}.stage{padding-right:9px}.stage-metrics{gap:5px}.metric{padding:6px 3px}.panel-head{padding:15px}.drawer{width:100vw}.drawer-stats{grid-template-columns:repeat(2,1fr)}.drawer-tools{grid-template-columns:1fr}.phase-select{grid-template-columns:1fr}.view-button{padding:7px 8px}.top-actions{align-items:stretch}.button{padding:8px 10px}}
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="topo">
-    <div>
-      <h1>Pipeline completo</h1>
-      <div class="muted">Casos de devolução, reembolso e entrega — dados reais, atualizados pelo servidor. Somente leitura. <span id="quando"></span></div>
-    </div>
-    <div class="abas">
-      <button class="chip on" data-aba="mapa" type="button">Mapa do fluxo</button>
-      <button class="chip" data-aba="pedidos" type="button">Todos os pedidos (<span id="n-pedidos">0</span>)</button>
-    </div>
-  </div>
-
-  <div class="card filtros" id="filtros">
-    <input id="f-busca" placeholder="Pedido, produto, motivo ou loja" aria-label="Busca">
-    <select class="chip" id="f-loja"><option value="todas">Todas as lojas</option>${lojas.map(l => `<option value="${escapar(l.id)}">${escapar(l.nome)}</option>`).join('')}</select>
-    <select class="chip" id="f-periodo"><option value="todas">Todas as datas</option><option value="7">7 dias</option><option value="30">30 dias</option><option value="90">90 dias</option></select>
-    <select class="chip" id="f-desfecho"><option value="todos">Todos os desfechos</option><option value="em_aberto">Em aberto</option><option value="reembolso">Reembolso</option><option value="troca">Troca</option><option value="reenvio">Reenvio</option><option value="cupom">Cupom</option><option value="cancelamento">Cancelamento</option><option value="encerrado">Encerrado</option>${[20, 25, 35, 40, 50, 60, 70, 100].map(p => `<option value="${p}">${p}% reembolsado</option>`).join('')}</select>
-    <select class="chip" id="f-jornada"><option value="todas">Todas as jornadas</option>${ordem.map(j => `<option value="${j}">${escapar(catalogo.jornadas[j] ?? j)}</option>`).join('')}</select>
-    <select class="chip" id="f-fase"><option value="todas">Todas as fases</option><option value="sem_fase">Sem fase</option>${ordem.flatMap(j => Object.entries(catalogo.fases).filter(([, f]) => f.jornada === j).map(([id, f]) => `<option value="${id}" data-jornada="${j}">${escapar(f.titulo)}</option>`)).join('')}</select>
-  </div>
-
-  <div id="aviso-moedas" class="muted oculto" style="margin-bottom:8px">Lojas em moedas diferentes não se somam — os indicadores aparecem por moeda.</div>
-  <div id="kpis"></div>
-
-  <div id="mapa">
-    <div class="legenda muted">Legenda: <span class="tipo" style="background:var(--purple-soft)">oferta</span> <span class="tipo" style="background:var(--green)">confirmação</span> <span class="tipo" style="background:#f1f5f9">coleta</span> <span class="tipo" style="background:var(--blue)">decisão</span> <span class="tipo">regra</span> <span class="tipo" style="background:var(--amber)">decisão do dono</span> — só itens com fase do motor carregam números; regra e decisão não entram nas métricas.</div>
-    ${mapaInicial}
-  </div>
-
-  <div id="pedidos" class="card tabela oculto">
-    <table>
-      <thead><tr><th>Pedido</th><th>Produto</th><th>Loja</th><th>Data</th><th>Valor</th><th>% reemb.</th><th>Motivo</th><th>Atendimento</th><th>Fase atual</th></tr></thead>
-      <tbody id="linhas"></tbody>
-    </table>
-  </div>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 5h16M7 12h13M11 19h9"/></svg></div><div><span>Operação</span><strong>Reembolsos</strong></div></div>
+    <p class="nav-label">Jornadas do Miro</p>
+    <nav class="nav-list" id="journeyNav" aria-label="Jornadas do atendimento">${ordem.map((j, k) => `<button type="button" class="nav-item${k === 0 ? ' active' : ''}" data-flow="${j}" style="--tone:${TOM_JORNADA[j] ?? 'var(--purple)'}"><span class="nav-icon">${String(k + 1).padStart(2, '0')}</span><span class="nav-copy"><strong>${escapar(catalogo.jornadas[j] ?? j)}</strong><span data-num data-nav="valor">—</span></span><span class="nav-count" data-num><span data-nav="n">0</span><br><span data-nav="pct">0%</span></span></button>`).join('')}</nav>
+    <div class="sidebar-note"><strong>Como ler os números</strong><p>“Passaram” inclui quem chegou à fase. “Pararam” mostra quem aceitou ali. “Avançaram” seguiram para a próxima etapa.</p></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div class="title-wrap"><p class="eyebrow">Central operacional</p><h1>Pipeline completo</h1><p>Todas as fases do fluxo enviado, com pedidos e valores.</p></div><div class="top-actions"><div class="view-switch" role="tablist" aria-label="Visualização"><button type="button" class="view-button active" data-view="flow" role="tab" aria-selected="true">Mapa do fluxo</button><button type="button" class="view-button" data-view="orders" role="tab" aria-selected="false">Todos os pedidos</button></div><button type="button" class="button" id="resetAssignments">Limpar ajustes</button></div></header>
+    <section class="toolbar" id="filtros" aria-label="Filtros do dashboard"><div class="search-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input class="control" id="f-busca" type="search" placeholder="Buscar pedido, produto, motivo ou loja…" aria-label="Buscar pedido, produto, motivo ou loja"></div><select class="control" id="f-loja" aria-label="Filtrar por loja"><option value="todas">Todas as lojas</option>${lojas.map(l => `<option value="${escapar(l.id)}">${escapar(l.nome)}</option>`).join('')}</select><select class="control" id="f-periodo" aria-label="Filtrar por data do pedido"><option value="todas">Todas as datas</option><option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option></select><select class="control" id="f-desfecho" aria-label="Filtrar por desfecho"><option value="todos">Todos os desfechos</option><option value="em_aberto">Em aberto</option><option value="reembolso">Reembolso</option><option value="troca">Troca</option><option value="reenvio">Reenvio</option><option value="cupom">Cupom</option><option value="cancelamento">Cancelamento</option><option value="encerrado">Encerrado</option>${[20, 25, 35, 40, 50, 60, 70, 100].map(p => `<option value="${p}">Reembolso ${p}%</option>`).join('')}</select><div class="filter-result" id="filterResult" data-num>0 pedidos no filtro</div></section>
+    <section class="notice"><i></i><div><strong>Funil conectado aos dados disponíveis</strong><p>Os pedidos, os casos e as fases vêm do Atendo em tempo real e reagem aos filtros. Só fases efetivamente enviadas entram nas métricas; inferências e correções aparecem marcadas. <span id="quando" data-date></span></p></div></section>
+    <section class="kpis" aria-label="Funil geral de pedidos e casos"><article class="kpi"><span>Pedidos totais</span><div class="kpi-main"><strong id="kpiTotalOrders" data-num>0</strong><em id="kpiTotalOrdersPct" data-num>100%</em></div><small>base de pedidos da loja nos filtros</small></article><article class="kpi"><span>Pedidos com ticket</span><div class="kpi-main"><strong id="kpiTicketOrders" data-num>0</strong><em id="kpiTicketPct" data-num>—</em></div><small>percentual sobre pedidos totais</small></article><article class="kpi" style="--glow:rgba(212,76,71,.10)"><span>Pedidos sobre reembolso</span><div class="kpi-main"><strong style="color:var(--red)" id="kpiRefundOrders" data-num>0</strong><em id="kpiRefundPct" data-num>—</em></div><small>percentual dos tickets abertos</small></article><article class="kpi" style="--glow:rgba(203,145,47,.12)"><span>Valor dos pedidos totais</span><div class="kpi-main"><strong class="kpi-valor" style="color:var(--amber)" id="kpiTotalOrderValue" data-num>—</strong><em id="kpiTotalValuePct" data-num>100%</em></div><small>soma de todos os pedidos da loja</small></article><article class="kpi" style="--glow:rgba(68,131,97,.12)"><span>Valor dos pedidos reembolsados</span><div class="kpi-main"><strong class="kpi-valor" style="color:var(--green)" id="kpiRefundedValue" data-num>—</strong><em id="kpiRefundedValuePct" data-num>0%</em></div><small id="kpiRefundedValueNote">reembolsado de fato sobre o valor total</small></article></section>
+    <section class="pipeline-strip" aria-label="Indicadores operacionais do pipeline"><div class="pipe-stat"><span>Antes do pipeline</span><strong id="kpiBefore" data-num>0%</strong><small id="kpiBeforeCount" data-num>0 pedidos integrais</small></div><div class="pipe-stat"><span>Após o pipeline</span><strong id="kpiAfter" data-num>0%</strong><small id="kpiDelta" data-num>casos do motor novo</small></div><div class="pipe-stat"><span>Reembolso parcial</span><strong id="kpiPartial" data-num>0</strong><small id="kpiPartialPct" data-num>0% dos casos</small></div><div class="pipe-stat"><span>Valor com ticket</span><strong id="kpiTicketValue" data-num>—</strong><small>pedidos com atendimento</small></div><div class="pipe-stat"><span>Produto identificado</span><strong id="kpiProducts" data-num>0%</strong><small id="kpiProductCount" data-num>0 produtos identificados</small></div></section>
+    <section class="case-mix" aria-labelledby="caseMixTitle"><div class="case-mix-head"><div><h2 id="caseMixTitle">Percentual por tipo de caso</h2><p>Distribuição recalculada conforme os filtros.</p></div><strong id="caseMixTotal" data-num>0 casos</strong></div><div class="case-bars" id="caseMixList">${ordem.filter(j => j !== 'entrada').map(j => `<div class="case-bar" data-mix="${j}" style="--tone:${TOM_JORNADA[j]};--share:0%"><div class="case-bar-top"><span>${escapar(catalogo.jornadas[j] ?? j)}</span><strong data-num>0 · 0%</strong></div><div class="case-track"><i></i></div></div>`).join('')}</div></section>
+    <section class="flow-view" id="flowView"><div class="flow-shell"><article class="panel"><div class="panel-head"><div><h2 id="journeyTitle">${escapar(catalogo.jornadas[ordem[0]] ?? ordem[0])}</h2><p id="journeyDescription">${escapar(DESCRICAO_JORNADA[ordem[0]] ?? '')}</p></div><div class="panel-total"><strong id="journeyOrders" data-num>0 pedidos</strong><span id="journeyValue" data-num>— em valor</span></div></div>${fluxos}</article><aside class="panel insight-panel"><div class="panel-head"><div><h2>Leitura da jornada</h2><p>Resultado dos pedidos filtrados</p></div></div><div class="insight-body"><div class="health"><div class="ring" id="retentionRing" style="--progress:0%"><div class="ring-label"><strong id="retentionPct" data-num>0%</strong><span>antes do final</span></div></div></div><div><div class="insight-list"><div class="insight-row"><span>Pedidos da jornada</span><strong id="insightTotal" data-num>0</strong></div><div class="insight-row"><span>Pararam antes do fim</span><strong id="insightStopped" data-num>0</strong></div><div class="insight-row"><span>Chegaram ao final</span><strong id="insightFinal" data-num>0</strong></div><div class="insight-row"><span>Valor da jornada</span><strong id="insightValue" data-num>—</strong></div></div><div class="legend"><div><i style="--dot:var(--purple)"></i>Fase clicável — abra para ver os pedidos</div><div><i style="--dot:var(--amber)"></i>Valor soma apenas pedidos com preço localizado, por moeda</div><div><i style="--dot:#9065b0"></i>Ajustes manuais ficam neste navegador</div></div></div></div></aside></div></section>
+    <section class="orders-view" id="ordersView"><article class="panel orders-panel"><div class="panel-head"><div><h2>Todos os pedidos</h2><p>Abra qualquer pedido para conferir ou ajustar a fase atribuída neste navegador.</p></div><div class="panel-total"><strong id="ordersViewCount" data-num>0 pedidos</strong><span id="ordersViewValue" data-num>— em valor</span></div></div><div class="orders-table-wrap"><table><thead><tr><th>Pedido</th><th>Produto</th><th>Loja</th><th>Data do pedido</th><th>Valor</th><th>Reembolso</th><th>Motivo</th><th>Fase atual</th><th></th></tr></thead><tbody id="allOrdersTable"></tbody></table></div></article></section>
+  </main>
 </div>
-
-<aside class="painel" id="painel" hidden>
-  <button class="fechar" id="painel-fechar" type="button" aria-label="Fechar">×</button>
-  <b id="painel-titulo"></b>
-  <p class="muted" id="painel-desc"></p>
-  <div class="nums" id="painel-nums"></div>
-  <div class="mini" id="painel-valor"></div>
-  <div class="abas" id="painel-abas" style="margin:8px 0">
-    <button class="chip on" data-rel="passaram" type="button">passaram</button><button class="chip" data-rel="pararam" type="button">pararam</button><button class="chip" data-rel="avancaram" type="button">avançaram</button>
-  </div>
-  <input id="painel-busca" placeholder="Buscar nesta fase" style="width:100%;border:1px solid var(--border);border-radius:999px;padding:7px 12px;font-size:13px;margin-bottom:8px">
-  <div id="painel-lista"></div>
-</aside>
+<div class="backdrop" id="backdrop"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true" inert><div class="drawer-head"><div class="drawer-topline"><div><span class="drawer-kicker" id="drawerKicker">Detalhe da fase</span><h2 id="drawerTitle">Fase</h2><p id="drawerDescription"></p></div><button type="button" class="close" id="closeDrawer" aria-label="Fechar">×</button></div><div class="drawer-stats"><div class="drawer-stat"><span>Passaram</span><strong id="drawerPassed" data-num>0</strong></div><div class="drawer-stat"><span>Pararam aqui</span><strong id="drawerStopped" data-num>0</strong></div><div class="drawer-stat"><span>Avançaram</span><strong id="drawerAdvanced" data-num>0</strong></div><div class="drawer-stat"><span>Valor</span><strong id="drawerValue" data-num>—</strong></div></div></div><div class="drawer-tools"><input id="drawerSearch" type="search" placeholder="Buscar dentro desta fase…" aria-label="Buscar dentro desta fase"><button type="button" class="button" id="showMode">Ver: passaram</button></div><div class="drawer-list" id="drawerList"></div></aside>
 
 <script>
 (function () {
   'use strict';
-  var estado = { dados: null, aba: 'mapa', item: null, rel: 'passaram', buscaFase: '' };
   var $ = function (s, el) { return (el || document).querySelector(s); };
   var $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
+  var CHAVE_AJUSTES = 'atendo-pipeline-ajustes';
+  var ajustes = {}; try { ajustes = JSON.parse(localStorage.getItem(CHAVE_AJUSTES) || '{}') || {}; } catch (e) { ajustes = {}; }
+  var estado = { dados: null, jornada: null, item: null, modo: 'passaram', buscaFase: '', vista: 'flow' };
   var NOME_DESFECHO = { em_aberto: 'Em aberto', reembolso: 'Reembolso', troca: 'Troca', reenvio: 'Reenvio', cupom: 'Cupom', cancelamento: 'Cancelamento', encerrado: 'Encerrado' };
-  var SIMB = { EUR: '€', BRL: 'R$', USD: 'US$', GBP: '£' };
-  function dinheiro(v, moeda) { return (Number(v || 0)).toFixed(2).replace('.', ',') + ' ' + (SIMB[moeda] || moeda || ''); }
-  function porMoeda(obj) { var k = Object.keys(obj || {}); return k.length ? k.map(function (m) { return dinheiro(obj[m], m); }).join(' · ') : '—'; }
-  function texto(el, s) { el.textContent = s == null ? '' : String(s); }
-  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
-  function filtros() {
-    return { busca: $('#f-busca').value, loja: $('#f-loja').value, periodo: $('#f-periodo').value, desfecho: $('#f-desfecho').value, jornada: $('#f-jornada').value, fase: $('#f-fase').value };
-  }
+  var MOEDA_ISO = { EUR: 'EUR', GBP: 'GBP', USD: 'USD', BRL: 'BRL' };
+  var FINAIS = /-full$|^entry-products-required$|^delivery-status-within$|^delivery-status-late$|^delivery-returned-report$|^delivery-processed-terms$|^delivery-unprocessed-cancel$|^cancel-complete$/;
+  function texto(el, s) { if (el) { el.textContent = s == null ? '' : String(s); if (el.hasAttribute('data-num')) el.title = el.textContent; } }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function fold(s) { return String(s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase(); }
+  function dinheiro(v, moeda) { try { return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: MOEDA_ISO[moeda] || moeda || 'EUR' }).format(Number(v || 0)); } catch (e) { return (Number(v || 0)).toFixed(2).replace('.', ',') + ' ' + moeda; } }
+  // moedas nunca se somam: cada moeda aparece separada dentro do mesmo componente
+  function porMoeda(obj) { var k = Object.keys(obj || {}).filter(function (m) { return obj[m] != null; }); return k.length ? k.map(function (m) { return dinheiro(obj[m], m); }).join(' · ') : '—'; }
+  // vários valores de moedas diferentes no mesmo componente: cada moeda separada, nunca somada
+  function valorEm(el, obj) { var k = Object.keys(obj || {}).filter(function (m) { return obj[m] != null; }); el.classList.toggle('multi', k.length > 1); if (k.length > 1 && el.classList.contains('kpi-valor')) { el.innerHTML = k.map(function (m) { return '<span class="linha">' + esc(dinheiro(obj[m], m)) + '</span>'; }).join(''); el.title = porMoeda(obj); } else texto(el, porMoeda(obj)); }
+  function somaPorMoeda(regs) { var o = {}; regs.forEach(function (r) { if (r.pedidoValor != null) o[r.moeda] = (o[r.moeda] || 0) + r.pedidoValor; }); return o; }
+  function pct(n, d) { return d ? Math.round(n / d * 100) + '%' : '0%'; }
+  function pct1(n, d) { return d ? (n / d * 100).toFixed(1).replace('.', ',') + '%' : '0,0%'; }
+  function dataBr(ms) { return ms ? new Intl.DateTimeFormat('pt-BR').format(new Date(ms)) : 'Data não disponível'; }
+  function filtros() { return { busca: $('#f-busca').value, loja: $('#f-loja').value, periodo: $('#f-periodo').value, desfecho: $('#f-desfecho').value }; }
   function carregar() {
     var f = filtros(); var q = Object.keys(f).map(function (k) { return k + '=' + encodeURIComponent(f[k]); }).join('&');
     // caminho relativo ao próprio endereço (o token fica só na URL, nunca no HTML)
     return fetch(location.pathname.replace(/[/]+$/, '') + '/dados?' + q, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('Link inválido ou revogado'); return r.json(); })
-      .then(function (d) { estado.dados = d; desenhar(); })
+      .then(function (d) { estado.dados = d; if (!estado.jornada) estado.jornada = d.catalogo.ordem[0]; desenhar(); })
       .catch(function (e) { texto($('#quando'), e.message); });
   }
+
+  /* ---------- modelo local: catálogo + ajustes manuais (só neste navegador) ---------- */
+  function itens() { return estado.dados.catalogo.mapa; }
+  function itemPorId(id) { return itens().filter(function (i) { return i.id === id; })[0] || null; }
+  function registros() { return estado.dados.registros; }
+  function ajusteDe(r) { var id = ajustes[r.chave]; return id && itemPorId(id) ? itemPorId(id) : null; }
+  function jornadaDe(r) { var a = ajusteDe(r); return a ? a.jornada : r.jornada; }
+  function segmentoDe(r) { var a = ajusteDe(r); return a ? a.segmento : r.segmento; }
+  function casosDaJornada(j, base) { base = base || registros(); return j === 'entrada' ? base : base.filter(function (r) { return jornadaDe(r) === j; }); }
+  // chaves por item: as do servidor (fases enviadas), com os ajustes locais aplicados por cima
+  function chavesPorItem() {
+    var d = estado.dados; var saida = {}; var ajustados = Object.keys(ajustes).filter(function (c) { return itemPorId(ajustes[c]); });
+    itens().forEach(function (i) {
+      var g = d.porItem[i.id] && d.porItem[i.id].chaves ? d.porItem[i.id].chaves : { passaram: [], pararam: [], avancaram: [], emAberto: [] };
+      saida[i.id] = { passaram: g.passaram.filter(function (c) { return ajustados.indexOf(c) < 0; }), pararam: g.pararam.filter(function (c) { return ajustados.indexOf(c) < 0; }), avancaram: g.avancaram.filter(function (c) { return ajustados.indexOf(c) < 0; }), emAberto: g.emAberto.filter(function (c) { return ajustados.indexOf(c) < 0; }) };
+    });
+    ajustados.forEach(function (c) {
+      var alvo = itemPorId(ajustes[c]); if (!alvo || !registros().some(function (r) { return r.chave === c; })) return;
+      itens().filter(function (i) { return i.fase && i.jornada === alvo.jornada && i.grupo === alvo.grupo && i.ordem <= alvo.ordem; }).forEach(function (i) {
+        saida[i.id].passaram.push(c); if (i.id === alvo.id) saida[i.id].pararam.push(c); else saida[i.id].avancaram.push(c);
+      });
+    });
+    // regras e decisões (sem fase): números derivados do caminho — nunca entram nas métricas oficiais
+    itens().forEach(function (i) {
+      if (i.fase) return;
+      var grupo = itens().filter(function (x) { return x.jornada === i.jornada && x.grupo === i.grupo; });
+      var depois = grupo.filter(function (x) { return x.fase && x.ordem > i.ordem; })[0];
+      var antes = grupo.filter(function (x) { return x.fase && x.ordem < i.ordem; }).slice(-1)[0];
+      var chaves = depois ? saida[depois.id].passaram.slice() : antes ? saida[antes.id].avancaram.slice() : casosDaJornada(i.jornada).filter(function (r) { return i.jornada === 'entrada' || segmentoDe(r) === i.segmento; }).map(function (r) { return r.chave; });
+      saida[i.id] = { passaram: chaves, pararam: [], avancaram: chaves.slice(), emAberto: [], derivada: true };
+    });
+    return saida;
+  }
+  function regsDe(chaves) { var s = {}; chaves.forEach(function (c) { s[c] = true; }); return registros().filter(function (r) { return s[r.chave]; }); }
+  function metricasDoItem(i, chaves) {
+    var g = chaves[i.id]; var base = i.jornada === 'entrada' ? registros() : casosDaJornada(i.jornada).filter(function (r) { return segmentoDe(r) === i.segmento; });
+    return { passaram: g.passaram.length, pararam: g.pararam.length, avancaram: g.avancaram.length, emAberto: g.emAberto.length, totalSegmento: base.length, valorPorMoeda: somaPorMoeda(regsDe(g.passaram)), chaves: g, derivada: !!g.derivada };
+  }
+  function itemDoRegistro(r) {
+    var a = ajusteDe(r); if (a) return a;
+    if (!r.faseAtual) return null;
+    var cand = itens().filter(function (i) { return i.fase === r.faseAtual && i.jornada === r.jornada && (i.jornada === 'entrada' || i.segmento === r.segmento); });
+    if (!cand.length) cand = itens().filter(function (i) { return i.fase === r.faseAtual; });
+    return cand[0] || null;
+  }
+  function chegouAoFinal(r) { var i = itemDoRegistro(r); return !!(i && FINAIS.test(i.id)) || r.percentual === 100 || r.faseAtual === 'reemb_100' || r.faseAtual === 'cancel_nao_processado'; }
+  function badge(r) {
+    if (ajustes[r.chave]) return '<span class="badge local">Ajuste local</span>';
+    if (r.origem === 'manual') return '<span class="badge manual">Fase manual</span>';
+    if (r.origem === 'inferida' || r.inferidaPor) return '<span class="badge warn">Fase inferida</span>';
+    return '<span class="badge">Fase enviada</span>';
+  }
+  function faseLabel(r) { var i = itemDoRegistro(r); return i ? i.titulo : (r.faseTitulo || 'Sem fase'); }
+
+  /* ---------- desenho ---------- */
   function desenhar() {
     var d = estado.dados; if (!d) return;
-    texto($('#quando'), 'Atualizado ' + new Date(d.geradoEm).toLocaleString('pt-BR'));
-    texto($('#n-pedidos'), d.linhas.length);
-    $('#aviso-moedas').classList.toggle('oculto', d.indicadores.length <= 1);
-    var kp = $('#kpis'); kp.innerHTML = '';
-    d.indicadores.forEach(function (k) {
-      var bloco = el('div'); if (d.indicadores.length > 1) bloco.appendChild(el('div', 'muted', k.moeda));
-      var g = el('div', 'kpis');
-      var itens = [
-        ['Pedidos totais', String(k.pedidosTotais), 'nos filtros atuais'],
-        ['Pedidos com atendimento', String(k.pedidosComAtendimento), dinheiro(k.valorComAtendimento, k.moeda) + ' em pedidos'],
-        ['Casos', String(k.casos), k.pctProdutoIdentificado + '% com produto identificado'],
-        ['Envolvidos em reembolso', String(k.pedidosEmReembolso), k.reembolsosRegistrados + ' só no relatório · ' + k.reembolsosInferidos + ' só inferidos'],
-        ['Valor total dos pedidos', dinheiro(k.valorTotalPedidos, k.moeda), 'pago na Shopify'],
-        ['Valor dos pedidos reembolsados', dinheiro(k.valorPedidosReembolsados, k.moeda), 'valor pago dos casos com reembolso'],
-        ['Aceites pendentes', String(k.aceitesPendentes), dinheiro(k.valorAceitesPendentes, k.moeda) + ' aguardando decisão'],
-        ['Reembolsado de fato', dinheiro(k.reembolsadoEfetivo, k.moeda), k.reembolsosEfetivados + ' efetivados (' + k.reembolsosParciais + ' parciais)'],
-        ['Cenário hipotético sem retenção', k.historicoSuficiente ? dinheiro(k.hipoteticoSemRetencao, k.moeda) : '—', k.historicoSuficiente ? 'hipótese: os mesmos efetivados com 100% (não é economia comprovada)' : 'dados históricos insuficientes'],
-      ];
-      itens.forEach(function (it) { var c = el('div', 'card kpi'); c.appendChild(el('div', 'r', it[0])); c.appendChild(el('div', 'v', it[1])); c.appendChild(el('div', 'mini', it[2])); g.appendChild(c); });
-      bloco.appendChild(g);
-      var j = el('div', 'jornadas');
-      k.porJornada.forEach(function (pj) {
-        var c = el('div', 'card' + ($('#f-jornada').value === pj.chave ? ' on' : '')); c.appendChild(el('div', '', d.catalogo.jornadas[pj.chave] || pj.chave)).style.fontWeight = '600';
-        c.appendChild(el('div', '', pj.pedidos + ' · ' + pj.pct + '%')).style.fontSize = '18px'; c.appendChild(el('div', 'mini', dinheiro(pj.valor, k.moeda)));
-        c.addEventListener('click', function () { $('#f-jornada').value = $('#f-jornada').value === pj.chave ? 'todas' : pj.chave; $('#f-fase').value = 'todas'; carregar(); });
-        j.appendChild(c);
-      });
-      bloco.appendChild(j); kp.appendChild(bloco);
+    texto($('#quando'), 'Atualizado ' + new Date(d.geradoEm).toLocaleString('pt-BR') + '.');
+    var regs = registros(); var chaves = chavesPorItem();
+    // barra lateral: quantidade, valor e percentual por jornada (dados reais, moedas separadas)
+    d.catalogo.ordem.forEach(function (j) {
+      var b = $('.nav-item[data-flow="' + j + '"]'); var lista = casosDaJornada(j);
+      texto($('[data-nav=n]', b), lista.length); texto($('[data-nav=pct]', b), j === 'entrada' ? '100%' : pct1(lista.length, regs.length)); texto($('[data-nav=valor]', b), porMoeda(somaPorMoeda(lista)));
+      b.classList.toggle('active', estado.jornada === j);
     });
-    // itens do mapa com fase (já estão no HTML): só os números
-    $$('.fase[data-fase]').forEach(function (b) {
-      var item = b.getAttribute('data-item'); var m = d.porItem[item] || { passaram: 0, pararam: 0, avancaram: 0, emAberto: 0, valorPorMoeda: {}, inferidos: 0, manuais: 0, pctPassaram: 0, totalSegmento: 0 };
-      texto($('[data-n=passaram]', b), m.passaram); texto($('[data-n=pararam]', b), m.pararam); texto($('[data-n=avancaram]', b), m.avancaram);
-      texto($('[data-n=pct]', b), m.pctPassaram + '% dos ' + m.totalSegmento + ' caso(s) deste caminho' + (m.emAberto ? ' · ' + m.emAberto + ' em aberto' : ''));
-      texto($('[data-n=valor]', b), porMoeda(m.valorPorMoeda));
-      texto($('[data-n=fora]', b), (m.inferidos || m.manuais) ? ((m.inferidos ? m.inferidos + ' inferido(s)' : '') + (m.inferidos && m.manuais ? ' · ' : '') + (m.manuais ? m.manuais + ' manual(is)' : '') + ' — fora das métricas') : '');
-      b.classList.toggle('on', estado.item === item);
-    });
-    // jornada filtrada: o mapa mostra só aquela jornada (mais a Entrada geral, que é comum a todas) — cada jornada pode ser lida sozinha
-    var fj = $('#f-jornada').value;
-    d.catalogo.ordem.forEach(function (jn) { var sec = $('section.jornada[data-jornada="' + jn + '"]'); if (sec) sec.hidden = !(fj === 'todas' || fj === jn || jn === 'entrada'); });
-    d.catalogo.ordem.forEach(function (jn) { var s = $('[data-jornada-resumo="' + jn + '"]'); if (s) texto(s, (d.indicadores[0] ? (d.indicadores[0].porJornada.filter(function (x) { return x.chave === jn; })[0] || {}).pedidos || 0 : 0) + ' caso(s) nos filtros'); });
-    // tabela
-    var tb = $('#linhas'); tb.innerHTML = '';
-    if (!d.linhas.length) { var tr0 = el('tr'); var td0 = el('td', 'muted', 'Nenhum pedido nestes filtros.'); td0.colSpan = 9; tr0.appendChild(td0); tb.appendChild(tr0); }
-    d.linhas.slice(0, 300).forEach(function (l) {
-      var r = l.registro; var tr = el('tr');
-      tr.appendChild(el('td', '', l.pedidoNumero ? '#' + l.pedidoNumero : 'sem pedido'));
-      tr.appendChild(el('td', '', l.produto || '—'));
-      tr.appendChild(el('td', '', l.lojaNome));
-      tr.appendChild(el('td', 'muted', new Date(l.dataMs).toLocaleDateString('pt-BR')));
-      tr.appendChild(el('td', '', l.valor != null ? dinheiro(l.valor, l.moeda) : '—'));
-      var tdp = el('td', '', !r ? '—' : r.percentual != null ? r.percentual + '%' : (r.desfecho === 'em_aberto' ? 'em aberto' : NOME_DESFECHO[r.desfecho] || r.desfecho));
-      if (r && r.situacaoReembolso) tdp.appendChild(el('div', 'mini', { efetivado: 'efetivado', aceite_pendente: 'aceite pendente', registrado: 'no relatório, não processado', inferido: 'só inferido pela IA' }[r.situacaoReembolso] || r.situacaoReembolso));
-      tr.appendChild(tdp);
-      tr.appendChild(el('td', '', r ? r.motivo : '—'));
-      var tda = el('td'); var tag = el('span', 'tag ' + (l.atendimento === 'confirmada' ? 'green' : l.atendimento === 'manual' ? 'amber' : ''), l.atendimento + (r && r.inferidaPor === 'ia' ? ' (IA)' : r && r.inferidaPor === 'relatorio' ? ' (relatório)' : '')); tda.appendChild(tag);
-      if (r && r.comVoce) { tda.appendChild(document.createTextNode(' ')); tda.appendChild(el('span', 'tag red', 'com o dono')); }
-      tr.appendChild(tda);
-      tr.appendChild(el('td', '', r ? l.faseTitulo : 'sem fase'));
-      tb.appendChild(tr);
-    });
-    if (d.linhas.length > 300) { var trm = el('tr'); var tdm = el('td', 'muted', 'Mostrando 300 de ' + d.linhas.length + ' — refine os filtros.'); tdm.colSpan = 9; trm.appendChild(tdm); tb.appendChild(trm); }
-    desenharPainel();
+    // funil e faixa de indicadores (indicadores do servidor, por moeda)
+    var ind = d.indicadores || []; var soma = function (k) { return ind.reduce(function (s, x) { return s + (x[k] || 0); }, 0); };
+    var valores = function (k) { var o = {}; ind.forEach(function (x) { o[x.moeda] = x[k] || 0; }); return o; };
+    var totais = soma('pedidosTotais'), comTicket = soma('pedidosComAtendimento'), sobreReemb = soma('pedidosEmReembolso');
+    texto($('#kpiTotalOrders'), totais.toLocaleString('pt-BR')); texto($('#kpiTotalOrdersPct'), '100%');
+    texto($('#kpiTicketOrders'), comTicket.toLocaleString('pt-BR')); texto($('#kpiTicketPct'), pct1(comTicket, totais));
+    texto($('#kpiRefundOrders'), sobreReemb.toLocaleString('pt-BR')); texto($('#kpiRefundPct'), pct1(sobreReemb, comTicket));
+    var vt = valores('valorTotalPedidos'), vr = valores('reembolsadoEfetivo');
+    valorEm($('#kpiTotalOrderValue'), vt); texto($('#kpiTotalValuePct'), '100%');
+    valorEm($('#kpiRefundedValue'), vr); texto($('#kpiRefundedValuePct'), Object.keys(vr).length ? Object.keys(vr).map(function (m) { return pct1(vr[m], vt[m]); }).join(' · ') : '0%');
+    var historicos = regs.filter(function (r) { return r.origem !== 'confirmada'; }), motorNovo = regs.filter(function (r) { return r.origem === 'confirmada'; });
+    var antesInt = historicos.filter(function (r) { return r.percentual === 100; }).length, depoisInt = motorNovo.filter(function (r) { return r.percentual === 100 || r.faseAtual === 'reemb_100'; }).length;
+    var antesTaxa = historicos.length ? antesInt / historicos.length * 100 : 0, depoisTaxa = motorNovo.length ? depoisInt / motorNovo.length * 100 : 0, delta = antesTaxa - depoisTaxa;
+    texto($('#kpiBefore'), pct1(antesInt, historicos.length)); texto($('#kpiBeforeCount'), antesInt + ' pedidos integrais · ' + historicos.length + ' casos históricos');
+    texto($('#kpiAfter'), pct1(depoisInt, motorNovo.length)); texto($('#kpiDelta'), (motorNovo.length ? (delta >= 0 ? '−' : '+') + Math.abs(delta).toFixed(1).replace('.', ',') + ' p.p. · ' : '') + motorNovo.length + ' casos do motor novo');
+    var parciais = regs.filter(function (r) { return r.percentual != null && r.percentual < 100; }).length;
+    texto($('#kpiPartial'), parciais); texto($('#kpiPartialPct'), pct1(parciais, regs.length) + ' dos casos');
+    valorEm($('#kpiTicketValue'), valores('valorComAtendimento'));
+    var identificados = regs.filter(function (r) { return r.produto; }).length;
+    texto($('#kpiProducts'), pct1(identificados, regs.length)); texto($('#kpiProductCount'), identificados + ' produtos identificados');
+    texto($('#filterResult'), d.linhas.length + ' pedidos no filtro');
+    // distribuição por tipo de caso
+    texto($('#caseMixTotal'), regs.length + ' casos');
+    $$('[data-mix]').forEach(function (el) { var j = el.getAttribute('data-mix'); var n = casosDaJornada(j).length; var share = pct1(n, regs.length); el.style.setProperty('--share', share.replace(',', '.')); texto($('strong', el), n + ' · ' + share); });
+    desenharFluxo(chaves);
+    desenharPedidos();
+    desenharDrawer(chaves);
   }
-  function desenharPainel() {
-    var p = $('#painel'); var d = estado.dados; var itemId = estado.item;
-    var item = itemId && d ? d.catalogo.mapa.filter(function (x) { return x.id === itemId; })[0] : null;
-    if (!item || !item.fase || !d.catalogo.fases[item.fase]) { p.hidden = true; return; }
-    p.hidden = false; var f = d.catalogo.fases[item.fase]; var m = d.porItem[itemId]; var g = (m && m.chaves) || { passaram: [], pararam: [], avancaram: [], emAberto: [] };
-    texto($('#painel-titulo'), item.titulo); texto($('#painel-desc'), (d.segmentos[item.segmento] || item.segmento) + ' · fase do motor: ' + f.titulo + ' — ' + (f.instrucao || 'decisão do dono, sem texto automático'));
-    var nums = $('#painel-nums'); nums.innerHTML = ''; [['passaram', m.passaram], ['pararam', m.pararam], ['avançaram', m.avancaram]].forEach(function (x) { var s = el('span'); s.appendChild(el('b', '', x[1])); s.appendChild(document.createTextNode(' ' + x[0])); nums.appendChild(s); });
-    texto($('#painel-valor'), 'Valor dos pedidos, por moeda: ' + porMoeda(m.valorPorMoeda) + ((m.inferidos || m.manuais) ? ' · ' + m.inferidos + ' inferidos · ' + m.manuais + ' manuais fora das métricas' : ''));
-    $$('#painel-abas .chip').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-rel') === estado.rel); });
-    var chaves = g[estado.rel] || []; var q = estado.buscaFase.toLowerCase();
-    var lista = $('#painel-lista'); lista.innerHTML = '';
-    var itens = d.registros.filter(function (r) { return chaves.indexOf(r.chave) >= 0; }).filter(function (r) { return !q || [r.pedidoNumero, r.produto, r.motivo, r.lojaNome].filter(Boolean).join(' ').toLowerCase().indexOf(q) >= 0; });
-    if (!itens.length) lista.appendChild(el('div', 'muted', 'Nenhum pedido.'));
-    itens.forEach(function (r) {
-      var it = el('div', 'item'); var l1 = el('div', 'l'); l1.appendChild(el('b', '', r.pedidoNumero ? '#' + r.pedidoNumero : 'sem pedido')); l1.appendChild(el('span', 'muted', r.pedidoValor != null ? dinheiro(r.pedidoValor, r.moeda) : '')); it.appendChild(l1);
-      it.appendChild(el('div', 'muted', [r.produto, r.lojaNome].filter(Boolean).join(' · ')));
-      it.appendChild(el('div', 'muted', r.motivo + ' · estágio: ' + r.faseTitulo + (r.concluido ? ' · ' + (NOME_DESFECHO[r.desfecho] || r.desfecho) + (r.percentual != null ? ' ' + r.percentual + '%' : '') : '')));
-      it.appendChild(el('div', 'mini', 'origem: ' + r.origem + (r.inferidaPor === 'ia' ? ' (IA)' : r.inferidaPor === 'relatorio' ? ' (relatório)' : '') + (r.conversas > 1 ? ' · ' + r.conversas + ' conversas' : '')));
-      lista.appendChild(it);
+  function desenharFluxo(chaves) {
+    var d = estado.dados; var j = estado.jornada; var lista = casosDaJornada(j);
+    texto($('#journeyTitle'), d.catalogo.jornadas[j] || j); texto($('#journeyDescription'), d.catalogo.descricoes[j] || '');
+    texto($('#journeyOrders'), lista.length + ' pedidos'); texto($('#journeyValue'), porMoeda(somaPorMoeda(lista)) + ' em valor');
+    $$('.flow-canvas[data-jornada]').forEach(function (c) { c.hidden = c.getAttribute('data-jornada') !== j; });
+    $$('.stage[data-item]').forEach(function (b) {
+      var i = itemPorId(b.getAttribute('data-item')); if (!i) return; var m = metricasDoItem(i, chaves);
+      texto($('[data-n=passaram]', b), m.passaram); texto($('[data-n=passaram-pct]', b), pct1(m.passaram, m.totalSegmento));
+      texto($('[data-n=pararam]', b), m.pararam); texto($('[data-n=pararam-pct]', b), pct1(m.pararam, m.passaram));
+      texto($('[data-n=avancaram]', b), m.avancaram); texto($('[data-n=avancaram-pct]', b), pct1(m.avancaram, m.passaram));
+      var v = $('[data-n=valor]', b); texto(v, porMoeda(m.valorPorMoeda)); v.title = porMoeda(m.valorPorMoeda);
+      b.classList.toggle('selected', estado.item === i.id);
     });
+    var finais = lista.filter(chegouAoFinal).length, antes = Math.max(0, lista.length - finais);
+    texto($('#retentionPct'), pct(antes, lista.length)); $('#retentionRing').style.setProperty('--progress', pct(antes, lista.length));
+    texto($('#insightTotal'), lista.length); texto($('#insightStopped'), antes); texto($('#insightFinal'), finais); texto($('#insightValue'), porMoeda(somaPorMoeda(lista)));
   }
-  $$('#filtros select').forEach(function (s) { s.addEventListener('change', function () { if (s.id === 'f-jornada') $('#f-fase').value = 'todas'; carregar(); }); });
+  function desenharPedidos() {
+    var d = estado.dados; var linhas = d.linhas;
+    texto($('#ordersViewCount'), linhas.length + ' pedidos'); texto($('#ordersViewValue'), porMoeda(somaPorMoeda(linhas.map(function (l) { return { pedidoValor: l.valor, moeda: l.moeda }; }))) + ' em valor');
+    var porChave = {}; registros().forEach(function (r) { porChave[r.chave] = r; });
+    $('#allOrdersTable').innerHTML = linhas.map(function (l) {
+      var r = l.registro ? (porChave[l.registro.chave] || l.registro) : null;
+      var reemb = !r ? '—' : r.percentual != null ? r.percentual + '%' : (r.desfecho === 'em_aberto' ? 'em aberto' : NOME_DESFECHO[r.desfecho] || r.desfecho);
+      return '<tr><td><span class="order-id">' + (l.pedidoNumero ? '#' + esc(l.pedidoNumero) : 'sem pedido') + '</span></td><td>' + (l.produto ? '<span class="product-chip">' + esc(l.produto) + '</span>' : '<span class="date-missing">Produto não informado</span>') + '</td><td>' + esc(l.lojaNome) + '</td><td><span data-date class="' + (l.dataMs ? '' : 'date-missing') + '">' + dataBr(l.dataMs) + '</span></td><td class="money" data-num>' + (l.valor != null ? dinheiro(l.valor, l.moeda) : 'Valor não localizado') + '</td><td data-num>' + esc(reemb) + '</td><td class="reason">' + (r ? esc(r.motivo) : '—') + '</td><td>' + (r ? badge(r) + '<br><span class="sub">' + esc(faseLabel(r)) + '</span>' : '<span class="sub">sem atendimento</span>') + '</td><td>' + (r ? '<button type="button" class="row-button" data-open-order="' + esc(r.chave) + '">Abrir</button>' : '') + '</td></tr>';
+    }).join('') || '<tr><td colspan="9"><div class="empty">Nenhum pedido encontrado.</div></td></tr>';
+    $$('[data-open-order]').forEach(function (b) { b.addEventListener('click', function () { abrirPedido(b.getAttribute('data-open-order')); }); });
+  }
+  function listaDoDrawer(i, chaves) {
+    var g = chaves[i.id]; var base = regsDe(g[estado.modo] || []); var q = fold(estado.buscaFase);
+    return base.filter(function (r) { return !q || fold([r.pedidoNumero, r.produto, r.motivo, r.lojaNome].filter(Boolean).join(' ')).indexOf(q) >= 0; });
+  }
+  function desenharDrawer(chaves) {
+    var d = estado.dados; var i = estado.item ? itemPorId(estado.item) : null; if (!i) return;
+    chaves = chaves || chavesPorItem(); var m = metricasDoItem(i, chaves); var lista = listaDoDrawer(i, chaves);
+    texto($('#drawerKicker'), (d.catalogo.jornadas[i.jornada] || i.jornada) + ' › ' + i.grupo); texto($('#drawerTitle'), i.titulo);
+    texto($('#drawerDescription'), i.descricao + (i.fase ? ' Fase do motor: ' + (d.catalogo.fases[i.fase] ? d.catalogo.fases[i.fase].titulo : i.fase) + ' · casos: ' + (d.segmentos[i.segmento] || i.segmento) + '.' : ' Regra do mapa: os números vêm do caminho e não entram nas métricas oficiais de fases enviadas.'));
+    texto($('#drawerPassed'), m.passaram + ' · ' + pct1(m.passaram, m.totalSegmento)); texto($('#drawerStopped'), m.pararam + ' · ' + pct1(m.pararam, m.passaram)); texto($('#drawerAdvanced'), m.avancaram + ' · ' + pct1(m.avancaram, m.passaram)); texto($('#drawerValue'), porMoeda(m.valorPorMoeda));
+    var opcoes = itens().filter(function (x) { return x.fase && x.jornada !== 'entrada'; }).map(function (x) { return '<option value="' + x.id + '">' + esc((d.catalogo.jornadas[x.jornada] || x.jornada) + ' › ' + x.titulo) + '</option>'; }).join('');
+    $('#drawerList').innerHTML = lista.map(function (r) {
+      var origem = r.origem === 'confirmada' ? 'fase enviada' : r.origem === 'manual' ? 'correção manual' : 'inferida' + (r.inferidaPor === 'ia' ? ' pela IA' : r.inferidaPor === 'relatorio' ? ' pelo relatório' : '');
+      var desf = r.percentual != null ? r.percentual + '% reembolsado' : r.desfecho === 'em_aberto' ? 'Em aberto' : (NOME_DESFECHO[r.desfecho] || r.desfecho);
+      var aplicavel = r.jornada !== 'entrada' && !!r.faseAtual;
+      return '<article class="order-card"><div><div class="order-top"><strong>' + (r.pedidoNumero ? '#' + esc(r.pedidoNumero) : 'sem pedido') + '</strong><span class="store">' + esc(r.lojaNome) + '</span><span class="product-chip">' + esc(r.produto || 'Produto não informado') + '</span>' + badge(r) + '</div><p>' + esc(r.motivo) + ' · origem: ' + origem + (r.conversas > 1 ? ' · ' + r.conversas + ' conversas' : '') + '</p><span class="date-missing" data-date>Data do pedido: ' + dataBr(r.dataMs) + '</span></div><div class="order-side"><span class="money" data-num>' + (r.pedidoValor != null ? dinheiro(r.pedidoValor, r.moeda) : 'Valor não localizado') + '</span><span class="pct" data-num>' + esc(desf) + '</span></div>' + (aplicavel ? '<div class="phase-select"><label for="fase-' + esc(r.chave) + '">Fase atribuída</label><select id="fase-' + esc(r.chave) + '" data-assign="' + esc(r.chave) + '">' + opcoes + '</select></div>' : '') + '</article>';
+    }).join('') || '<div class="empty">Nenhum pedido neste recorte.</div>';
+    $$('[data-assign]').forEach(function (s) { var r = registros().filter(function (x) { return x.chave === s.getAttribute('data-assign'); })[0]; var atual = r ? itemDoRegistro(r) : null; if (atual) s.value = atual.id; s.addEventListener('change', function () { ajustes[s.getAttribute('data-assign')] = s.value; localStorage.setItem(CHAVE_AJUSTES, JSON.stringify(ajustes)); desenhar(); }); });
+  }
+
+  /* ---------- navegação ---------- */
+  function abrirItem(id) {
+    estado.item = id; estado.modo = 'passaram'; estado.buscaFase = ''; $('#drawerSearch').value = ''; texto($('#showMode'), 'Ver: passaram');
+    desenhar();
+    var dr = $('#drawer'); dr.removeAttribute('inert'); dr.setAttribute('aria-hidden', 'false'); dr.classList.add('open'); $('#backdrop').classList.add('open'); document.body.style.overflow = 'hidden'; $('#closeDrawer').focus();
+  }
+  function fecharDrawer() { var dr = $('#drawer'); dr.classList.remove('open'); dr.setAttribute('aria-hidden', 'true'); dr.setAttribute('inert', ''); $('#backdrop').classList.remove('open'); document.body.style.overflow = ''; estado.item = null; desenhar(); }
+  function abrirPedido(chave) { var r = registros().filter(function (x) { return x.chave === chave; })[0]; if (!r) return; var i = itemDoRegistro(r); if (!i) return; estado.jornada = i.jornada; estado.vista = 'flow'; sincronizarVista(); abrirItem(i.id); }
+  function sincronizarVista() {
+    $$('.view-button').forEach(function (b) { var on = b.getAttribute('data-view') === estado.vista; b.classList.toggle('active', on); b.setAttribute('aria-selected', String(on)); });
+    $('#flowView').classList.toggle('hidden', estado.vista !== 'flow'); $('#ordersView').classList.toggle('active', estado.vista === 'orders');
+  }
+  $$('.nav-item[data-flow]').forEach(function (b) { b.addEventListener('click', function () { estado.jornada = b.getAttribute('data-flow'); estado.item = null; estado.vista = 'flow'; sincronizarVista(); desenhar(); window.scrollTo({ top: 0, behavior: 'smooth' }); }); });
+  $$('.stage[data-item]').forEach(function (b) { b.addEventListener('click', function () { abrirItem(b.getAttribute('data-item')); }); });
+  $$('.view-button').forEach(function (b) { b.addEventListener('click', function () { estado.vista = b.getAttribute('data-view'); sincronizarVista(); }); });
+  $$('#filtros select').forEach(function (s) { s.addEventListener('change', carregar); });
   var t; $('#f-busca').addEventListener('input', function () { clearTimeout(t); t = setTimeout(carregar, 300); });
-  $$('[data-aba]').forEach(function (b) { b.addEventListener('click', function () {
-    estado.aba = b.getAttribute('data-aba'); $$('[data-aba]').forEach(function (x) { x.classList.toggle('on', x === b); });
-    $('#mapa').classList.toggle('oculto', estado.aba !== 'mapa'); $('#pedidos').classList.toggle('oculto', estado.aba !== 'pedidos');
-  }); });
-  $$('.fase[data-fase]').forEach(function (b) { b.addEventListener('click', function () { estado.item = b.getAttribute('data-item'); estado.rel = 'passaram'; estado.buscaFase = ''; $('#painel-busca').value = ''; desenhar(); }); });
-  $('#painel-fechar').addEventListener('click', function () { estado.item = null; desenhar(); });
-  $$('#painel-abas .chip').forEach(function (b) { b.addEventListener('click', function () { estado.rel = b.getAttribute('data-rel'); desenharPainel(); }); });
-  $('#painel-busca').addEventListener('input', function (e) { estado.buscaFase = e.target.value; desenharPainel(); });
+  $('#closeDrawer').addEventListener('click', fecharDrawer); $('#backdrop').addEventListener('click', fecharDrawer);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && estado.item) fecharDrawer(); });
+  $('#drawerSearch').addEventListener('input', function (e) { estado.buscaFase = e.target.value; desenharDrawer(); });
+  $('#showMode').addEventListener('click', function () { estado.modo = estado.modo === 'passaram' ? 'pararam' : estado.modo === 'pararam' ? 'avancaram' : 'passaram'; texto($('#showMode'), 'Ver: ' + { passaram: 'passaram', pararam: 'pararam aqui', avancaram: 'avançaram' }[estado.modo]); desenharDrawer(); });
+  $('#resetAssignments').addEventListener('click', function () { ajustes = {}; localStorage.removeItem(CHAVE_AJUSTES); desenhar(); });
   carregar();
   setInterval(carregar, 60000);
 })();
