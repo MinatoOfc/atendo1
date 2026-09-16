@@ -713,31 +713,46 @@ export function normalizarIdioma(cod) {
 const RE_CURTA = /^\s*(ok(?:ay|é|ey)?|sim|ja|yes|yep|oui|s[ií]|nee|nein|no|non|n[aã]o|nope|danke|thanks?|merci|gracias|grazie|obrigad[oa]|bedankt|dank|bitte|please|top|super|perfekt|perfeito|perfect|genau|certo|d'accord|akkoord|prima|klar|fine|good|gut)[\s.!,]*$/i
 const soDados = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
 
+// intenções que, por si, mostram uma solicitação linguística (mesmo curta)
+const INTENCOES_LINGUISTICAS = new Set(['pede_troca', 'pede_reembolso', 'pede_cancelamento', 'aceita', 'recusa', 'pergunta_status'])
+// cortesias e confirmações neutras: não carregam idioma "de verdade"
+const NEUTRAS = new Set('ok okay oke okey sim ja yes yep oui si sì nee nein no non nao não nope danke dank thanks thank thx merci gracias grazie obrigado obrigada bedankt bitte please top super perfekt perfeito perfect genau certo prima klar fine good gut hallo hello hi hola olá ola bonjour ciao dag mfg lg vg grüße gruesse gruss groeten cordialement saludos cumprimentos atenciosamente regards thanks'.split(' '))
+const RE_TAMANHO = /^(xs|s|m|l|xl|xxl|xxxl|\d{2,3})$/
+let _reLinguistica = null
+// palavras de ação, aceite/recusa, ajuste de tamanho e pedido explícito, em de/nl/fr/it/es/en/pt
+const reLinguistica = () => (_reLinguistica ??= new RegExp([
+  RE_ACAO.troca.source, RE_ACAO.reenvio.source, RE_ACAO.reembolso.source, RE_ACAO.cupom.source, RE_ACAO.cancelamento.source,
+  '(aceit|accept|akzept|einverstanden|accord|akkoord|va bene|recus|refus|lehne|ablehn|weiger|rifiut|rechaz|annehm)',
+  RE_PALAVRAS.pequeno.source, RE_PALAVRAS.grande.source,
+  '\\b(quero|queria|gostaria|wil|wilt|want|would like|m[öo]chte|veux|voudrais|voglio|vorrei|quiero|quisiera|por favor|alstublieft|graag|s il vous plait|wo ist|where is|waar is|où est|dove è|dónde está|onde está)\\b',
+].join('|'), 'i'))
+const remover = (texto, parte) => (parte ? texto.replace(parte, ' ') : texto)
+
 /**
- * A mensagem é só um DADO pedido (endereço, números, código postal, número do
- * pedido, nome de produto/tamanho, foto) e não uma frase? Decidido pelo
- * SERVIDOR — o booleano da IA não basta para trocar o idioma da conversa.
+ * A mensagem é só um DADO pedido (endereço, número do pedido/CEP/rastreio, nome
+ * de produto, tamanho, foto, cortesia curta) e não uma solicitação? Decidido
+ * pelo SERVIDOR com o significado classificado: intenção, ajustes, motivo e
+ * palavras de ação contam; contagem de palavras sozinha não decide.
  */
 export function mensagemEhDados(cls, corpo) {
   const texto = String(corpo || '').replace(/https?:\/\/\S+/g, ' ')
   const c = soDados(texto)
   if (!c) return true // vazio ou só a foto
-  if (RE_CURTA.test(texto)) return true
-  // o corpo é essencialmente o endereço que a IA extraiu (pontuação, espaços e quebras à parte)
-  const e = soDados(cls?.endereco)
-  if (e && (c === e || e.includes(c) || (c.includes(e) && c.length <= e.length + 25))) return true
-  // só números/códigos (CEP, número do pedido, rastreio)
-  if (!/\p{L}{3,}/u.test(c)) return true
-  // nome isolado de produto e/ou tamanho
-  const produtos = (cls?.produtos ?? []).map(soDados).filter(Boolean)
-  if (produtos.length && produtos.some(p => c === p || c.includes(p)) && c.length <= produtos.join(' ').length + 15) return true
-  if (/^(xs|s|m|l|xl|xxl|xxxl|\d{2,3})( (xs|s|m|l|xl|xxl|xxxl|\d{2,3}))*$/.test(c)) return true
-  // menos de três palavras de verdade não é frase
-  const palavras = c.split(' ').filter(w => /^\p{L}{2,}$/u.test(w))
-  if (palavras.length < 3) return true
-  // cara de endereço: código postal e poucas palavras
-  if (/\b\d{4,5}\b/.test(c) && palavras.length <= 6) return true
-  return false
+  if (RE_CURTA.test(texto)) return true // "ok", "danke", "bedankt"…
+  // desconta o que é dado puro: endereço extraído, nomes de produto, números/códigos, tamanhos, cortesias
+  let resto = remover(c, soDados(cls?.endereco))
+  for (const p of (cls?.produtos ?? []).map(soDados).filter(Boolean)) resto = remover(resto, p)
+  const tokens = resto.split(/\s+/).filter(w => /^\p{L}{2,}$/u.test(w) && !NEUTRAS.has(w) && !RE_TAMANHO.test(w))
+  if (!tokens.length) return true // só endereço / produto / número / tamanho (+ cortesia)
+  // sobrou texto: é solicitação se a classificação ou as palavras mostram intenção/ajuste/motivo/pedido
+  if (INTENCOES_LINGUISTICAS.has(cls?.intencao)) return false
+  if (cls?.ajustes?.length) return false
+  if (cls?.motivo && cls.motivo !== 'nao_informado' && cls.motivo !== 'nenhum') return false
+  if (reLinguistica().test(resto)) return false
+  // resto curto sem sinal linguístico ("Berlin Mitte", "blau") continua sendo dado
+  // cara de endereço sem a IA ter extraído (código postal + poucas palavras): ainda é dado
+  if (/bd{4,5}b/.test(c) && tokens.length <= 6) return true
+  return tokens.length < 3
 }
 
 /** A mensagem tem texto o bastante para confiar no idioma detectado? ("ok", endereço, números, só foto: não) */

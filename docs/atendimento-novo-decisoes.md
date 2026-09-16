@@ -222,12 +222,18 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     normaliza (`nl-BE` → `nl`, guardando o original para exibir), grava em
     `atendimentoNovo.idioma` e só troca o alvo com uma mensagem completa. O
     que é "só dado" é decidido pelo SERVIDOR (`mensagemEhDados`), não pelo
-    booleano da IA: corpo igual ao endereço extraído (pontuação, espaços e
-    quebras à parte), só números/códigos (CEP, pedido, rastreio), nome de
-    produto/tamanho, foto, "ok"/"danke", menos de três palavras ou cara de
-    endereço (código postal + poucas palavras) nunca alteram idioma, original
-    ou incerto quando já há um idioma confiável; sem nenhum ainda, entram só
-    como incerto — nunca português/inglês por padrão. A 2ª chamada recebe
+    booleano da IA, e pelo significado classificado: desconta-se do corpo o
+    endereço extraído, os nomes de produto, números/códigos, tamanhos e
+    cortesias ("Danke", "Bedankt", "Merci"); se não sobra nada, é dado (foto,
+    "ok", endereço, pedido/CEP/rastreio, produto ou tamanho isolados) e não
+    altera idioma, original nem incerto quando já há um idioma confiável (sem
+    nenhum ainda, entra só como incerto). Se sobra texto, a mensagem é uma
+    solicitação — e troca o idioma — quando a intenção é pede_troca,
+    pede_reembolso, pede_cancelamento, aceita, recusa ou pergunta_status,
+    quando há ajustes ou motivo, ou quando aparecem palavras de ação/aceite/
+    recusa/tamanho/pedido ("Bitte umtauschen", "Ik accepteer", "Je refuse",
+    "Polo ist zu klein", "endereço + ik wil terugbetaling"). Nunca
+    português/inglês por padrão. A 2ª chamada recebe
     "Escreva OBRIGATORIAMENTE em holandês (código "nl")" e devolve no JSON o
     idioma em que escreveu. Prova antes do envio (`conferirIdioma`): o
     código declarado tem de ser o alvo E a detecção local por palavras

@@ -39,7 +39,7 @@ estado.lojas = [
   { id: 'loja4', nome: 'Loja Nova Sem Email', ativa: true, moeda: 'USD', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' })]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' })]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
   segredo: 'segredo-de-teste-'.padEnd(64, 'x'),
@@ -101,7 +101,7 @@ globalThis.fetch = async (url, opts) => {
     if (/número do pedido/.test(sys)) frases.push('Bitte nennen Sie Ihre Bestellnummer.')
     if (/quais produtos/.test(sys)) frases.push('Welchen Artikel meinen Sie?')
     if (/o motivo da devolução/.test(sys)) frases.push('Was ist der Grund?')
-    if (/pequeno ou grande/i.test(sys)) frases.push('Ist es zu klein oder zu groß?')
+    if (/pequeno ou grande/i.test(sys)) frases.push(idiomaUsado === 'nl' ? 'Was het te klein of te groot?' : 'Ist es zu klein oder zu groß?')
     if (/rua e número/.test(sys)) frases.push('Bitte Straße und Hausnummer.')
     if (/código postal/.test(sys)) frases.push('Bitte die Postleitzahl.')
     if (/: cidade|e cidade/.test(sys)) frases.push('Bitte die Stadt.')
@@ -505,6 +505,15 @@ test('endereço marcado pela IA como idiomaConfiavel: true não troca o idioma d
   const r = await api(`/api/tickets/${t.id}/novo/confirmar`)
   assert.equal(r.status, 200, r.erro); t = await ticket(t.id)
   assert.equal(an(t).transicaoPendente.para, 'conf_troca'); assert.equal(an(t).rascunhoIdioma, 'nl'); assert.match(t.rascunho, /opnieuw|Hallo!/); assert.match(ultimoPromptEscrita, /código "nl"/)
+})
+
+test('conversa holandesa muda para alemão com "Polo ist zu klein" (curta, mas com significado)', async () => {
+  let t = await cliente({ intencao: 'pede_troca', motivo: 'tamanho', idioma: 'nl' }, { de: 'c27@web.de', nome: 'C27', corpo: 'De maat klopt niet, ik wil graag omruilen.', lojaId: 'loja1' })
+  assert.equal(an(t).idioma, 'nl'); assert.equal(an(t).transicaoPendente.para, 'tam_ajuste'); assert.match(t.rascunho, /te klein of te groot/)
+  await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
+  t = await cliente({ intencao: 'informa', idioma: 'de', idiomaConfiavel: true, ajustes: [{ produto: 'Polo Premium (Schwarz / L)', ajuste: 'pequeno' }] }, { de: 'c27@web.de', corpo: 'Polo ist zu klein', ticketId: t.id })
+  assert.equal(an(t).idioma, 'de', 'ajuste em alemão troca o idioma'); assert.equal(an(t).idiomaIncerto, false)
+  assert.equal(an(t).transicaoPendente.para, 'tam_troca'); assert.match(t.rascunho, /Umtausch/); assert.match(ultimoPromptEscrita, /código "de"/)
 })
 
 test('escritor no idioma errado: regenera uma vez; se insistir, vai ao dono sem enviar nem avançar — também na regeneração', async () => {
