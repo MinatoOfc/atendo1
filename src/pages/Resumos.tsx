@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil, CornerUpLeft, Wallet } from 'lucide-react'
+import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil, CornerUpLeft, Wallet, RefreshCw } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
 import { normalizarCaso, ROTULO_TIPO, precisaVinculo, buscaInicialVinculo } from '../../shared/relatorio.js'
 import type { CasoRelatorio } from '../../shared/relatorio.js'
@@ -36,6 +36,8 @@ function dadosCompactos(caso: CasoRelatorio) {
     valorTexto: caso.valor != null
       ? dinheiroRel(caso.valor, caso.moeda)
       : (caso.acoes.includes('reembolso') ? 'Valor não registrado' : null),
+    // base do cálculo: o total realmente pago no pedido
+    totalPedido: caso.valorPedido != null ? `pedido: ${dinheiroRel(caso.valorPedido, caso.moeda)}` : null,
     cupom: caso.cupom,
   }
 }
@@ -69,6 +71,14 @@ function ModalVincular({ t, caso, onClose }: { t: Ticket; caso: CasoRelatorio; o
         )}
         {' '}Escolher aqui muda <b>só o relatório</b> — nada do atendimento, do motor, da fase ou da oferta.
       </p>
+      {caso.candidatos.length > 0 && (
+        <div className="card" style={{ padding: 10, marginBottom: 12 }}>
+          <b style={{ fontSize: 13 }}>{caso.candidatos.length} pedido(s) possíveis para este cliente</b>
+          <span className="muted-sm" style={{ display: 'block', marginTop: 2 }}>
+            O Atendo não escolheu sozinho porque nada desempatou: {caso.candidatos.map(c => `#${c.numero}`).join(', ')}.
+          </span>
+        </div>
+      )}
       <div className="field">
         <label>Buscar pedido desta loja</label>
         <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="número, cliente ou e-mail" />
@@ -122,6 +132,9 @@ export default function Resumos() {
   const [editando, setEditando] = useState<{ id: string; texto: string } | null>(null)
   // caso do relatório a vincular a um pedido (número escrito, pedido não sincronizado)
   const [vinculando, setVinculando] = useState<string | null>(null)
+  // "Atualizar pedidos": sincroniza a Shopify e recalcula os casos sem vínculo manual
+  const [atualizando, setAtualizando] = useState(false)
+  const [resultadoAtualizar, setResultadoAtualizar] = useState<string | null>(null)
   // relatório de reembolsos (todas as lojas), gerado sob demanda
   const [reembolsos, setReembolsos] = useState<RelatorioReembolsos | null>(null)
   const [gerandoReembolsos, setGerandoReembolsos] = useState(false)
@@ -192,7 +205,7 @@ export default function Resumos() {
           c.pedido,
           c.cliente ? `Cliente: ${c.cliente}${c.email ? ` <${c.email}>` : ''}` : null,
           c.produtos.length ? `Produto: ${c.produtos.join(', ')}` : null,
-          c.acao, c.valorTexto, c.cupom ? `Cupom: ${c.cupom}` : null,
+          c.acao, c.valorTexto, c.totalPedido, c.cupom ? `Cupom: ${c.cupom}` : null,
         ].filter(Boolean)
         if (extras.length) linhas.push('   ' + extras.join(' · '))
       }
@@ -257,6 +270,17 @@ export default function Resumos() {
                 }}>
                 <CornerUpLeft size={13} /> Mover para ontem
               </button>
+              <button className="btn btn-sm" disabled={atualizando}
+                title="Busca os pedidos da Shopify e refaz a associação dos casos (não lê e-mail nem envia nada)"
+                onClick={async () => {
+                  setAtualizando(true)
+                  const r = await s.atualizarRelatorio()
+                  setAtualizando(false)
+                  setResultadoAtualizar(r.erro ? `Erro: ${r.erro}` : `${r.comPedido} de ${r.casos} casos com pedido`)
+                }}>
+                <RefreshCw size={13} /> {atualizando ? 'Atualizando…' : 'Atualizar pedidos'}
+              </button>
+              {resultadoAtualizar && <span className="muted-sm">{resultadoAtualizar}</span>}
               <button className="btn btn-sm" onClick={() => copiarManual(s.hojeChave!)}>
                 {copiado === `manual-${s.hojeChave}` ? <><Check size={13} /> Copiado</> : <><Copy size={13} /> Copiar relatório</>}
               </button>
@@ -290,7 +314,7 @@ export default function Resumos() {
                       {linhaDoTicket(t)}{t.relatorioLinha && <span className="muted-sm" style={{ marginLeft: 6 }}>(editada)</span>}
                       {(() => {
                         const c = dadosCompactos(casoDe(t))
-                        const partes = [c.pedido, c.acao, c.valorTexto, c.cliente, c.produtos.join(', ') || null].filter(Boolean)
+                        const partes = [c.pedido, c.acao, c.valorTexto, c.totalPedido, c.cliente, c.produtos.join(', ') || null].filter(Boolean)
                         if (!partes.length) return null
                         return <span className="muted-sm" style={{ display: 'block', marginTop: 1 }}>{partes.join(' · ')}</span>
                       })()}

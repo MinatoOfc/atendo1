@@ -41,7 +41,7 @@ test.describe('Relatório diário externo', () => {
     await expect(primeiro.locator('.cliente strong')).not.toBeEmpty()
     await expect(primeiro.locator('.cliente .mini')).toContainText('@')
     await expect(primeiro.locator('.marca input')).toBeVisible()
-    expect(await page.locator('.kpi').count()).toBe(6)
+    expect(await page.locator('.kpi').count()).toBe(7)
     // aviso de dados pessoais
     await expect(page.locator('.sidebar-note')).toContainText('dados pessoais')
     await expect(page).toHaveScreenshot('relatorio-desktop-1280.png', { mask: mascaras(page), fullPage: false })
@@ -71,9 +71,11 @@ test.describe('Relatório diário externo', () => {
     await expect(processado.locator('.cliente strong')).not.toBeEmpty()
     expect(await processado.evaluate(el => getComputedStyle(el).textDecorationLine)).toBe('none')
     expect(Number(await processado.evaluate(el => getComputedStyle(el).opacity))).toBeGreaterThan(0.5)
-    // troca com reembolso parcial mostra as duas etiquetas
-    const duasAcoes = page.locator('.caso', { has: page.locator('.tipo-troca') }).filter({ has: page.locator('.tipo-reembolso') })
-    expect(await duasAcoes.count()).toBeGreaterThan(0)
+    // troca com reembolso parcial vira uma etiqueta só: "Troca + reembolso"
+    expect(texto).toContain('Troca + reembolso')
+    const comReembolso = page.locator('.caso', { hasText: 'Troca + reembolso' })
+    expect(await comReembolso.count()).toBeGreaterThan(0)
+    await expect(comReembolso.first().locator('.valores .valor')).not.toBeEmpty()
     // valor desconhecido aparece como texto, nunca como zero
     expect(texto).toContain('Valor não registrado')
     expect(texto).not.toMatch(/€ 0,00/)
@@ -158,7 +160,8 @@ test.describe('Relatório diário externo', () => {
     await page.route('**/processar', rota => rota.fulfill({ status: 500, body: '' }))
     const caso = page.locator(`.caso[data-caso="${id}"]`)
     const cb = caso.locator('.marca input')
-    await cb.check()
+    // click (e não check): o handler desfaz a marcação quando o servidor recusa
+    await cb.click()
     await expect(page.locator('#erro')).toBeVisible()
     await expect(cb).not.toBeChecked()
     await expect(caso).not.toHaveClass(/processado/)

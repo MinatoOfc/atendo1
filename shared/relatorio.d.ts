@@ -27,7 +27,11 @@ export interface CasoRelatorio {
   pedidoTitulo: string
   /** o título acima, com o aviso quando nada foi encontrado na Shopify */
   rotuloPedido: string
-  origemPedido: 'detalhes' | 'auto' | 'linha' | 'texto' | 'conversa' | 'email' | null
+  origemPedido: string | null
+  /** como o pedido foi encontrado, em português (detalhe do caso) */
+  rotuloOrigemPedido: string | null
+  /** pedidos possíveis quando nada foi provado — o dono escolhe no modal */
+  candidatos: { id: string; numero: string; valor: number | null; moeda: string | null; cliente: string | null; email: string | null; criadoEm: string | null }[]
   clienteNome: string | null
   clienteEmail: string | null
   tipo: string
@@ -71,6 +75,8 @@ export declare function acharPedidos(t: Ticket, pedidos?: Pedido[]): {
   numeros: string[]
 }
 export declare function acharPedido(t: Ticket, pedidos?: Pedido[]): Pedido | null
+export declare const ROTULO_ORIGEM_PEDIDO: Record<string, string>
+export declare function emailCanonico(v: unknown): string | null
 export declare function precisaVinculo(caso: CasoRelatorio): boolean
 export declare function buscaInicialVinculo(caso: CasoRelatorio): string
 export declare function normalizarCaso(t: Ticket, opcoes?: OpcoesNormalizacao): CasoRelatorio

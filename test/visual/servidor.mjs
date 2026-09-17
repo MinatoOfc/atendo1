@@ -181,6 +181,31 @@ estado.tickets.push(
   doRelatorio(3085, 'loja1', ONTEM, { nome: 'Angela Ruiz', de: 'angela@web.de', categoria: 'reembolso', relatorioTexto: 'PEDIU DUAS VEZES SEM QUERER 3085 E 3086, ELE QUER CANCELAR UM' }),
 )
 
+/* ---------- casos como chegam na produção: remetente "Nome <email>" ----------
+   Antes da correção do e-mail canônico, todos caíam em "Sem pedido informado". */
+estado.pedidos.push(
+  { ...pedido(5001, 'loja1', 100), email: 'c5001@web.de', cliente: 'Maria Silva', itens: [itemRel('Polo Premium', 'Schwarz / L', 'prod-polo', 'var-polo-l', 100)] },
+  { ...pedido(5002, 'loja1', 136), email: 'c5002@web.de', cliente: 'Joao Pires', itens: [itemRel('Hemd Classic', 'Weiß / M', 'prod-hemd', null, 136)] },
+  // duas compras do mesmo cliente em dias diferentes: desempate pela data
+  { ...pedido(5003, 'loja1', 80), email: 'c5003@web.de', cliente: 'Rita Alves', criadoEm: '2026-09-01', itens: [itemRel('Chino Slim', 'Beige / 32', 'prod-chino', null, 80)] },
+  { ...pedido(5004, 'loja1', 90), email: 'c5003@web.de', cliente: 'Rita Alves', criadoEm: '2026-09-10', itens: [itemRel('Polo Premium', 'Schwarz / L', 'prod-polo', null, 90)] },
+  // duas compras no MESMO dia: empate que o Atendo não desfaz sozinho
+  { ...pedido(5005, 'loja1', 60), email: 'c5005@web.de', cliente: 'Luis Gemeo', criadoEm: '2026-09-02', itens: [itemRel('Hemd Classic', 'Weiß / M', 'prod-hemd', null, 60)] },
+  { ...pedido(5006, 'loja1', 60), email: 'c5005@web.de', cliente: 'Luis Gemeo', criadoEm: '2026-09-02', itens: [itemRel('Hemd Classic', 'Weiß / L', 'prod-hemd', null, 60)] },
+)
+estado.tickets.push(
+  // 15) remetente com nome e e-mail entre <>: 40% de 100,00
+  doRelatorio(5001, 'loja1', HOJE_REL, { nome: 'Maria Silva', de: 'Maria Silva <c5001@web.de>', assunto: 'Ruckgabe', corpo: 'Ich moechte eine Rueckerstattung.', relatorioTexto: 'REEMBOLSO 40%' }),
+  // 16) e-mail com maiúsculas e espaços: 25% de 136,00
+  doRelatorio(5002, 'loja1', HOJE_REL, { nome: 'Joao Pires', de: '  C5002@WEB.DE ', assunto: 'Ruckgabe', corpo: 'Bitte 25%.', relatorioTexto: 'REEMBOLSO 25%' }),
+  // 17) dois pedidos do mesmo e-mail, datas diferentes: vale o mais próximo antes
+  doRelatorio(5003, 'loja1', HOJE_REL, { nome: 'Rita Alves', de: 'Rita Alves <c5003@web.de>', data: '2026-09-05T10:00:00.000Z', assunto: 'Frage', corpo: 'Ich will stornieren.', relatorioTexto: 'REEMBOLSO 50%' }),
+  // 18) dois pedidos no mesmo dia e nada para desempatar: fica com o dono
+  doRelatorio(5005, 'loja1', HOJE_REL, { nome: 'Luis Gemeo', de: 'Luis Gemeo <c5005@web.de>', assunto: 'Frage', corpo: 'Bitte pruefen.', relatorioTexto: 'REEMBOLSO 30%' }),
+  // 19) cliente sem pedido nenhum na loja: continua sem pedido, e isso é correto
+  doRelatorio(5009, 'loja1', HOJE_REL, { nome: 'Sem Pedido', de: 'Sem Pedido <sem-pedido@web.de>', assunto: 'Frage', corpo: 'Nur eine Frage.', relatorioTexto: 'REEMBOLSO 20%' }),
+)
+
 // o caso 1015 (cancelamento) está com o dono: fase pendente de decisão
 estado.tickets[14].atendimentoNovo.acaoAceita = 'cancel_nao_processado'
 estado.tickets[14].motivoEscalada = 'Cancelamento de pedido não processado — decisão sua'

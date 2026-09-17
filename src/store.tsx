@@ -487,6 +487,8 @@ interface Store extends ServerState {
   prepararRelatorio: (id: string) => Promise<PreparoRelatorio | null>
   /** vincula à mão o(s) pedido(s) de um caso do relatório (só pedidos da mesma loja) */
   vincularPedidosRelatorio: (id: string, pedidoIds: string[]) => void
+  /** sincroniza os pedidos da Shopify e recalcula os casos do relatório (sem e-mail, sem IA) */
+  atualizarRelatorio: () => Promise<{ casos: number; comPedido: number; erro?: string }>
   salvarOpcoesRelatorio: (opcoes: string[]) => void
   salvarOpcoesInstrucao: (opcoes: string[]) => void
   configurarRelatorioLink: (acao: 'criar' | 'revogar' | 'mostrar-hoje', valor?: boolean) => void
@@ -754,6 +756,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
     alternarRelatorio: (id, adicionar, texto, detalhes) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar, texto, detalhes }).then(aplicar),
     vincularPedidosRelatorio: (id, pedidoIds) => api(`/tickets/${id}/relatorio/vincular`, 'POST', { pedidoIds }).then(aplicar),
+    atualizarRelatorio: async () => {
+      const r = (await api('/relatorio/atualizar')) as { casos?: number; comPedido?: number; erro?: string; state?: ServerState }
+      aplicar(r)
+      return { casos: r.casos ?? 0, comPedido: r.comPedido ?? 0, erro: r.erro }
+    },
     prepararRelatorio: async id => {
       try {
         const r = await fetch(`/api/tickets/${id}/relatorio/preparar`)

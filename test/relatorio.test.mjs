@@ -8,6 +8,7 @@ import {
   normalizarCaso, filtrarCasos, filtrosDoRelatorio, indicadoresDoRelatorio, agruparPorDia,
   acharPedidos, numerosDePedidoNoTexto,
   precisaVinculo, buscaInicialVinculo,
+  emailCanonico,
   dadosDoRelatorio, dinheiro, textoParaCopiar,
 } from '../shared/relatorio.js'
 
@@ -451,4 +452,162 @@ test('o vínculo manual já abre pesquisando pelo número, pelo e-mail ou pelo n
   // caso já resolvido não precisa de vínculo
   const comPedido = normalizarCaso(antigo('d9', { relatorioLinha: 'PEDIDO 2614 - TROCA' }), opcoesAntigas)
   assert.equal(precisaVinculo(comPedido), false)
+})
+/* ====================================================================
+   E-mail canônico, desempates e cálculo do reembolso sobre o total pago.
+   ==================================================================== */
+
+const lojasV = [{ id: 'l1', nome: 'Von Alder', moeda: 'EUR' }, { id: 'l2', nome: 'Northway UK', moeda: 'GBP' }]
+const itemV = (titulo, extra = {}) => ({ titulo, variante: null, quantidade: 1, ...extra })
+const pedidosV = [
+  { id: 'v100', numero: '#4001', cliente: 'Maria Silva', email: 'maria@email.com', valor: 100, lojaId: 'l1', criadoEm: '2026-08-01', rastreio: 'LX123456789DE', itens: [itemV('Polo Premium')] },
+  { id: 'v136', numero: '#4002', cliente: 'Joao Pires', email: 'joao@email.com', valor: 136, lojaId: 'l1', criadoEm: '2026-08-02', rastreio: '—', itens: [itemV('Hemd Classic')] },
+  { id: 'vgbp', numero: '#5001', cliente: 'Kate UK', email: 'kate@uk.co', valor: 89.9, lojaId: 'l2', criadoEm: '2026-08-03', rastreio: '—', itens: [itemV('Shirt')] },
+]
+// mesmo e-mail, três pedidos: base dos desempates
+const trio = [
+  { id: 'x1', numero: '#7001', cliente: 'Rita Alves', email: 'rita@email.com', valor: 50, lojaId: 'l1', criadoEm: '2026-08-01', rastreio: 'AA111111111DE', itens: [itemV('Polo Premium')] },
+  { id: 'x2', numero: '#7002', cliente: 'Rita Alves', email: 'rita@email.com', valor: 60, lojaId: 'l1', criadoEm: '2026-08-05', rastreio: 'BB222222222DE', itens: [itemV('Chino Slim')] },
+  { id: 'x3', numero: '#7003', cliente: 'Rita Alves', email: 'rita@email.com', valor: 70, lojaId: 'l1', criadoEm: '2026-08-20', rastreio: '—', itens: [itemV('Jacke Urban')] },
+]
+const caso = (extra = {}) => ({
+  id: 'e1', nome: 'Cliente', de: 'maria@email.com', assunto: 'Frage', corpo: 'Mensagem.', historico: [],
+  lojaId: 'l1', relatorioDia: '2026-09-10', ...extra,
+})
+const opcoesV = { pedidos: pedidosV, lojas: lojasV, produtos: [] }
+
+test('e-mail canônico: "Nome <email>", "<email>", maiúsculas e espaços chegam ao mesmo pedido', () => {
+  assert.equal(emailCanonico('Maria Silva <maria@email.com>'), 'maria@email.com')
+  assert.equal(emailCanonico('<maria@email.com>'), 'maria@email.com')
+  assert.equal(emailCanonico('maria@email.com'), 'maria@email.com')
+  assert.equal(emailCanonico('  MARIA@Email.COM  '), 'maria@email.com')
+  assert.equal(emailCanonico('Maria Silva < MARIA@EMAIL.COM >'), 'maria@email.com')
+  assert.equal(emailCanonico(''), null)
+  assert.equal(emailCanonico(null), null)
+  // e o caso inteiro acha o mesmo pedido nas três formas
+  for (const de of ['Maria Silva <maria@email.com>', '<maria@email.com>', 'maria@email.com', ' MARIA@EMAIL.COM ']) {
+    const c = normalizarCaso(caso({ de }), opcoesV)
+    assert.equal(c.pedidoNumero, '4001', 'falhou para: ' + de)
+    assert.equal(c.origemPedido, 'email')
+    assert.equal(c.clienteNome, 'Maria Silva')
+    assert.equal(c.valorPedido, 100)
+  }
+})
+
+test('vários pedidos do mesmo e-mail: desempate por número, rastreio, produto e data', () => {
+  const opc = { ...opcoesV, pedidos: trio }
+  const base = { de: 'Rita Alves <rita@email.com>', nome: 'Rita Alves' }
+  // sem nada que desempate: ninguém é escolhido, e os candidatos ficam à mão
+  const empate = normalizarCaso(caso({ ...base, id: 'r0' }), opc)
+  assert.equal(empate.pedidoLocalizado, false)
+  assert.equal(empate.candidatos.length, 3)
+  // 1) número citado
+  const porNumero = normalizarCaso(caso({ ...base, id: 'r1', relatorioTexto: 'PEDIDO 7002 - REEMBOLSO 50%' }), opc)
+  assert.equal(porNumero.pedidoNumero, '7002')
+  // 2) rastreio citado
+  const porRastreio = normalizarCaso(caso({ ...base, id: 'r2', corpo: 'Meu codigo AA111111111DE nao anda.' }), opc)
+  assert.equal(porRastreio.pedidoNumero, '7001')
+  assert.equal(porRastreio.origemPedido, 'rastreio')
+  // 3) produto citado (com e-mail repetido)
+  const porProduto = normalizarCaso(caso({ ...base, id: 'r3', corpo: 'O Chino Slim veio errado.' }), opc)
+  assert.equal(porProduto.pedidoNumero, '7002')
+  assert.equal(porProduto.origemPedido, 'email_produto')
+  // 4) data: pedido criado ANTES da primeira mensagem e mais próximo dela
+  const porData = normalizarCaso(caso({ ...base, id: 'r4', corpo: 'Quero cancelar.', data: '2026-08-07T10:00:00.000Z' }), opc)
+  assert.equal(porData.pedidoNumero, '7002', 'o de 05/08 é o mais próximo antes de 07/08')
+  assert.equal(porData.origemPedido, 'email_data')
+})
+
+test('pedido de outra loja continua fora, mesmo com o e-mail batendo', () => {
+  const c = normalizarCaso(caso({ id: 'o1', de: 'Kate <kate@uk.co>' }), opcoesV)
+  assert.equal(c.pedidoLocalizado, false, 'kate só tem pedido na loja 2')
+  const naLoja2 = normalizarCaso(caso({ id: 'o2', lojaId: 'l2', de: 'Kate <kate@uk.co>' }), opcoesV)
+  assert.equal(naLoja2.pedidoNumero, '5001')
+})
+
+test('reembolso calculado sobre o total REALMENTE PAGO, em centavos e na moeda do pedido', () => {
+  const valorDe = (extra, opc = opcoesV) => normalizarCaso(caso(extra), opc)
+  const c40 = valorDe({ id: 'm1', relatorioTexto: 'REEMBOLSO 40%' })
+  assert.equal(c40.percentual, 40); assert.equal(c40.valor, 40); assert.equal(dinheiro(c40.valor, c40.moeda), '€ 40,00')
+  const c60 = valorDe({ id: 'm2', relatorioTexto: 'REEMBOLSO 60%' })
+  assert.equal(c60.valor, 60); assert.equal(dinheiro(c60.valor, c60.moeda), '€ 60,00')
+  const c25 = valorDe({ id: 'm3', de: 'joao@email.com', relatorioTexto: 'REEMBOLSO 25%' })
+  assert.equal(c25.valorPedido, 136); assert.equal(c25.valor, 34); assert.equal(dinheiro(c25.valor, c25.moeda), '€ 34,00')
+  const gbp = valorDe({ id: 'm4', lojaId: 'l2', de: 'kate@uk.co', relatorioTexto: 'REEMBOLSO 40%' })
+  assert.equal(gbp.valorPedido, 89.9); assert.equal(gbp.valor, 35.96); assert.equal(dinheiro(gbp.valor, gbp.moeda), '£ 35,96')
+  const integral = valorDe({ id: 'm5', de: 'joao@email.com', relatorioTexto: 'CANCELAMENTO INTEGRAL do pedido' })
+  assert.equal(integral.percentual, 100); assert.equal(integral.valor, 136)
+  const cem = valorDe({ id: 'm6', de: 'joao@email.com', relatorioTexto: 'REEMBOLSO 100%' })
+  assert.equal(cem.valor, 136, '100% é exatamente o total pago')
+})
+
+test('sem prova não há valor: troca pura, cupom, vários pedidos e percentual ausente', () => {
+  const troca = normalizarCaso(caso({ id: 'n1', relatorioTexto: 'TROCA DE TAMANHO' }), opcoesV)
+  assert.equal(troca.valor, null); assert.deepEqual(troca.acoes, ['troca'])
+  const cupom = normalizarCaso(caso({ id: 'n2', relatorioTexto: 'CUPOM 35% para a próxima' }), opcoesV)
+  assert.equal(cupom.valor, null)
+  const semPct = normalizarCaso(caso({ id: 'n3', relatorioTexto: 'REEMBOLSO' }), opcoesV)
+  assert.equal(semPct.valor, null); assert.equal(dinheiro(semPct.valor, semPct.moeda), 'Valor não registrado')
+  const varios = normalizarCaso(caso({ id: 'n4', relatorioTexto: 'PEDIDO 4001 E 4002 - REEMBOLSO 50%' }), opcoesV)
+  assert.equal(varios.pedidos.length, 2); assert.equal(varios.valorPedido, null); assert.equal(varios.valor, null)
+  const semPedido = normalizarCaso(caso({ id: 'n5', de: 'ninguem@web.de', relatorioTexto: 'REEMBOLSO 40%' }), opcoesV)
+  assert.equal(semPedido.pedidoLocalizado, false); assert.equal(semPedido.valor, null)
+})
+
+test('indicadores: pendente entra em previsto, processado entra em reembolsado — e moedas nunca se somam', () => {
+  const pendente = normalizarCaso(caso({ id: 'i1', relatorioTexto: 'REEMBOLSO 40%' }), opcoesV)
+  const processado = normalizarCaso(caso({ id: 'i2', de: 'joao@email.com', relatorioTexto: 'REEMBOLSO 25%', relatorioProcessado: '2026-09-11T10:00:00.000Z' }), opcoesV)
+  const libras = normalizarCaso(caso({ id: 'i3', lojaId: 'l2', de: 'kate@uk.co', relatorioTexto: 'REEMBOLSO 40%', relatorioProcessado: '2026-09-11T10:00:00.000Z' }), opcoesV)
+  const ind = indicadoresDoRelatorio([pendente, processado, libras])
+  assert.deepEqual(ind.previstoPorMoeda, [{ moeda: 'EUR', valor: 40 }], 'oferta aceita não é dinheiro devolvido')
+  assert.deepEqual(ind.reembolsadoPorMoeda, [{ moeda: 'EUR', valor: 34 }, { moeda: 'GBP', valor: 35.96 }])
+  assert.equal(ind.pendentes, 1); assert.equal(ind.processados, 2)
+})
+
+test('relatório interno e página externa mostram exatamente os mesmos números', async () => {
+  const { paginaRelatorio } = await import('../server/relatorio-externo.js')
+  const tickets = [
+    caso({ id: 's1', relatorioTexto: 'REEMBOLSO 40%' }),
+    caso({ id: 's2', de: 'joao@email.com', relatorioTexto: 'REEMBOLSO 25%' }),
+  ]
+  const dados = dadosDoRelatorio({ tickets, pedidos: pedidosV, lojas: lojasV, produtos: [], filtros: filtrosDoRelatorio({}) })
+  const html = paginaRelatorio(dados)
+  const copia = textoParaCopiar(dados.dias)
+  for (const esperado of ['Pedido #4001', '€ 40,00', 'Pedido #4002', '€ 34,00']) {
+    assert.ok(html.includes(esperado), 'a página externa mostra ' + esperado)
+  }
+  for (const esperado of ['PEDIDO 4001', '€ 40,00', 'PEDIDO 4002', '€ 34,00']) {
+    assert.ok(copia.includes(esperado), 'o relatório interno mostra ' + esperado)
+  }
+  // e a origem da associação aparece no detalhe
+  assert.ok(html.includes('e-mail do cliente (único pedido na loja)'))
+})
+
+test('troca com reembolso parcial aparece como uma ação só, com percentual e valor', async () => {
+  const { paginaRelatorio } = await import('../server/relatorio-externo.js')
+  const t = caso({ id: 'tp1', relatorioTexto: 'TROCA + REEMBOLSO 40%' })
+  const c = normalizarCaso(t, opcoesV)
+  assert.deepEqual(c.acoes, ['troca', 'reembolso'])
+  assert.equal(c.valor, 40)
+  const html = paginaRelatorio(dadosDoRelatorio({ tickets: [t], pedidos: pedidosV, lojas: lojasV, filtros: filtrosDoRelatorio({}) }))
+  assert.ok(html.includes('Troca + reembolso'))
+  assert.ok(html.includes('€ 40,00'))
+  assert.ok(html.includes('pedido: € 100,00'))
+})
+test('relatório antigo se corrige sozinho quando os pedidos chegam da Shopify', () => {
+  // o caso já está no relatório, mas a loja ainda não tinha sido sincronizada
+  const t = caso({ id: 'rc1', relatorioTexto: 'REEMBOLSO 40%' })
+  const antes = normalizarCaso(t, { ...opcoesV, pedidos: [] })
+  assert.equal(antes.pedidoLocalizado, false)
+  assert.equal(antes.rotuloPedido, 'Sem pedido informado')
+  assert.equal(antes.valor, null)
+  // chegaram os pedidos: nada é preciso refazer à mão no ticket
+  const depois = normalizarCaso(t, opcoesV)
+  assert.equal(depois.pedidoNumero, '4001')
+  assert.equal(depois.valor, 40)
+  assert.equal(depois.clienteNome, 'Maria Silva')
+  // e o ticket continua intocado: relatório não escreve no atendimento
+  assert.equal(t.relatorioDetalhes, undefined)
+  assert.equal(t.atendimentoNovo, undefined)
+  assert.equal(t.relatorioTexto, 'REEMBOLSO 40%')
 })

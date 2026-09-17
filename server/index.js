@@ -1934,8 +1934,12 @@ function montarDetalhesRelatorio(estado, t, enviado = {}) {
   const numerosVinculo = tem('pedidoIds')
     ? [] // vínculo novo: só os pedidos escolhidos agora
     : (Array.isArray(antes?.pedidoNumeros) ? antes.pedidoNumeros : (antes?.pedidoNumero ? [antes.pedidoNumero] : []))
+  // "vínculo manual" só nasce da ação de vincular; o popup do relatório apenas
+  // confirma o que já estava. O manual sobrevive a qualquer re-sincronização.
+  const querManual = tem('vinculoManual') ? !!enviado.vinculoManual : !!antes?.vinculoManual
+  const vinculoManual = querManual && idsVinculo.length > 0
   const vinculo = (idsVinculo.length || numerosVinculo.length)
-    ? { versao: 1, pedidoIds: idsVinculo, pedidoNumeros: numerosVinculo }
+    ? { versao: 1, pedidoIds: idsVinculo, pedidoNumeros: numerosVinculo, vinculoManual }
     : undefined
 
   // o caso é lido SEM os valores já gravados (só com o vínculo de pedido): o que
@@ -1979,6 +1983,9 @@ function montarDetalhesRelatorio(estado, t, enviado = {}) {
     // vários pedidos (ou número citado sem dados na Shopify) ficam gravados aqui
     pedidoIds: caso.pedidos.filter(p => p.id).map(p => p.id),
     pedidoNumeros: caso.pedidoNumeros,
+    // true só quando o dono escolheu o pedido à mão (a sincronização respeita)
+    vinculoManual,
+    origemPedido: caso.origemPedido,
     clienteNome: caso.clienteNome, clienteEmail: caso.clienteEmail,
     produtos,
     origem: automatico ? 'motor_novo_automatico' : 'manual',
@@ -2815,6 +2822,10 @@ app.get('/api/tickets/:id/relatorio/preparar', (req, res) => {
     pedidoNumeros: caso.pedidoNumeros,
     pedidosSemDados: caso.pedidosSemDados,
     rotuloPedido: caso.rotuloPedido,
+    origemPedido: caso.origemPedido,
+    rotuloOrigemPedido: caso.rotuloOrigemPedido,
+    candidatos: caso.candidatos,
+    vinculoManual: !!t.relatorioDetalhes?.vinculoManual,
     // só para escolher o vínculo à mão: sempre pedidos DESTA loja
     pedidosDaLoja: daLoja.map(p => ({ id: p.id, numero: String(p.numero).replace(/\D/g, ''), cliente: p.cliente ?? null, email: p.email ?? null, valor: p.valor ?? null, criadoEm: p.criadoEm ?? null })),
     cliente: { nome: caso.clienteNome, email: caso.clienteEmail },
@@ -2824,6 +2835,41 @@ app.get('/api/tickets/:id/relatorio/preparar', (req, res) => {
       produtos: caso.produtos, descricao: caso.descricao, acoes: caso.acoes,
       solucaoAceita: cp ? (FASES[cp.faseAceita]?.titulo ?? cp.faseAceita) : (t.relatorioAuto?.solucao ?? null),
     },
+  })
+})
+
+// "Atualizar" do relatório: busca os pedidos/produtos da Shopify e recalcula os
+// casos. NÃO lê e-mail, não chama IA e não envia nada — e como a associação é
+// recalculada a cada leitura, os relatórios antigos se corrigem sozinhos. Os
+// vínculos manuais (relatorioDetalhes.vinculoManual) são preservados.
+app.post('/api/relatorio/atualizar', async (req, res) => {
+  const estado = req.estado
+  let lojasLidas = 0
+  try {
+    for (const [i, loja] of (estado.lojas ?? []).entries()) {
+      const cx = conexaoDaLoja(loja, i)
+      if (!cx) continue
+      const [rp, rprod] = await Promise.all([buscarPedidosShopify(cx), buscarProdutosShopify(cx)])
+      if (rp.pedidos) {
+        estado.pedidos = [...estado.pedidos.filter(p => (p.lojaId ?? 'loja1') !== loja.id), ...rp.pedidos.map(p => ({ ...p, lojaId: loja.id }))]
+      }
+      if (rprod.produtos) {
+        estado.produtos = [...(estado.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== loja.id), ...rprod.produtos.map(p => ({ ...p, lojaId: loja.id }))]
+      }
+      lojasLidas++
+    }
+  } catch (err) {
+    console.error('[relatorio-atualizar]', err.message)
+    return res.status(500).json({ erro: err.message, state: visao(req.wsId) })
+  }
+  // quantos casos do relatório têm pedido depois da sincronização (diagnóstico)
+  const comPedido = estado.tickets.filter(t => t.relatorioDia)
+    .map(t => normalizarCaso(t, { pedidos: estado.pedidos ?? [], lojas: estado.lojas ?? [], produtos: estado.produtos ?? [], fases: catalogoFases() }))
+  salvar(req.wsId)
+  res.json({
+    ok: true, lojasLidas, pedidos: (estado.pedidos ?? []).length,
+    casos: comPedido.length, comPedido: comPedido.filter(c => c.pedidoLocalizado).length,
+    state: visao(req.wsId),
   })
 })
 
@@ -2840,7 +2886,7 @@ app.post('/api/tickets/:id/relatorio/vincular', (req, res) => {
   if (pedidos.length && validos.length !== pedidos.length) {
     return res.status(400).json({ erro: 'Só dá para vincular pedidos da mesma loja.' })
   }
-  t.relatorioDetalhes = montarDetalhesRelatorio(req.estado, t, { pedidoIds: validos })
+  t.relatorioDetalhes = montarDetalhesRelatorio(req.estado, t, { pedidoIds: validos, vinculoManual: true })
   salvar(req.wsId); ok(req, res)
 })
 

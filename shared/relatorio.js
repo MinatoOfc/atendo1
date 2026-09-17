@@ -133,27 +133,92 @@ export function rotuloDoPedido(itens = []) {
 }
 
 /**
- * Pedidos do caso: zero, um ou vários, SEMPRE da mesma loja. Ordem de prioridade:
- *   1. ids e números gravados em relatorioDetalhes (a escolha do dono manda)
+ * E-mail canônico, usado no relatório E na busca manual. O remetente do e-mail
+ * vem como "Maria Silva <maria@email.com>", "<maria@email.com>" ou só o endereço
+ * — comparar o campo inteiro com pedido.email nunca casava.
+ */
+export function emailCanonico(v) {
+  const s = String(v ?? '').trim().toLowerCase()
+  if (!s) return null
+  const entreAngulos = s.match(/<\s*([^<>\s]+@[^<>\s]+)\s*>/)
+  const alvo = entreAngulos ? entreAngulos[1] : s
+  const m = alvo.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/)
+  return m ? m[0] : null
+}
+
+/** Rastreio utilizável (a Shopify manda "—" quando não há). */
+const rastreioDe = p => {
+  const r = String(p?.rastreio ?? '').trim()
+  return r && r !== '—' && r.length >= 6 ? r.toLowerCase() : null
+}
+
+/** Primeira mensagem do cliente (ISO) — base do desempate por data. */
+function primeiraMensagemEm(t) {
+  const doCliente = (t?.historico ?? []).filter(m => m?.autor === 'cliente' && m?.data)
+  const datas = [...doCliente.map(m => m.data), t?.data].filter(Boolean).map(d => new Date(d).getTime()).filter(n => Number.isFinite(n))
+  return datas.length ? Math.min(...datas) : null
+}
+
+/** O pedido menciona algum produto/variante citado no caso? */
+function produtoBate(pedido, textoDoCaso, citados = []) {
+  const alvo = norm(textoDoCaso)
+  return (pedido?.itens ?? []).some(it => {
+    const titulo = norm(it?.titulo)
+    if (!titulo || titulo.length < 4) return false
+    const variante = norm(it?.variante)
+    const casaTexto = alvo.includes(titulo)
+    const casaCitado = citados.some(c => norm(c).includes(titulo))
+    if (!casaTexto && !casaCitado) return false
+    // variante escrita (tamanho/cor) deixa o sinal mais forte, mas não é exigida
+    return true || variante
+  })
+}
+
+/** Rótulo de como o pedido foi encontrado — aparece no detalhe do caso. */
+export const ROTULO_ORIGEM_PEDIDO = {
+  manual: 'vínculo manual',
+  detalhes: 'pedido já gravado no relatório',
+  auto: 'conclusão automática do motor novo',
+  linha: 'número escrito na linha do relatório',
+  texto: 'número escrito no texto do relatório',
+  conversa: 'número citado na conversa',
+  rastreio: 'código de rastreio citado',
+  email: 'e-mail do cliente (único pedido na loja)',
+  email_numero: 'e-mail do cliente + número citado',
+  email_rastreio: 'e-mail do cliente + código de rastreio',
+  email_produto: 'e-mail do cliente + produto citado',
+  email_data: 'e-mail do cliente + data da primeira mensagem',
+  nome: 'nome do cliente (único pedido na loja)',
+}
+
+/**
+ * Pedidos do caso: zero, um ou vários, SEMPRE da mesma loja. Ordem:
+ *   1. vínculo manual gravado em relatorioDetalhes (nunca é sobrescrito)
  *   2. relatorioAuto.pedido (a conclusão automática já gravou qual era)
- *   3. números escritos na linha final editada pelo dono (relatorioLinha)
- *   4. números escritos no texto do relatório (relatorioTexto)
- *   5. números citados na conversa, quando batem com um único pedido
- *   6. e-mail do cliente, só quando nada acima achou número
- * Devolve { itens: [{ numero, pedido }], pedidos, numeros, origem }. Um número
- * escrito pelo dono é preservado mesmo sem o pedido sincronizado.
- * NUNCA associa pedido de outra loja.
+ *   3. id/número já gravado no relatório (sem vínculo manual)
+ *   4. número escrito na linha final do dono
+ *   5. número escrito no texto do relatório
+ *   6. número citado no assunto, corpo ou histórico
+ *   7. código de rastreio exato citado
+ *   8. e-mail canônico do cliente
+ *   9. nome exato do cliente, só como sinal auxiliar
+ * Com vários pedidos do mesmo e-mail, desempata por número citado, rastreio,
+ * produto citado e, por fim, pedido criado ANTES da primeira mensagem e mais
+ * próximo dela. Sobrando empate, nada é escolhido: o caso fica sem pedido e os
+ * candidatos vão para o modal de vínculo. Nunca associa pedido de outra loja.
  */
 export function acharPedidos(t, pedidos = []) {
   const lojaId = t.lojaId ?? 'loja1'
   const daLoja = pedidos.filter(p => (p.lojaId ?? 'loja1') === lojaId)
   const det = t.relatorioDetalhes?.versao === 1 ? t.relatorioDetalhes : null
-  const resultado = (itens, origem) => ({
-    itens, origem,
+  const conversa = [t.assunto, t.corpo, t.resposta, t.resumoSituacao, ...(t.historico ?? []).map(m => m?.corpo)].filter(Boolean).join('\n')
+  const resultado = (itens, origem, candidatos = []) => ({
+    itens, origem, candidatos,
     pedidos: itens.map(i => i.pedido).filter(Boolean),
     numeros: itens.map(i => i.numero).filter(Boolean),
   })
-  const vazio = resultado([], null)
+  const um = (p, origem) => resultado([{ numero: soDigitos(p.numero), pedido: p }], origem)
+  const vazio = (candidatos = []) => resultado([], null, candidatos)
   // um número só vira pedido quando existe UM pedido com ele nesta loja
   const porNumero = n => {
     const achados = daLoja.filter(p => soDigitos(p.numero) === n)
@@ -168,11 +233,9 @@ export function acharPedidos(t, pedidos = []) {
     }
     return itens.length ? resultado(itens, origem) : null
   }
-
-  // 1) o que ficou gravado nos detalhes: ids primeiro, depois os números
-  if (det) {
-    const ids = (Array.isArray(det.pedidoIds) ? det.pedidoIds : (det.pedidoId ? [det.pedidoId] : [])).filter(Boolean)
-    const nums = (Array.isArray(det.pedidoNumeros) ? det.pedidoNumeros : (det.pedidoNumero ? [det.pedidoNumero] : [])).map(soDigitos).filter(Boolean)
+  const dosDetalhes = origem => {
+    const ids = (Array.isArray(det?.pedidoIds) ? det.pedidoIds : (det?.pedidoId ? [det.pedidoId] : [])).filter(Boolean)
+    const nums = (Array.isArray(det?.pedidoNumeros) ? det.pedidoNumeros : (det?.pedidoNumero ? [det.pedidoNumero] : [])).map(soDigitos).filter(Boolean)
     const itens = []
     for (const id of ids) {
       const p = daLoja.find(x => String(x.id) === String(id))
@@ -182,35 +245,74 @@ export function acharPedidos(t, pedidos = []) {
       if (itens.some(i => i.numero === n)) continue
       itens.push({ numero: n, pedido: porNumero(n) })
     }
-    if (itens.length) return resultado(itens, 'detalhes')
+    return itens.length ? resultado(itens, origem) : null
+  }
+
+  // 1) vínculo escolhido à mão: manda sempre, e a sincronização nunca o desfaz
+  if (det?.vinculoManual) {
+    const manual = dosDetalhes('manual')
+    if (manual) return manual
   }
   // 2) conclusão automática
   const doAuto = deNumeros([t.relatorioAuto?.pedido].filter(Boolean), 'auto')
   if (doAuto) return doAuto
-  // 3) linha final editada à mão — tem prioridade sobre o texto antigo
+  // 3) id/número já gravado no relatório (caso já estruturado continua igual)
+  const gravado = dosDetalhes('detalhes')
+  if (gravado?.pedidos.length) return gravado
+  // 4) linha final editada à mão — tem prioridade sobre o texto antigo
   const daLinha = deNumeros(numerosDePedidoNoTexto(t.relatorioLinha), 'linha')
   if (daLinha) return daLinha
-  // 4) texto escolhido no popup
+  // 5) texto escolhido no popup
   const doTexto = deNumeros(numerosDePedidoNoTexto(t.relatorioTexto), 'texto')
   if (doTexto) return doTexto
-  // 5) números citados na conversa (só quando um único pedido bate)
-  const conversa = [t.assunto, t.corpo, t.resposta, ...(t.historico ?? []).map(m => m.corpo)].join('\n')
-  const citados = numerosCitados(conversa)
-  if (citados.size) {
-    const achados = daLoja.filter(p => citados.has(soDigitos(p.numero)))
-    if (achados.length === 1) return resultado([{ numero: soDigitos(achados[0].numero), pedido: achados[0] }], 'conversa')
-    if (achados.length > 1) return vazio // ambíguo: melhor não associar
+  // 6) números citados na conversa (só quando um único pedido bate)
+  const citadosNaConversa = numerosCitados(conversa)
+  if (citadosNaConversa.size) {
+    const achados = daLoja.filter(p => citadosNaConversa.has(soDigitos(p.numero)))
+    if (achados.length === 1) return um(achados[0], 'conversa')
+    if (achados.length > 1) return vazio(achados) // ambíguo: o dono decide
   }
-  // 6) mesmo e-mail na mesma loja
-  const email = norm(t.de).trim()
-  if (email) {
-    const porEmail = daLoja.filter(p => norm(p.email).trim() === email)
-    // só quando não há dúvida: UM pedido com aquele e-mail nesta loja. Com dois ou
-    // mais, o caso fica "Sem pedido informado" e o dono vincula à mão — associar o
-    // mais recente erraria o relatório antigo.
-    if (porEmail.length === 1) return resultado([{ numero: soDigitos(porEmail[0].numero), pedido: porEmail[0] }], 'email')
+  // 7) código de rastreio exato citado no caso
+  const textoBusca = norm(conversa).replace(/\s+/g, ' ')
+  const porRastreio = daLoja.filter(p => { const r = rastreioDe(p); return r && textoBusca.includes(norm(r)) })
+  if (porRastreio.length === 1) return um(porRastreio[0], 'rastreio')
+  // 8) e-mail canônico do cliente
+  const email = emailCanonico(t.de)
+  const porEmail = email ? daLoja.filter(p => emailCanonico(p.email) === email) : []
+  if (porEmail.length === 1) return um(porEmail[0], 'email')
+  if (porEmail.length > 1) {
+    // a) número citado em qualquer lugar do caso
+    const numeros = new Set([...citadosNaConversa, ...numerosDePedidoNoTexto(t.relatorioLinha), ...numerosDePedidoNoTexto(t.relatorioTexto)].map(soDigitos))
+    let cand = porEmail.filter(p => numeros.has(soDigitos(p.numero)))
+    if (cand.length === 1) return um(cand[0], 'email_numero')
+    // b) código de rastreio citado
+    cand = porEmail.filter(p => { const r = rastreioDe(p); return r && textoBusca.includes(norm(r)) })
+    if (cand.length === 1) return um(cand[0], 'email_rastreio')
+    // c) produto, SKU ou variante citados
+    const citadosProduto = (t.relatorioAuto?.produtos?.length ? t.relatorioAuto.produtos : t.atendimentoNovo?.produtosAfetados) ?? []
+    cand = porEmail.filter(p => produtoBate(p, conversa, citadosProduto))
+    if (cand.length === 1) return um(cand[0], 'email_produto')
+    // d) pedido criado ANTES da primeira mensagem e mais próximo dela
+    const marco = primeiraMensagemEm(t)
+    if (marco != null) {
+      const antes = porEmail
+        .map(p => ({ p, quando: new Date(`${String(p.criadoEm ?? '').slice(0, 10)}T12:00:00`).getTime() }))
+        .filter(x => Number.isFinite(x.quando) && x.quando <= marco)
+        .sort((a, b) => (marco - a.quando) - (marco - b.quando))
+      if (antes.length === 1) return um(antes[0].p, 'email_data')
+      if (antes.length > 1 && antes[0].quando !== antes[1].quando) return um(antes[0].p, 'email_data')
+    }
+    return vazio(porEmail) // empate de verdade: o dono escolhe no modal
   }
-  return vazio
+  // 9) nome exato do cliente, só como sinal auxiliar
+  const nome = norm(t.nome).trim()
+  if (nome.length > 4) {
+    const porNome = daLoja.filter(p => norm(p.cliente).trim() === nome)
+    if (porNome.length === 1) return um(porNome[0], 'nome')
+    if (porNome.length > 1) return vazio(porNome)
+  }
+  // nada provado: se havia número gravado sem pedido, ele continua aparecendo
+  return gravado ?? vazio()
 }
 
 /** Compatibilidade: o pedido único do caso (null quando são vários ou nenhum). */
@@ -223,7 +325,8 @@ export function acharPedido(t, pedidos = []) {
 export function clienteDoCaso(t, pedido) {
   return {
     nome: texto(pedido?.cliente) ?? texto(t.nome) ?? null,
-    email: texto(pedido?.email) ?? texto(t.de) ?? null,
+    // sempre o endereço limpo: "Maria <maria@x.com>" vira "maria@x.com"
+    email: texto(pedido?.email) ?? emailCanonico(t.de) ?? texto(t.de) ?? null,
   }
 }
 
@@ -367,7 +470,8 @@ export function normalizarCaso(t, { pedidos = [], lojas = [], produtos = [], fas
   const valorPedido = localizados.length > 1 ? null : (numero(pedido?.valor) ?? numero(det?.valorPedido) ?? null)
 
   // VALOR: só quando há prova. Automático usa o valor exato gravado; manual usa o
-  // salvo; textual só calcula com pedido localizado E percentual explícito. Cupom nunca.
+  // salvo; textual calcula com UM pedido localizado E percentual explícito, sempre
+  // sobre o total realmente pago (pedido.valor = total_price). Cupom nunca.
   let valor = null
   if (tipo !== 'cupom') {
     if (auto && numero(auto.valor) != null) valor = arredondar(auto.valor)
@@ -391,6 +495,12 @@ export function normalizarCaso(t, { pedidos = [], lojas = [], produtos = [], fas
     pedidoTitulo: tituloDoPedido(encontro.itens),
     rotuloPedido: rotuloDoPedido(encontro.itens),
     origemPedido: encontro.origem,
+    rotuloOrigemPedido: encontro.origem ? (ROTULO_ORIGEM_PEDIDO[encontro.origem] ?? encontro.origem) : null,
+    // quando nada foi provado: os pedidos que o dono pode escolher no modal
+    candidatos: (encontro.candidatos ?? []).map(p => ({
+      id: p.id, numero: soDigitos(p.numero), valor: numero(p.valor), moeda,
+      cliente: texto(p.cliente), email: emailCanonico(p.email), criadoEm: texto(p.criadoEm),
+    })),
     clienteNome: cliente.nome, clienteEmail: cliente.email,
     tipo, acoes: acoesDoCaso({ tipo, percentual: percentualFinal, tipoAuto }),
     descricao,
@@ -448,19 +558,27 @@ export function filtrarCasos(casos, f) {
 /** Indicadores dos casos VISÍVEIS. Moedas nunca se somam: uma linha por moeda. */
 export function indicadoresDoRelatorio(casos) {
   const porMoeda = new Map()
+  const previsto = new Map()
+  const feito = new Map()
   for (const c of casos) {
     if (c.tipo === 'cupom' || c.valor == null) continue
     if (!c.acoes.includes('reembolso') && c.tipo !== 'cancelamento') continue
     const m = c.moeda ?? '—'
     porMoeda.set(m, arredondar((porMoeda.get(m) ?? 0) + c.valor))
+    // pendente é PREVISÃO: uma oferta aceita ainda não é dinheiro devolvido
+    const alvo = c.processado ? feito : previsto
+    alvo.set(m, arredondar((alvo.get(m) ?? 0) + c.valor))
   }
+  const emLista = mapa => [...mapa.entries()].map(([moeda, valor]) => ({ moeda, valor })).sort((a, b) => a.moeda.localeCompare(b.moeda))
   return {
     total: casos.length,
     pendentes: casos.filter(c => !c.processado).length,
     processados: casos.filter(c => c.processado).length,
     reembolsos: casos.filter(c => c.acoes.includes('reembolso')).length,
     trocasReenvios: casos.filter(c => c.acoes.includes('troca') || c.acoes.includes('reenvio')).length,
-    valorPorMoeda: [...porMoeda.entries()].map(([moeda, valor]) => ({ moeda, valor })).sort((a, b) => a.moeda.localeCompare(b.moeda)),
+    valorPorMoeda: emLista(porMoeda),
+    previstoPorMoeda: emLista(previsto),
+    reembolsadoPorMoeda: emLista(feito),
     semValor: casos.filter(c => c.acoes.includes('reembolso') && c.valor == null).length,
   }
 }

@@ -35,6 +35,8 @@ estado.pedidos = [
   { id: 'p1', numero: '#1001', cliente: 'Ana Souza', email: 'ana@web.de', pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-09-01', lojaId: 'loja1', itens: [{ titulo: 'Polo Premium', variante: 'Preto / L', quantidade: 1, preco: 100, produtoId: 'prodA', varianteId: 'varA' }] },
   { id: 'p2', numero: '#2001', cliente: 'Carla UK', email: 'carla@uk.co', pais: 'UK', valor: 40, status: 'entregue', criadoEm: '2026-09-02', lojaId: 'loja2', itens: [{ titulo: 'Shirt', variante: null, quantidade: 1, preco: 40 }] },
   { id: 'p3', numero: '#1002', cliente: 'Ana Souza', email: 'ana@web.de', pais: 'Germany', valor: 50, status: 'entregue', criadoEm: '2026-09-03', lojaId: 'loja1', itens: [{ titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] },
+  { id: 'p4', numero: '#1003', cliente: 'Gemeos Teste', email: 'gemeos@web.de', pais: 'Germany', valor: 70, status: 'entregue', criadoEm: '2026-09-04', lojaId: 'loja1', itens: [{ titulo: 'Polo Premium', variante: 'Preto / M', quantidade: 1, preco: 70, produtoId: 'prodA' }] },
+  { id: 'p5', numero: '#1004', cliente: 'Gemeos Teste', email: 'gemeos@web.de', pais: 'Germany', valor: 70, status: 'entregue', criadoEm: '2026-09-04', lojaId: 'loja1', itens: [{ titulo: 'Polo Premium', variante: 'Preto / L', quantidade: 1, preco: 70, produtoId: 'prodA' }] },
 ]
 const base_ticket = (id, extra) => ({
   id, nome: 'Cliente', de: 'ana@web.de', assunto: 'Bestellung #1001', corpo: 'Hallo', data: '2026-09-10T10:00:00.000Z',
@@ -54,6 +56,8 @@ estado.tickets = [
   base_ticket('t-vincular', { de: 'ninguem@web.de', assunto: 'Umtausch', corpo: 'Sem numero aqui.', relatorioDia: '2026-09-09', relatorioTexto: 'PEDIDO 7777 - TROCAR AS 2XL POR 4XL' }),
   // ana@web.de tem DOIS pedidos na loja1 (p1 e p3): nada pode ser escolhido sozinho
   base_ticket('t-ambiguo', { assunto: 'Frage', corpo: 'Sem numero.', relatorioDia: '2026-09-09', relatorioTexto: 'CANCELAMENTO' }),
+  // dois pedidos do mesmo e-mail criados NO MESMO DIA: empate que ninguém desfaz
+  base_ticket('t-empate', { nome: 'Gemeos Teste', de: 'Gemeos Teste <GEMEOS@web.de>', assunto: 'Frage', corpo: 'Sem numero.', relatorioDia: '2026-09-09', relatorioTexto: 'REEMBOLSO' }),
 ]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
@@ -193,7 +197,7 @@ test('caso antigo com número citado sem dados: o popup mostra o aviso e a lista
   assert.equal(r.rotuloPedido, 'Pedido #7777 citado — dados não encontrados na Shopify')
   assert.equal(r.pedido, null)
   // só pedidos DESTA loja podem ser escolhidos
-  assert.deepEqual(r.pedidosDaLoja.map(p => p.numero).sort(), ['1001', '1002'])
+  assert.deepEqual(r.pedidosDaLoja.map(p => p.numero).sort(), ['1001', '1002', '1003', '1004'])
 })
 
 test('vincular pedido à mão: o servidor refaz cliente, produtos, imagem, valor do pedido e moeda', async () => {
@@ -261,20 +265,45 @@ test('remover o vínculo volta para a associação automática, sem inventar ped
   assert.equal(precisaVinculo(caso), true, 'o botão "Vincular pedido" volta a aparecer')
 })
 
-test('caso SEM número nenhum também oferece vínculo manual, e o e-mail ambíguo não escolhe sozinho', async () => {
+test('e-mail com vários pedidos: desempata pela data da primeira mensagem; empate de verdade fica para o dono', async () => {
   const { normalizarCaso, precisaVinculo, buscaInicialVinculo } = await import('../shared/relatorio.js')
-  const t = await ticket('t-ambiguo')
-  const caso = normalizarCaso(t, { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos })
-  // ana@web.de tem DOIS pedidos na loja1: nada é associado automaticamente
-  assert.deepEqual(caso.pedidoNumeros, [])
-  assert.equal(caso.rotuloPedido, 'Sem pedido informado')
-  assert.equal(precisaVinculo(caso), true)
-  assert.equal(buscaInicialVinculo(caso), 'ana@web.de', 'o modal já abre procurando pelo e-mail')
+  const opcoes = { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos }
+  // ana@web.de tem dois pedidos (01/09 e 03/09) e escreveu em 10/09: vale o mais
+  // próximo ANTES da mensagem
+  const comData = normalizarCaso(await ticket('t-ambiguo'), opcoes)
+  assert.equal(comData.pedidoNumero, '1002')
+  assert.equal(comData.origemPedido, 'email_data')
+  assert.equal(comData.rotuloOrigemPedido, 'e-mail do cliente + data da primeira mensagem')
+  assert.equal(comData.valorPedido, 50)
+  // dois pedidos no MESMO dia: nada é escolhido, e os candidatos vão para o modal
+  const empate = normalizarCaso(await ticket('t-empate'), opcoes)
+  assert.equal(empate.pedidoLocalizado, false)
+  assert.equal(empate.rotuloPedido, 'Sem pedido informado')
+  assert.equal(empate.candidatos.length, 2, 'os dois candidatos aparecem no modal')
+  assert.deepEqual(empate.candidatos.map(c => c.numero).sort(), ['1003', '1004'])
+  assert.equal(precisaVinculo(empate), true)
+  assert.equal(buscaInicialVinculo(empate), 'gemeos@web.de')
   // e o vínculo manual resolve
+  assert.equal((await api('/api/tickets/t-empate/relatorio/vincular', { pedidoIds: ['p4'] })).status, 200)
+  const d = (await ticket('t-empate')).relatorioDetalhes
+  assert.deepEqual(d.pedidoNumeros, ['1003'])
+  assert.equal(d.vinculoManual, true, 'fica marcado como escolha do dono')
+  assert.equal(d.valorPedido, 70)
+})
+
+test('vínculo manual NUNCA é sobrescrito pela associação automática', async () => {
+  const { normalizarCaso } = await import('../shared/relatorio.js')
+  // t-ambiguo seria associado sozinho ao #1002; o dono manda no #1001
   assert.equal((await api('/api/tickets/t-ambiguo/relatorio/vincular', { pedidoIds: ['p1'] })).status, 200)
-  const d = (await ticket('t-ambiguo')).relatorioDetalhes
-  assert.deepEqual(d.pedidoNumeros, ['1001'])
-  assert.equal(d.valorPedido, 100)
+  const t = await ticket('t-ambiguo')
+  assert.equal(t.relatorioDetalhes.vinculoManual, true)
+  const caso = normalizarCaso(t, { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos })
+  assert.equal(caso.pedidoNumero, '1001', 'a escolha do dono vence o desempate automático')
+  assert.equal(caso.origemPedido, 'manual')
+  assert.equal(caso.rotuloOrigemPedido, 'vínculo manual')
+  // recalcular o relatório de novo (como faz o "Atualizar") não desfaz nada
+  const depois = normalizarCaso(await ticket('t-ambiguo'), { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos })
+  assert.equal(depois.pedidoNumero, '1001')
 })
 
 test('o link externo do relatório continua só de leitura: nada de vincular por lá', async () => {
@@ -288,4 +317,20 @@ test('o link externo do relatório continua só de leitura: nada de vincular por
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pedidoIds: ['p3'] }),
   })
   assert.equal(semSessao.status, 401)
+})
+test('"Atualizar" do relatório sincroniza os pedidos, recalcula e preserva o vínculo manual', async () => {
+  const antes = await ticket('t-empate')
+  assert.equal(antes.relatorioDetalhes.vinculoManual, true)
+  const r = await api('/api/relatorio/atualizar')
+  assert.equal(r.status, 200)
+  assert.ok(r.casos >= 1, 'conta os casos do relatório')
+  assert.ok(r.comPedido >= 1, 'e quantos ficaram com pedido')
+  assert.ok(r.comPedido <= r.casos)
+  // sem conexão Shopify no teste, nada é apagado e o vínculo do dono continua
+  const depois = await ticket('t-empate')
+  assert.deepEqual(depois.relatorioDetalhes.pedidoNumeros, ['1003'])
+  assert.equal(depois.relatorioDetalhes.vinculoManual, true)
+  // e não mexe no atendimento
+  assert.equal(depois.status, antes.status, 'o atendimento nao muda')
+  assert.equal(depois.atendimentoNovo, undefined)
 })

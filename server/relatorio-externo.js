@@ -38,7 +38,14 @@ function cartaoCaso(c) {
       ? `citado${semDados.length > 1 ? 's' : ''} — dados não encontrados na Shopify`
       : `${semDados.map(n => '#' + n).join(', ')} — dados não encontrados na Shopify`
   const valorTexto = c.valor != null ? dinheiro(c.valor, c.moeda) : (c.acoes.includes('reembolso') ? 'Valor não registrado' : '—')
-  const acoes = c.acoes.map(etiquetaTipo).join('')
+  // troca/reenvio COM reembolso parcial viram uma etiqueta só, como o dono lê
+  const envio = c.acoes.find(a => a === 'troca' || a === 'reenvio')
+  const acoes = (envio && c.acoes.includes('reembolso'))
+    ? `<span class="tag tipo-${escapar(envio)}">${envio === 'troca' ? 'Troca' : 'Reenvio'} + reembolso</span>`
+    : c.acoes.map(etiquetaTipo).join('')
+  // de onde saiu o pedido — e, quando não saiu, quantos candidatos existem
+  const diagnostico = c.rotuloOrigemPedido
+    ?? (c.candidatos?.length ? `${c.candidatos.length} pedido(s) candidato(s) — escolha no Atendo` : 'nenhum pedido encontrado')
   return `<article class="caso${c.processado ? ' processado' : ''}" data-caso="${escapar(c.ticketId)}">
     <span class="marca">
       <input type="checkbox" data-id="${escapar(c.ticketId)}"${c.processado ? ' checked' : ''} aria-label="Marcar como processado" title="Marcar como processado">
@@ -79,6 +86,7 @@ function cartaoCaso(c) {
         <div><dt>Percentual</dt><dd>${c.percentual != null ? c.percentual + '%' : '—'}</dd></div>
         <div><dt>Valor reembolsado</dt><dd>${escapar(valorTexto)}</dd></div>
         ${c.cupom ? `<div><dt>Cupom</dt><dd>${escapar(c.cupom)}</dd></div>` : ''}
+        <div><dt>Associação</dt><dd>${escapar(diagnostico)}</dd></div>
         <div><dt>Origem</dt><dd>${c.origem === 'motor_novo_automatico' ? 'conclusão automática do motor novo' : 'manual'}${c.faseTitulo ? ` · ${escapar(c.faseTitulo)}` : ''}</dd></div>
         <div><dt>Incluído em</dt><dd>${c.incluidoEm ? escapar(quando(c.incluidoEm)) : '—'}</dd></div>
         <div><dt>Confirmação</dt><dd>${c.confirmadoEm ? escapar(quando(c.confirmadoEm)) : '—'}</dd></div>
@@ -90,14 +98,14 @@ function cartaoCaso(c) {
 }
 
 function blocoDia({ dia, indicadores, lojas }) {
-  const valores = indicadores.valorPorMoeda.length
-    ? indicadores.valorPorMoeda.map(v => escapar(dinheiro(v.valor, v.moeda))).join(' · ')
-    : '—'
+  const lista = l => (l?.length ? l.map(v => escapar(dinheiro(v.valor, v.moeda))).join(' · ') : '—')
+  const valores = lista(indicadores.reembolsadoPorMoeda)
+  const previstos = lista(indicadores.previstoPorMoeda)
   return `<section class="dia" data-dia="${escapar(dia)}">
     <header class="dia-cab">
       <div>
         <h2>Relatório ${dataBr(dia)}</h2>
-        <p class="mini">${indicadores.total} caso(s) · ${indicadores.pendentes} pendente(s) · ${indicadores.processados} processado(s) · reembolsado: ${valores}</p>
+        <p class="mini">${indicadores.total} caso(s) · ${indicadores.pendentes} pendente(s) · ${indicadores.processados} processado(s) · previsto: ${previstos} · reembolsado: ${valores}</p>
       </div>
       <button type="button" class="button copiar-dia" data-dia="${escapar(dia)}">Copiar este dia</button>
     </header>
@@ -110,9 +118,12 @@ export function paginaRelatorio(dados) {
   const { filtros, lojas, indicadores, dias, totalDias, totalCasos } = dados
   const opcao = (v, rotulo, atual) => `<option value="${escapar(v)}"${v === atual ? ' selected' : ''}>${escapar(rotulo)}</option>`
   const diasDisponiveis = [...new Set(dias.map(d => d.dia))]
-  const valores = indicadores.valorPorMoeda.length
-    ? indicadores.valorPorMoeda.map(v => `<span class="linha-moeda">${escapar(dinheiro(v.valor, v.moeda))}</span>`).join('')
-    : '<span class="linha-moeda vazio">—</span>'
+  const emMoedas = lista => (lista?.length
+    ? lista.map(v => `<span class="linha-moeda">${escapar(dinheiro(v.valor, v.moeda))}</span>`).join('')
+    : '<span class="linha-moeda vazio">—</span>')
+  // dinheiro JÁ devolvido só conta caso processado; o resto é previsão
+  const valores = emMoedas(indicadores.reembolsadoPorMoeda)
+  const previstos = emMoedas(indicadores.previstoPorMoeda)
 
   return `<!doctype html>
 <html lang="pt-BR">
@@ -152,7 +163,7 @@ export function paginaRelatorio(dados) {
   .top-actions{display:flex;gap:9px;align-items:center;flex:0 0 auto}
   .button{border:1px solid var(--border);background:var(--panel);border-radius:11px;padding:9px 13px;color:var(--text);font-size:.84rem;font-weight:600;white-space:nowrap}
   .button:hover{background:var(--hover)}
-  .kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:16px}
+  .kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;margin-bottom:16px}
   .kpi{min-width:0;padding:15px;border:1px solid var(--border);border-radius:15px;background:var(--panel);box-shadow:var(--shadow)}
   .kpi>span{display:block;color:var(--text-2);font-size:.68rem;text-transform:uppercase;letter-spacing:.07em;font-weight:800}
   .kpi strong{display:block;margin-top:9px;font-size:1.45rem;line-height:1;letter-spacing:-.045em;font-variant-numeric:tabular-nums}
@@ -245,7 +256,8 @@ export function paginaRelatorio(dados) {
       <article class="kpi"><span>Processados</span><strong style="color:var(--green)">${indicadores.processados}</strong><small>já executados</small></article>
       <article class="kpi"><span>Reembolsos</span><strong>${indicadores.reembolsos}</strong><small>${indicadores.semValor} sem valor registrado</small></article>
       <article class="kpi"><span>Trocas e reenvios</span><strong>${indicadores.trocasReenvios}</strong><small>envio de produto</small></article>
-      <article class="kpi"><span>Valor reembolsado</span><strong>${valores}</strong><small>por moeda, nunca somadas</small></article>
+      <article class="kpi"><span>Valor previsto</span><strong>${previstos}</strong><small>pendentes, ainda não devolvidos</small></article>
+      <article class="kpi"><span>Valor reembolsado</span><strong>${valores}</strong><small>só processados, por moeda</small></article>
     </section>
     <section class="toolbar" id="filtros" aria-label="Filtros do relatório">
       <div class="search-wrap"><input class="control" id="f-busca" type="search" placeholder="Buscar pedido, cliente, e-mail ou produto…" value="${escapar(filtros.busca)}" aria-label="Buscar"></div>
