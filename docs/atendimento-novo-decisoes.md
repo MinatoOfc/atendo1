@@ -659,6 +659,25 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     `ATENDO_TESTE_ENVIOS`) só funcionam com `ATENDO_SIMULAR=1` e o canal
     simulado, nunca pela presença acidental de uma variável em produção.
 
+    f) **A invariável é aplicada na hora, em toda alteração de configuração**:
+    `conferirPreRequisitosAutomaticos(req, motivo, lojaId)` é a conferência única
+    e SÍNCRONA, chamada depois de cada mudança capaz de invalidar
+    `podeConclusaoAutomatica` e sempre ANTES de salvar e de a rota responder —
+    então a própria resposta HTTP já mostra `exigirAprovacaoAceiteNovo: true`, a
+    conclusão pendente com `modo: manual`, `modoOriginal: automatico`,
+    `relatorioAutomaticoProibido: true`, o agendamento removido e a auditoria com
+    o motivo exato. Pontos cobertos: `/api/lojas` (envio automático, prazo de
+    entrega, cupons e a própria aprovação, numa conferência única no fim da
+    rota), `/api/lojas/:id/modo` (principalmente ao voltar para clássico),
+    `DELETE /api/lojas/:id/email` (remove a conta → limpa `cacheContas` →
+    confere/neutraliza sincronamente → salva → responde, sem `setTimeout`) e
+    `/api/config` (automação geral). Conclusões já `concluida` não são tocadas e
+    uma conclusão em `enviando` continua sob a reconciliação por Message-ID.
+    Recolocar cupom, prazo, e-mail ou o modo novo NÃO religa a conclusão
+    automática: o dono precisa desligar a aprovação de novo, com confirmação. As
+    conversas seguem no motor em que nasceram. A conferência do agendador
+    imediatamente antes do envio continua como defesa adicional.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

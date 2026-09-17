@@ -545,8 +545,17 @@ async function reconciliarEnviosInterrompidos(wsId) {
   if (mudou) await gravarAgora(wsId)
 }
 
-/** Igual a neutralizarConclusaoAutomatica, mas no próximo tique — para rotas que só mudam o pré-requisito no fim do handler. */
-const neutralizarConclusaoAutomaticaDepois = (wsId, motivo, opcoes) => setTimeout(() => { try { neutralizarConclusaoAutomatica(wsId, motivo, opcoes) } catch (e) { console.error('[segurança]', e.message) } }, 0)
+/**
+ * Conferência ÚNICA dos pré-requisitos automáticos, chamada de forma SÍNCRONA depois de
+ * QUALQUER alteração capaz de invalidar podeConclusaoAutomatica (envio automático, prazo,
+ * cupons, modo da loja, conta de e-mail, automação geral) — sempre antes de salvar e antes
+ * de a rota responder, para que a própria resposta já mostre o estado protegido.
+ * O agendador mantém a conferência final como defesa adicional.
+ */
+function conferirPreRequisitosAutomaticos(req, motivo, lojaId = null) {
+  const por = req?.usuario?.nome || req?.usuario?.email || 'lojista'
+  return neutralizarConclusaoAutomatica(req.wsId, motivo, { por, lojaId })
+}
 
 /** Pré-requisitos da conclusão automática numa loja (fora do momento de desligar a aprovação). */
 const podeConclusaoAutomatica = (estado, wsId, loja) =>
@@ -2425,14 +2434,14 @@ app.post('/api/lojas/:id/email', async (req, res) => {
 })
 
 app.delete('/api/lojas/:id/email', (req, res) => {
-  // sem caixa própria não existe conclusão automática: protege ANTES de remover a conta
-  neutralizarConclusaoAutomaticaDepois(req.wsId, 'Conclusão automática interrompida porque a conta de e-mail da loja foi removida.', { por: req.usuario?.nome || req.usuario?.email || 'lojista', lojaId: req.params.id })
   const loja = req.estado.lojas.find(l => l.id === req.params.id)
   if (loja) {
+    // 1) remove a conta  2) limpa o cache  3) confere/neutraliza SINCRONAMENTE  4) salva  5) responde
     delete loja.emailCfg
     // vale também para contas vindas das variáveis de ambiente do Railway
     loja.emailEnvIgnorado = true
     cacheContas.delete(req.wsId)
+    conferirPreRequisitosAutomaticos(req, 'Conclusão automática interrompida porque a conta de e-mail da loja foi removida.', loja.id)
     salvar(req.wsId)
   }
   ok(req, res)
@@ -2634,6 +2643,9 @@ app.post('/api/lojas/:id/modo', (req, res) => {
     if (loja.exigirAprovacaoAceiteNovo === false) loja.aceiteHistorico = [...(loja.aceiteHistorico ?? []), { lojaId: loja.id, por: 'sistema (ativação do novo)', de: false, para: true, em }].slice(-100)
     loja.exigirAprovacaoAceiteNovo = true
   }
+  // voltar ao clássico invalida os pré-requisitos automáticos: protege AGORA (antes de salvar e de responder).
+  // As conversas existentes continuam no motor em que nasceram — aqui só a conclusão pendente vira manual.
+  conferirPreRequisitosAutomaticos(req, 'Conclusão automática interrompida porque a loja voltou ao atendimento clássico.', loja.id)
   salvar(req.wsId); ok(req, res)
 })
 
@@ -2646,6 +2658,8 @@ app.post('/api/tickets/:id/migrar-motor', (req, res) => {
 
 app.post('/api/lojas', (req, res) => {
   const { id, nome, ativa, idioma, assinatura, iaModelo, modoAtendimento, novoEnvioAutomatico, prazoEntrega, cupons, exigirAprovacaoAceiteNovo } = req.body ?? {}
+  // motivo da proteção, quando esta alteração invalidar os pré-requisitos automáticos
+  let motivoProtecao = null
   const loja = req.estado.lojas.find(l => l.id === id)
   if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
   if (typeof nome === 'string' && nome.trim()) loja.nome = nome.trim()
@@ -2662,8 +2676,7 @@ app.post('/api/lojas', (req, res) => {
       if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'Ligar o envio automático precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
     }
     loja.novoEnvioAutomatico = novoEnvioAutomatico
-    // ação de segurança: sem envio automático não existe conclusão automática
-    if (!novoEnvioAutomatico) neutralizarConclusaoAutomatica(req.wsId, 'Conclusão automática interrompida porque o envio automático da loja foi desligado.', { por: req.usuario?.nome || req.usuario?.email || 'lojista', lojaId: loja.id })
+    if (!novoEnvioAutomatico) motivoProtecao = 'Conclusão automática interrompida porque o envio automático da loja foi desligado.'
   }
   // "Exigir minha aprovação após o aceite": padrão true; desligar exige piloto liberado, automação global e da loja,
   // caixa própria, prazo e cupons, e confirmação explícita. Nunca toca aceites já pendentes (o modo é fotografado no aceite).
@@ -2687,14 +2700,21 @@ app.post('/api/lojas', (req, res) => {
     const n = (v, padrao) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 && x <= 90 ? x : padrao }
     loja.prazoEntrega = { min: n(prazoEntrega.min, 5), max: n(prazoEntrega.max, 12), processamento: n(prazoEntrega.processamento, 3) }
     if (loja.prazoEntrega.max < loja.prazoEntrega.min) loja.prazoEntrega.max = loja.prazoEntrega.min
+    motivoProtecao = motivoProtecao ?? 'Conclusão automática interrompida porque o prazo de entrega da loja deixou de atender aos requisitos.'
   }
   if (cupons && typeof cupons === 'object') {
+    motivoProtecao = motivoProtecao ?? 'Conclusão automática interrompida porque os cupons obrigatórios da loja deixaram de estar cadastrados.'
     loja.cupons = Object.fromEntries(PERCENTUAIS_CUPOM
       .map(p => [String(p), String(cupons[p] ?? cupons[String(p)] ?? '').trim().slice(0, 40)])
       .filter(([, v]) => v))
   }
   // assinatura própria da loja; vazia volta ao padrão do workspace
   if (typeof assinatura === 'string') loja.assinatura = assinatura.trim() || null
+  // conferência ÚNICA e síncrona: qualquer alteração acima que invalide os pré-requisitos
+  // automáticos protege AGORA — antes de salvar e antes de a resposta sair
+  if (motivoProtecao || loja.exigirAprovacaoAceiteNovo === false) {
+    conferirPreRequisitosAutomaticos(req, motivoProtecao ?? 'Conclusão automática interrompida porque a loja deixou de atender aos pré-requisitos automáticos.', loja.id)
+  }
   salvar(req.wsId); ok(req, res)
 })
 
@@ -3670,7 +3690,7 @@ app.post('/api/config', (req, res) => {
     if (k in req.body) req.estado.config[k] = req.body[k]
   }
   // desligar a automação global neutraliza a conclusão automática de TODAS as lojas deste workspace
-  if (req.estado.config.automacaoAtiva !== true) neutralizarConclusaoAutomatica(req.wsId, 'Conclusão automática interrompida porque a automação geral foi desligada.', { por: req.usuario?.nome || req.usuario?.email || 'lojista' })
+  if ('automacaoAtiva' in req.body) conferirPreRequisitosAutomaticos(req, 'Conclusão automática interrompida porque a automação geral foi desligada.')
   if (typeof req.body.nomeLoja === 'string' && req.body.nomeLoja.trim()) {
     req.estado.lojas[0].nome = req.body.nomeLoja.trim()
   }

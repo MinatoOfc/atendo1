@@ -43,7 +43,7 @@ estado.lojas = [
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3'), pedido(81, 'loja1'), pedido(82, 'loja6'), pedido(83, 'loja6'), pedido(84, 'loja6'), pedido(85, 'loja6'), pedido(91, 'loja6'), pedido(92, 'loja2'), pedido(93, 'loja1'), pedido(94, 'loja3'), pedido(95, 'loja1'), ...[101, 102].map(n => pedido(n, 'loja1')), ...[103, 104, 105, 111, 112, 113, 116, 117, 118, 119, 121, 123, 124, 125, 126, 127, 128, 129, 131, 132].map(n => pedido(n, 'loja3')), pedido(114, 'loja3', { status: 'transito', despachadoEm: '2026-08-01' }), pedido(115, 'loja3', { status: 'transito', despachadoEm: '2026-08-01' }), pedido(106, 'loja3'), ...[141, 142, 143, 144, 151, 152, 153, 161, 162, 163].map(n => pedido(n, 'loja3')), pedido(122, 'loja3', { status: 'aguardando', despachadoEm: null }), pedido(130, 'loja4')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3'), pedido(81, 'loja1'), pedido(82, 'loja6'), pedido(83, 'loja6'), pedido(84, 'loja6'), pedido(85, 'loja6'), pedido(91, 'loja6'), pedido(92, 'loja2'), pedido(93, 'loja1'), pedido(94, 'loja3'), pedido(95, 'loja1'), ...[101, 102].map(n => pedido(n, 'loja1')), ...[103, 104, 105, 111, 112, 113, 116, 117, 118, 119, 121, 123, 124, 125, 126, 127, 128, 129, 131, 132].map(n => pedido(n, 'loja3')), pedido(114, 'loja3', { status: 'transito', despachadoEm: '2026-08-01' }), pedido(115, 'loja3', { status: 'transito', despachadoEm: '2026-08-01' }), pedido(106, 'loja3'), ...[141, 142, 143, 144, 151, 152, 153, 161, 162, 163, 171, 172, 173, 174].map(n => pedido(n, 'loja3')), pedido(122, 'loja3', { status: 'aguardando', despachadoEm: null }), pedido(130, 'loja4')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -1555,7 +1555,7 @@ test('configuração incompatível: desligar o envio automático da loja ou a au
   } finally { delete process.env.ATENDO_SMTP_FAKE }
 })
 
-test('conclusão automática interrompida vira MANUAL de verdade: o dono aprova, a confirmação sai uma vez e relatorioAuto continua ausente; troca aguardando endereço não é quebrada; remover a conta de e-mail protege na hora', async () => {
+test('conclusão automática interrompida vira MANUAL de verdade: o dono aprova, a confirmação sai uma vez e relatorioAuto continua ausente; troca aguardando endereço não é quebrada', async () => {
   process.env.ATENDO_SMTP_FAKE = 'ok'
   try {
     const antes = () => iso(Date.now() - H5 - 20 * 60_000)
@@ -1616,22 +1616,99 @@ test('conclusão automática interrompida vira MANUAL de verdade: o dono aprova,
     r = await comEnvio('ok', () => aprovar(b)); assert.equal(r.status, 200, r.erro); b = await ticket(b.id)
     assert.equal(an(b).etapa, 'conf_troca'); assert.equal(b.relatorioAuto, undefined, 'sem relatório automático'); assert.equal(an(b).conclusaoPendente.status, 'concluida')
 
-    /* ---- C) remover a conta de e-mail da loja durante uma conclusão pendente: proteção imediata ---- */
-    // a proteção do passo B deixou a aprovação ligada: religa a conclusão automática para este cenário
-    r = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: false, confirmar: true }); assert.equal(r.status, 200, r.erro)
-    let c = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c163@web.de', nome: 'C163', corpo: 'Schlecht.', lojaId: 'loja3', agora: antes() })
-    c = await negociarAte(c, 'c163@web.de', 'reemb_40', { agora: antes })
-    c = await cliente({ intencao: 'aceita', resumo: 'ok 40' }, { de: 'c163@web.de', corpo: 'Ok, 40%.', ticketId: c.id, agora: iso(Date.now() - H5 + 2 * 60_000) })
-    assert.equal(an(c).conclusaoPendente.modo, 'automatico'); assert.ok(c.enviaEm)
-    const fasesAntes = an(c).historicoEtapas.filter(h => !h.evento).length // só transições reais; o evento de interrupção é auditoria
+  } finally { delete process.env.ATENDO_SMTP_FAKE }
+})
+
+test('proteção IMEDIATA em toda alteração de configuração: a própria resposta da rota já mostra a aprovação obrigatória e a conclusão convertida para manual (cupom, prazo, modo clássico e remoção do e-mail), e restaurar não religa sozinho', async () => {
+  process.env.ATENDO_SMTP_FAKE = 'ok'
+  try {
+    const antes = () => iso(Date.now() - H5 - 20 * 60_000)
+    const CUPONS = { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }
+    // prepara uma conclusão AUTOMÁTICA pendente na loja3 e devolve o ticket
+    const comAceiteAutomatico = async (de, nome) => {
+      let r = await api('/api/lojas', { id: 'loja3', novoEnvioAutomatico: true, confirmar: true }); assert.equal(r.status, 200, r.erro)
+      r = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: false, confirmar: true }); assert.equal(r.status, 200, r.erro)
+      // a conversa nasce AGORA (a reativação do novo grava uma data de ativação nova: e-mail anterior a ela nasceria clássico)
+      let x = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de, nome, corpo: 'Schlecht.', lojaId: 'loja3' })
+      assert.equal(x.motorAtendimento, 'novo', de)
+      x = await negociarAte(x, de, 'reemb_40')
+      x = await cliente({ intencao: 'aceita', resumo: 'ok 40' }, { de, corpo: 'Ok, 40%.', ticketId: x.id, agora: iso(Date.now() - H5 + 2 * 60_000) })
+      assert.equal(an(x).conclusaoPendente.modo, 'automatico', de); assert.ok(x.enviaEm, de)
+      return x
+    }
+    // a RESPOSTA da rota (sem esperar, sem polling) já tem de mostrar tudo protegido
+    const protegido = (resposta, ticketId, idAceite, reMotivo) => {
+      const loja = resposta.state.lojas.find(l => l.id === 'loja3')
+      assert.equal(loja.exigirAprovacaoAceiteNovo, true, 'resposta já mostra a aprovação obrigatória')
+      const aud = loja.aceiteHistorico.at(-1)
+      assert.equal(aud.de, false); assert.equal(aud.para, true); assert.match(aud.motivo, reMotivo, 'auditoria com o motivo exato')
+      const tk = resposta.state.tickets.find(x => x.id === ticketId)
+      const cp = tk.atendimentoNovo.conclusaoPendente
+      assert.equal(cp.id, idAceite, 'mesmo aceite'); assert.equal(cp.modo, 'manual', 'resposta já mostra a conclusão manual')
+      assert.equal(cp.modoOriginal, 'automatico'); assert.equal(cp.relatorioAutomaticoProibido, true)
+      assert.equal(tk.enviaEm, undefined, 'agendamento removido na própria resposta')
+      assert.equal(tk.relatorioAuto, undefined, 'nenhum relatório automático')
+      return tk
+    }
+
+    /* ---- A) remover um cupom obrigatório ---- */
+    let a = await comAceiteAutomatico('c171@web.de', 'C171')
+    const idA = an(a).conclusaoPendente.id
+    let r = await api('/api/lojas', { id: 'loja3', cupons: { ...CUPONS, 35: '' } }) // KEEP35 removido
+    assert.equal(r.status, 200, r.erro)
+    const tkA = protegido(r, a.id, idA, /cupons obrigatórios/)
+    assert.equal(tkA.atendimentoNovo.etapa, 'reemb_40', 'a fase não avançou')
+    await esperar(6500); a = await ticket(a.id)
+    assert.equal(an(a).etapa, 'reemb_40', 'nenhum envio'); assert.equal(a.relatorioAuto, undefined, 'nenhum relatório automático')
+    // restaurar o cupom NÃO religa a conclusão automática
+    r = await api('/api/lojas', { id: 'loja3', cupons: CUPONS }); assert.equal(r.status, 200, r.erro)
+    assert.equal(r.state.lojas.find(l => l.id === 'loja3').exigirAprovacaoAceiteNovo, true, 'recolocar o cupom não desliga a aprovação')
+    assert.equal(r.state.tickets.find(x => x.id === a.id).atendimentoNovo.conclusaoPendente.modo, 'manual', 'a conclusão continua manual')
+
+    /* ---- B) prazo mínimo zero ---- */
+    let b = await comAceiteAutomatico('c172@web.de', 'C172')
+    const idB = an(b).conclusaoPendente.id
+    r = await api('/api/lojas', { id: 'loja3', prazoEntrega: { min: 0, max: 12, processamento: 3 } }); assert.equal(r.status, 200, r.erro)
+    const tkB = protegido(r, b.id, idB, /prazo de entrega/)
+    assert.equal(tkB.atendimentoNovo.etapa, 'reemb_40')
+    await esperar(6500); b = await ticket(b.id); assert.equal(an(b).etapa, 'reemb_40'); assert.equal(b.relatorioAuto, undefined)
+    // restaurar o prazo NÃO religa
+    r = await api('/api/lojas', { id: 'loja3', prazoEntrega: { min: 5, max: 12, processamento: 3 } }); assert.equal(r.status, 200, r.erro)
+    assert.equal(r.state.lojas.find(l => l.id === 'loja3').exigirAprovacaoAceiteNovo, true)
+
+    /* ---- C) loja volta ao clássico: conversas continuam no motor em que nasceram ---- */
+    let c = await comAceiteAutomatico('c173@web.de', 'C173')
+    const idC = an(c).conclusaoPendente.id
+    r = await api('/api/lojas/loja3/modo', { modo: 'classico', confirmar: true }); assert.equal(r.status, 200, r.erro)
+    const tkC = protegido(r, c.id, idC, /voltou ao atendimento clássico/)
+    assert.equal(tkC.motorAtendimento, 'novo', 'a conversa continua no motor em que nasceu')
+    assert.equal(tkC.atendimentoNovo.etapa, 'reemb_40')
+    for (const x of r.state.tickets.filter(x => x.motorAtendimento === 'novo' && (x.lojaId ?? 'loja1') === 'loja3')) assert.equal(x.motorAtendimento, 'novo', x.id + ': motor preservado')
+    await esperar(6500); c = await ticket(c.id); assert.equal(an(c).etapa, 'reemb_40'); assert.equal(c.relatorioAuto, undefined)
+    // voltar ao novo NÃO religa a conclusão automática (a ativação zera para aprovação obrigatória)
+    r = await api('/api/lojas/loja3/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200, r.erro)
+    assert.equal(r.state.lojas.find(l => l.id === 'loja3').exigirAprovacaoAceiteNovo, true, 'reativar o novo não desliga a aprovação')
+    assert.equal(r.state.tickets.find(x => x.id === c.id).atendimentoNovo.conclusaoPendente.modo, 'manual')
+
+    /* ---- D) remover a conta de e-mail: a resposta já vem protegida, SEM espera nem polling ---- */
+    let d = await comAceiteAutomatico('c174@web.de', 'C174')
+    const idD = an(d).conclusaoPendente.id
     r = await api('/api/lojas/loja3/email', null, 'DELETE'); assert.equal(r.status, 200, r.erro)
-    await esperar(1200)
-    c = await ticket(c.id)
-    assert.equal(an(c).conclusaoPendente.modo, 'manual', 'proteção ativada imediatamente'); assert.equal(an(c).conclusaoPendente.relatorioAutomaticoProibido, true)
-    assert.equal(c.enviaEm, undefined, 'sem agendamento'); assert.equal(c.status, 'humano')
-    assert.equal((await api('/api/state', null, 'GET')).state.lojas.find(l => l.id === 'loja3').exigirAprovacaoAceiteNovo, true)
-    await esperar(6500); c = await ticket(c.id)
-    assert.equal(an(c).etapa, 'reemb_40', 'nenhum envio'); assert.equal(an(c).historicoEtapas.filter(h => !h.evento).length, fasesAntes); assert.equal(c.relatorioAuto, undefined)
+    const tkD = protegido(r, d.id, idD, /conta de e-mail da loja foi removida/) // nenhuma espera antes desta conferência
+    assert.equal(tkD.status, 'humano'); assert.equal(tkD.atendimentoNovo.transicaoPendente, null, 'rascunho antigo invalidado')
+    await esperar(6500); d = await ticket(d.id); assert.equal(an(d).etapa, 'reemb_40'); assert.equal(d.relatorioAuto, undefined)
+
+    /* ---- E) o agendador continua sendo a última barreira ---- */
+    // conclusão automática pendente com o agendamento vencido, mas os pré-requisitos já caíram (loja sem e-mail)
+    const st = (await api('/api/state', null, 'GET')).state
+    assert.equal(st.lojas.find(l => l.id === 'loja3').exigirAprovacaoAceiteNovo, true)
+    const semEmail = st.tickets.find(x => x.id === d.id)
+    assert.equal(semEmail.enviaEm, undefined); assert.equal(semEmail.relatorioAuto, undefined)
+    // sem caixa própria a loja nem pode voltar a desligar a aprovação: a proteção se mantém
+    r = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: false, confirmar: true })
+    assert.equal(r.status, 400, 'sem e-mail não dá para religar a conclusão automática'); assert.match(r.erro, /Falta/)
+    const l3 = (await api('/api/state', null, 'GET')).state.lojas.find(l => l.id === 'loja3')
+    assert.equal(l3.exigirAprovacaoAceiteNovo, true, 'a aprovação continua obrigatória')
   } finally { delete process.env.ATENDO_SMTP_FAKE }
 })
 
