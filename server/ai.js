@@ -155,7 +155,15 @@ function lojaDoTicket(state, ticket) {
 
 const nomesIdioma = { pt: 'português', en: 'inglês', es: 'espanhol', fr: 'francês', de: 'alemão', it: 'italiano', nl: 'holandês' }
 
+/** Conversa do motor novo? (campo definitivo gravado no nascimento; estado do novo como reserva) */
+const conversaDoNovo = t => t?.motorAtendimento === 'novo' || (t?.motorAtendimento !== 'classico' && (t?.motor === 'novo' || !!t?.atendimentoNovo))
+/** Trava: a Base de Conhecimento (políticas, FAQs, comportamentos, biblioteca, estilo) é EXCLUSIVA do clássico. */
+function exigirClassico(ticket, funcao) {
+  if (conversaDoNovo(ticket)) throw new Error(`${funcao} é exclusiva do atendimento clássico — conversa do motor novo segue só o mapa de atendimento, sem Base de Conhecimento`)
+}
+
 export function montarSystem(state, ticket) {
+  exigirClassico(ticket, 'montarSystem')
   const loja = lojaDoTicket(state, ticket)
   const nomeLoja = loja?.nome ?? state.config.nomeLoja
   const moeda = loja?.moeda ?? 'EUR'
@@ -280,6 +288,7 @@ function normalizarResultado(r, custo) {
 }
 
 export async function processarEmailIA(state, ticket, instrucaoExtra = null) {
+  exigirClassico(ticket, 'processarEmailIA')
   const lojaTicket = lojaDoTicket(state, ticket)
   // teste A/B por loja: lojas com iaModelo="gemini" respondem pelo Gemini Flash
   const usarGemini = lojaTicket?.iaModelo === 'gemini' && geminiConfigurado
@@ -410,6 +419,7 @@ export async function traduzirMensagens(mensagens) {
 
 // Pipeline completo: tenta IA, cai para regras locais
 export async function processarEmail(state, ticket) {
+  exigirClassico(ticket, 'processarEmail')
   const ia = await processarEmailIA(state, ticket)
   if (ia) return ia
   const loja = lojaDoTicket(state, ticket)

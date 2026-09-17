@@ -81,6 +81,8 @@ const saudacoes = {
 
 /** idiomaFixo: idioma escolhido pelo lojista para a loja (null = automático). */
 export function gerarRascunhoLocal(ticket, politicas, faqs, pedidos, assinatura, idiomaFixo = null) {
+  // Base de Conhecimento é exclusiva do clássico: conversa do motor novo nunca passa por aqui (nem como fallback)
+  if (ticket?.motorAtendimento === 'novo' || (ticket?.motorAtendimento !== 'classico' && (ticket?.motor === 'novo' || ticket?.atendimentoNovo))) throw new Error('gerarRascunhoLocal é exclusiva do atendimento clássico')
   const idiomaAlvo = idiomaFixo || ticket.idioma
   const s = saudacoes[idiomaAlvo] ?? saudacoes.pt
   const pedido = pedidos.find(p => p.email?.trim().toLowerCase() === ticket.de.trim().toLowerCase())

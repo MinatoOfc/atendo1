@@ -35,6 +35,13 @@ export default function Conhecimento() {
           <p className="muted" style={{ marginTop: 5 }}>
             O que o atendo sabe sobre a sua loja — políticas, prazos e FAQs que ele usa nas respostas. ({ativos} ativo{ativos !== 1 ? 's' : ''})
           </p>
+          <p className="muted-sm" style={{ marginTop: 6 }}><b>Usada somente pelo atendimento clássico.</b> O motor novo segue exclusivamente o mapa de atendimento.</p>
+          {s.lojas.some(l => l.modoAtendimento === 'novo') && (
+            <div className="banner card-soft" style={{ marginTop: 8, fontSize: 12.5 }}>
+              {s.lojas.filter(l => l.modoAtendimento === 'novo').map(l => l.nome).join(', ')} {s.lojas.filter(l => l.modoAtendimento === 'novo').length > 1 ? 'estão' : 'está'} no modo novo:
+              alterações nesta base <b>não modificam o novo pipeline</b>. Elas valem só para as conversas do atendimento clássico.
+            </div>
+          )}
         </div>
         <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
           <span className="chip">PT</span>

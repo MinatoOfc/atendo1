@@ -351,6 +351,14 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   escalada, reembolso de 100% ou cancelamento sai sem o cliente dizer quais
   produtos do pedido estão envolvidos — nem em pedido de um item só. Sem isso,
   o motor manda apenas a pergunta do produto e retoma a fase pendente depois.
+- **Base de Conhecimento só no clássico**: políticas, FAQs, comportamentos,
+  biblioteca, sugestões do histórico e aprendizado de estilo alimentam apenas
+  conversas com `motorAtendimento: "classico"`. O motor novo recebe só a fase
+  e a instrução do mapa, o estado da conversa, as mensagens necessárias, os
+  dados do pedido, os produtos citados pelo cliente, valores, moeda, prazo,
+  cupons exigidos pela fase, idioma, nome e assinatura da loja. Uma regra da
+  base nunca complementa, antecipa ou contradiz uma fase; se a IA do novo
+  falhar, o caso vai ao dono sem fallback clássico.
 - **Todo aceite vai para o dono** (troca e reenvio pedem o endereço completo
   antes). Reembolso de 100% e cancelamento também. Ao aprovar ("Aprovar e
   gerar a confirmação", no card da conversa), a IA escreve a confirmação:

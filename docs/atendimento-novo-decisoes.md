@@ -505,6 +505,30 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     dias fora do agendador, inferência sem mudar o motor, rota 410 e fontes sem
     botão, sem fusão entre motores.
 
+48. **Base de Conhecimento exclusiva do clássico (17/09)**: políticas, FAQs,
+    comportamentos da IA, biblioteca, sugestões do histórico e aprendizado das
+    respostas manuais (`estiloExemplos`) só entram em conversas com
+    `motorAtendimento: "classico"`. `montarSystem`, `processarEmailIA`,
+    `processarEmail` e `gerarRascunhoLocal` lançam erro se receberem conversa
+    do novo. `promptClassificar` e `promptEscrever` recusam qualquer objeto com
+    campos da Base ou o estado completo (`assertSemBaseDeConhecimento`) e o
+    servidor entrega ao escritor do novo só `configDoNovo` (nome e assinatura
+    da loja). O novo recebe apenas fase e instrução do mapa, estado da conversa,
+    mensagens necessárias, dados do pedido, produtos citados, valores, moeda,
+    prazo, cupons exigidos pela fase, idioma, nome e assinatura. Uma regra da
+    Base nunca complementa, antecipa ou contradiz uma fase; se a IA do novo
+    falhar, o caso vai ao dono sem fallback clássico. Conversa clássica segue
+    usando a Base mesmo com a loja no novo. Interface: aviso na Base de
+    Conhecimento e em Configurações ("fonte de verdade do atendimento
+    clássico"; loja no novo → alterações não modificam o novo pipeline).
+    Teste ponta a ponta com marcadores conflitantes ("OFERECER 100%
+    IMEDIATAMENTE") cadastrados via rotas: aparecem no prompt real e na
+    resposta simulada do clássico; nunca nos prompts capturados de
+    classificação e escrita do novo (1ª resposta, regeneração, aprovação,
+    recusa, aceite, confirmação, autoenvio); fase, cupom e escada intactos;
+    falha da IA do novo → dono, sem prompt clássico; clássico continua com a
+    Base depois de a loja ativar o novo.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

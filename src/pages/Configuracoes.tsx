@@ -836,8 +836,9 @@ export default function Configuracoes() {
               <b style={{ fontSize: 13.5 }}>Base de conhecimento</b>
               <div className="muted-sm">
                 {s.politicas.length + s.faqs.length > 0
-                  ? `${s.politicas.length} política(s) e ${s.faqs.length} FAQ(s) — a fonte de verdade das respostas`
-                  : 'Nenhum artigo ainda — adicione políticas e FAQs que o atendo pode citar'}
+                  ? `${s.politicas.length} política(s) e ${s.faqs.length} FAQ(s) — a fonte de verdade do atendimento clássico`
+                  : 'Nenhum artigo ainda — adicione políticas e FAQs que o atendimento clássico pode citar'}
+                {s.lojas.some(l => l.modoAtendimento === 'novo') && <> <b>Loja no modo novo:</b> alterações nessa base não modificam o novo pipeline.</>}
               </div>
             </div>
           </div>

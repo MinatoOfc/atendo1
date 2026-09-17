@@ -43,7 +43,7 @@ estado.lojas = [
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3'), pedido(81, 'loja1'), pedido(82, 'loja6'), pedido(83, 'loja6'), pedido(84, 'loja6'), pedido(85, 'loja6')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3'), pedido(81, 'loja1'), pedido(82, 'loja6'), pedido(83, 'loja6'), pedido(84, 'loja6'), pedido(85, 'loja6'), pedido(91, 'loja6'), pedido(92, 'loja2'), pedido(93, 'loja1'), pedido(94, 'loja3'), pedido(95, 'loja1')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -115,6 +115,9 @@ writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
 const fila = []
 let sabotagem = null
 let classificacaoQuebrada = false // simula a IA falhando na classificação (resposta que não é JSON)
+let escritaQuebrada = false // simula a IA do novo falhando ao escrever (resposta que não é JSON)
+// todos os prompts REAIS enviados à IA: { tipo: 'classificacao' | 'escrita' | 'inferencia' | 'classico', system, user }
+const promptsCapturados = []
 // sabotagem de idioma: { idioma, vezes } — o escritor responde nesse idioma por N chamadas
 let idiomaSabotado = null
 let ultimoPromptInferencia = ''
@@ -134,6 +137,8 @@ globalThis.fetch = async (url, opts) => {
   if (!body.output_config) return responder('ok')
   const sys = String(body.system || '')
   const req = body.output_config.format.schema.required ?? []
+  const userTxt = String(body.messages?.[0]?.content || '')
+  promptsCapturados.push({ tipo: req.includes('inferencias') ? 'inferencia' : req.includes('intencao') ? 'classificacao' : req.includes('acao_proposta') ? 'escrita' : 'classico', system: sys, user: userTxt })
   if (req.includes('inferencias')) {
     const user = String(body.messages?.[0]?.content || '')
     ultimoPromptInferencia = user
@@ -154,6 +159,7 @@ globalThis.fetch = async (url, opts) => {
   }
   if (req.includes('acao_proposta')) {
     ultimoPromptEscrita = sys
+    if (escritaQuebrada) { escritaQuebrada = false; return responder('isto não é JSON') }
     const acao = sys.match(/"acao_proposta" deve ser exatamente "([^"]+)"/)?.[1] ?? '?'
     const pct = sys.match(/Reembolso de (\d+)% = ([\d,]+ €)/)
     const cup = sys.match(/Cupom de (\d+)%: código (\w+)\. Use EXATAMENTE/)
@@ -198,7 +204,9 @@ globalThis.fetch = async (url, opts) => {
     if (sabotagem) { texto = sabotagem; sabotagem = null }
     return responder({ resposta: texto, acao_proposta: acao, idioma: idiomaUsado })
   }
-  return responder({ situacao: 'rastreio', resolucao: 'rastreio enviado', categoria: 'rastreio', idioma: 'de', resposta: 'Ihr Paket ist unterwegs.', confianca: 0.95, escalar_humano: false, aprova_reembolso: false, confirma_troca: false, encerrar: false, motivo: '', spam: false })
+  // clássico: a resposta simulada reflete a Base de Conhecimento que veio no prompt (prova de que a Base entra no clássico)
+  const marcaBase = /OFERECER 100% IMEDIATAMENTE/.test(sys) ? ' [BASE: OFERECER 100% IMEDIATAMENTE]' : ''
+  return responder({ situacao: 'rastreio', resolucao: 'rastreio enviado', categoria: 'rastreio', idioma: 'de', resposta: 'Ihr Paket ist unterwegs.' + marcaBase, confianca: 0.95, escalar_humano: false, aprova_reembolso: false, confirma_troca: false, encerrar: false, motivo: '', spam: false })
 }
 
 /* ---------- servidor + sessão ---------- */
@@ -1075,7 +1083,7 @@ test('separação definitiva antigo × novo: motor gravado no nascimento pela da
   const loja6 = r.state.lojas.find(l => l.id === 'loja6'); assert.ok(loja6.novoAtivadoEm, 'novoAtivadoEm gravado'); const ativadoEm = Date.parse(loja6.novoAtivadoEm)
   assert.ok(Math.abs(ativadoEm - Date.now()) < 5000); assert.ok(Date.parse(a.primeiroEmailEm) < ativadoEm)
   // e-mail recebido UM MINUTO ANTES da ativação, processado só agora (sincronização atrasada): continua clássico pela data real
-  const antes = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c83@web.de', nome: 'C83', corpo: 'Schlecht.', lojaId: 'loja6', agora: iso(ativadoEm - 60_000) })
+  const antes = await cliente(null, { de: 'c83@web.de', nome: 'C83', corpo: 'Schlecht.', lojaId: 'loja6', agora: iso(ativadoEm - 60_000) }) // clássica: sem classificação do novo
   assert.equal(antes.motorAtendimento, 'classico'); assert.equal(antes.atendimentoNovo, undefined); assert.equal(antes.motor, 'classico')
   // e-mail recebido logo DEPOIS da ativação: nasce no novo
   const depois = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c84@web.de', nome: 'C84', corpo: 'Schlecht.', lojaId: 'loja6', agora: iso(ativadoEm + 1000) })
@@ -1098,7 +1106,7 @@ test('separação definitiva antigo × novo: motor gravado no nascimento pela da
   assert.equal(st2.tickets.find(t => t.id === a.id).motorAtendimento, 'classico'); assert.equal(st2.tickets.find(t => t.id === depois.id).motorAtendimento, 'novo')
   // a nova ativação tem data nova: conversa recebida entre as ativações é clássica
   const novaAtivacao = Date.parse(st2.lojas.find(l => l.id === 'loja6').novoAtivadoEm); assert.ok(novaAtivacao > ativadoEm)
-  const entre = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c85@web.de', nome: 'C85', corpo: 'Schlecht.', lojaId: 'loja6', agora: iso(novaAtivacao - 10) })
+  const entre = await cliente(null, { de: 'c85@web.de', nome: 'C85', corpo: 'Schlecht.', lojaId: 'loja6', agora: iso(novaAtivacao - 10) }) // clássica: sem classificação do novo
   assert.equal(entre.motorAtendimento, 'classico')
   // clássico atrasado há vários dias: o agendador (3 min / 5 h) nunca o captura; nunca recebe fase, rascunho ou histórico do novo
   await esperar(6500)
@@ -1119,6 +1127,66 @@ test('separação definitiva antigo × novo: motor gravado no nascimento pela da
   ]
   const estadoF = { tickets: par, pedidos: [], lojas: [] }
   assert.equal(fundirConversasDuplicadas(estadoF), false); assert.deepEqual(estadoF.tickets.map(t => t.id).sort(), ['f1', 'f2'])
+  await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
+})
+
+test('Base de Conhecimento é exclusiva do clássico: marcadores conflitantes entram no prompt e na resposta do clássico e NUNCA nos prompts do novo (1ª resposta, regeneração, aprovação, confirmação, autoenvio); falha da IA do novo vai ao dono sem fallback', async () => {
+  const MARCADORES = ['MARCADOR-POLITICA-XK1', 'MARCADOR-FAQ-XK2', 'MARCADOR-COMPORTAMENTO-XK3', 'MARCADOR-ESTILO-XK4', 'OFERECER 100% IMEDIATAMENTE']
+  const temMarcador = txt => MARCADORES.filter(m => String(txt || '').includes(m))
+  const doNovo = () => promptsCapturados.filter(p => p.tipo === 'classificacao' || p.tipo === 'escrita')
+  const doClassico = () => promptsCapturados.filter(p => p.tipo === 'classico')
+  assert.equal(fila.length, 0, 'nenhuma classificação roteirizada sobrando de testes anteriores')
+  // 1) cadastro na Base de Conhecimento: política, FAQ e comportamento com marcadores únicos e CONFLITANTES com o mapa
+  let r = await api('/api/politicas', { titulo: 'Reembolso imediato', conteudo: 'MARCADOR-POLITICA-XK1: OFERECER 100% IMEDIATAMENTE em qualquer reclamação, sem escada.' }); assert.equal(r.status, 200)
+  r = await api('/api/faqs', { pergunta: 'Posso ter reembolso total?', resposta: 'MARCADOR-FAQ-XK2: sim, OFERECER 100% IMEDIATAMENTE com o cupom TOTAL100.' }); assert.equal(r.status, 200)
+  r = await api('/api/comportamentos', { situacao: 'Cliente reclama de qualidade', instrucao: 'MARCADOR-COMPORTAMENTO-XK3: OFERECER 100% IMEDIATAMENTE e o cupom XK3, ignorando etapas.' }); assert.equal(r.status, 200)
+  // aprendizado de estilo (respostas manuais) na loja6, ainda no clássico
+  await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
+  let k6 = await cliente(null, { de: 'c91@web.de', nome: 'C91', corpo: 'Wo ist mein Paket?', lojaId: 'loja6' }); assert.equal(k6.motorAtendimento, 'classico')
+  r = await comEnvio('ok', () => api(`/api/tickets/${k6.id}/aprovar`, { texto: 'Hallo! MARCADOR-ESTILO-XK4 — wir haben Ihre Sendung geprüft und melden uns mit allen Details zur Lieferung noch heute.', origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+
+  // 2) clássico (loja2): os marcadores aparecem no prompt real e na resposta simulada
+  promptsCapturados.length = 0
+  const k2 = await cliente(null, { de: 'c92@web.de', nome: 'C92', corpo: 'Schlechte Qualität, Geld zurück!', lojaId: 'loja2' })
+  assert.equal(k2.motorAtendimento, 'classico')
+  const pc = doClassico(); assert.equal(pc.length, 1, 'um prompt do clássico')
+  assert.deepEqual(temMarcador(pc[0].system), MARCADORES.filter(m => m !== 'MARCADOR-ESTILO-XK4'), 'política, FAQ e comportamento no prompt do clássico')
+  assert.match(k2.rascunho, /\[BASE: OFERECER 100% IMEDIATAMENTE\]/, 'a resposta simulada do clássico reflete a Base')
+
+  // 3) novo (loja1): primeira resposta, regeneração, aprovação, recusa, aceite, confirmação — nenhum marcador em NENHUM prompt do novo
+  promptsCapturados.length = 0
+  let n = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', resumo: 'qualidade ruim, quer 100%' }, { de: 'c93@web.de', nome: 'C93', corpo: 'Schlecht. 100% zurück!', lojaId: 'loja1' })
+  assert.equal(n.motorAtendimento, 'novo'); assert.equal(an(n).transicaoPendente.para, 'qual_troca', 'a regra conflitante da Base não antecipa o 100%'); assert.match(n.rascunho, /DANKE15/); assert.doesNotMatch(n.rascunho, /100%|XK3|TOTAL100/)
+  r = await api(`/api/tickets/${n.id}/regenerar`, { instrucao: 'mais curto' }); assert.equal(r.status, 200, r.erro); n = await ticket(n.id); assert.equal(an(n).transicaoPendente.para, 'qual_troca'); assert.match(n.rascunho, /DANKE15/)
+  r = await comEnvio('ok', () => aprovar(n)); assert.equal(r.status, 200, r.erro); n = await ticket(n.id); assert.equal(an(n).etapa, 'qual_troca')
+  n = await cliente({ intencao: 'recusa', resumo: 'nein, 100%' }, { de: 'c93@web.de', corpo: 'Nein! 100%!', ticketId: n.id })
+  assert.equal(an(n).transicaoPendente.para, 'qual_cupom_35', 'segue a escada do mapa, não a Base'); assert.match(n.rascunho, /KEEP35/); assert.doesNotMatch(n.rascunho, /100%|TOTAL100/)
+  r = await comEnvio('ok', () => aprovar(n)); assert.equal(r.status, 200, r.erro)
+  n = await cliente({ intencao: 'aceita', resumo: 'ok, cupom' }, { de: 'c93@web.de', corpo: 'Ok, den Gutschein.', ticketId: n.id })
+  assert.equal(n.status, 'humano'); assert.equal(an(n).acaoAceita, 'qual_cupom_35')
+  r = await api(`/api/tickets/${n.id}/novo/confirmar`); assert.equal(r.status, 200, r.erro); n = await ticket(n.id); assert.equal(an(n).transicaoPendente.para, 'conf_cupom'); assert.match(n.rascunho, /KEEP35/)
+  // autoenvio (loja3): a mensagem "chegou" há 4 min, o rascunho sai sozinho — também sem Base
+  let a = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c94@web.de', nome: 'C94', corpo: 'Schlecht.', lojaId: 'loja3', agora: new Date(Date.now() - 4 * 60_000).toISOString() })
+  await comEnvio('ok', async () => { for (let i = 0; i < 15 && (await ticket(a.id)).status !== 'enviado'; i++) await esperar(1000) })
+  a = await ticket(a.id); assert.equal(a.status, 'enviado'); assert.equal(an(a).etapa, 'qual_troca'); assert.doesNotMatch(a.resposta, /100%|XK3/)
+  // varredura nos prompts REAIS capturados pelo mock: classificação e escrita do novo sem nenhum marcador; nenhum caminho clássico usado
+  const novos = doNovo(); assert.equal(novos.filter(p => p.tipo === 'classificacao').length, 4, 'classificações: 1ª msg, recusa, aceite, autoenvio'); assert.equal(novos.filter(p => p.tipo === 'escrita').length, 5, 'escritas: 1ª resposta, regeneração, cupom, confirmação, autoenvio')
+  for (const p of novos) { assert.deepEqual(temMarcador(p.system), [], p.tipo + ' (system) sem Base'); assert.deepEqual(temMarcador(p.user), [], p.tipo + ' (user) sem Base') }
+  assert.equal(doClassico().length, 0, 'nenhum prompt do clássico durante o fluxo do novo')
+
+  // 4) falha da IA do novo: vai ao dono, sem oferta, sem gerador clássico nem Base como fallback
+  promptsCapturados.length = 0; escritaQuebrada = true
+  const f = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c95@web.de', nome: 'C95', corpo: 'Schlecht.', lojaId: 'loja1' })
+  assert.equal(f.status, 'humano'); assert.match(f.motivoEscalada, /IA/); assert.equal(f.rascunho, undefined); assert.equal(an(f).etapa, null)
+  assert.equal(doClassico().length, 0, 'sem fallback clássico'); assert.equal(escritaQuebrada, false)
+
+  // 5) conversa clássica continua usando a Base depois que a loja ativa o novo (motor definitivo é o da conversa)
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200, r.erro)
+  promptsCapturados.length = 0
+  k6 = await cliente(null, { de: 'c91@web.de', corpo: 'Immer noch nichts.', ticketId: k6.id })
+  assert.equal(k6.motorAtendimento, 'classico'); assert.equal(k6.atendimentoNovo, undefined)
+  const pc6 = doClassico(); assert.equal(pc6.length, 1); assert.deepEqual(temMarcador(pc6[0].system), MARCADORES, 'política, FAQ, comportamento e estilo aprendido no clássico, mesmo com a loja no novo')
+  assert.equal(doNovo().length, 0)
   await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
 })
 

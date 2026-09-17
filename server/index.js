@@ -11,7 +11,7 @@ import {
 import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso, CATEGORIAS_REEMBOLSO, classificarNovo, escreverNovo, inferirFasesHistoricas } from './ai.js'
 import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
-  horarioMinimoEnvio, promptClassificar, promptEscrever, FASES, JORNADAS, PERCENTUAIS_CUPOM,
+  horarioMinimoEnvio, promptClassificar, promptEscrever, configDoNovo, FASES, JORNADAS, PERCENTUAIS_CUPOM,
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS,
 } from './atendimento.js'
@@ -785,7 +785,8 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
 
   // idioma-alvo da conversa (última mensagem completa do cliente) — a configuração fixa da loja não vale aqui
   const idiomaAlvo = an.idioma ?? normalizarIdioma(t.idioma) ?? null
-  const p2 = promptEscrever({ loja, config: estado.config, faseId, faltando, an, pedido, ticket: t, instrucaoEstilo, idiomaAlvo })
+  // o motor novo NUNCA vê a Base de Conhecimento: só nome e assinatura da loja (configDoNovo)
+  const p2 = promptEscrever({ loja, config: configDoNovo(estado.config), faseId, faltando, an, pedido, ticket: t, instrucaoEstilo, idiomaAlvo })
   let e = await escreverNovo(p2.system, p2.user)
   if (e.erro) return falhar(`A IA não conseguiu escrever a resposta (${e.erro})`)
   somarCusto(t, e.custo); registrarGasto(estado, t.lojaId, e.custo)
@@ -794,7 +795,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   // uma regeneração com instrução explícita, depois fila humana
   let vi = conferirIdioma(e.r.resposta, idiomaAlvo, e.r.idioma)
   if (!vi.ok) {
-    const p3 = promptEscrever({ loja, config: estado.config, faseId, faltando, an, pedido, ticket: t, instrucaoEstilo, idiomaAlvo, instrucaoIdioma: `a resposta anterior saiu no idioma errado (${vi.motivo})` })
+    const p3 = promptEscrever({ loja, config: configDoNovo(estado.config), faseId, faltando, an, pedido, ticket: t, instrucaoEstilo, idiomaAlvo, instrucaoIdioma: `a resposta anterior saiu no idioma errado (${vi.motivo})` })
     const e2 = await escreverNovo(p3.system, p3.user)
     if (e2.erro) return falhar(`A IA não conseguiu reescrever a resposta no idioma do cliente (${e2.erro})`)
     somarCusto(t, e2.custo); registrarGasto(estado, t.lojaId, e2.custo)
@@ -2893,7 +2894,7 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
     if (bloqueio) return res.status(400).json({ erro: `Instrução recusada: ${bloqueio}.`, state: visao(req.wsId) })
     if (req.body.somenteTexto) {
       // escreve a MESMA ação para a caixa manual, sem mexer no rascunho nem no estado
-      const p = promptEscrever({ loja: lojaR, config: req.estado.config, faseId, faltando: anR.transicaoPendente.faltando ?? [], an: anR, pedido: pedidoDoTicket(req.estado, t), ticket: t, instrucaoEstilo: instrucao || null, idiomaAlvo: anR.idioma ?? null })
+      const p = promptEscrever({ loja: lojaR, config: configDoNovo(req.estado.config), faseId, faltando: anR.transicaoPendente.faltando ?? [], an: anR, pedido: pedidoDoTicket(req.estado, t), ticket: t, instrucaoEstilo: instrucao || null, idiomaAlvo: anR.idioma ?? null })
       const e = await escreverNovo(p.system, p.user)
       if (e.erro) return res.status(400).json({ erro: e.erro, state: visao(req.wsId) })
       somarCusto(t, e.custo); registrarGasto(req.estado, t.lojaId, e.custo)

@@ -951,7 +951,23 @@ function blocoPedido(pedido, loja, agora) {
  * Prompt da 1ª chamada: só CLASSIFICAR o que o cliente disse. A IA não escreve
  * resposta aqui e não vê a escada — só o que foi oferecido por último.
  */
+/* ------------------------------------------------------------------ */
+/* Base de Conhecimento: EXCLUSIVA do atendimento clássico              */
+/* ------------------------------------------------------------------ */
+
+/** Campos do estado que formam a Base de Conhecimento (políticas, FAQs, comportamentos, biblioteca, sugestões, aprendizado de estilo). */
+export const CAMPOS_BASE_CONHECIMENTO = ['politicas', 'faqs', 'comportamentos', 'biblioteca', 'sugestoes', 'politicasSugeridas', 'estiloExemplos']
+/** A única parte da configuração que o motor novo pode ver: nome e assinatura da loja. */
+export const configDoNovo = config => ({ nomeLoja: config?.nomeLoja ?? null, assinatura: config?.assinatura ?? null })
+/** Trava: nenhum objeto entregue aos prompts do motor novo pode carregar a Base de Conhecimento nem o estado completo. */
+export function assertSemBaseDeConhecimento(obj, nome) {
+  if (!obj || typeof obj !== 'object') return
+  for (const campo of CAMPOS_BASE_CONHECIMENTO) if (campo in obj) throw new Error(`motor novo: "${nome}" trouxe a Base de Conhecimento (${campo}) — ela é exclusiva do atendimento clássico`)
+  if ('tickets' in obj && 'config' in obj) throw new Error(`motor novo: "${nome}" é o estado completo — o motor de etapas só recebe fase, conversa, pedido, loja e assinatura`)
+}
+
 export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now() }) {
+  for (const [n, o] of [['loja', loja], ['an', an], ['pedido', pedido], ['ticket', ticket]]) assertSemBaseDeConhecimento(o, n)
   const ultimaDaLoja = [...(ticket.historico ?? [])].reverse().find(m => m.autor === 'atendo')?.corpo ?? ticket.resposta ?? null
   const system = [
     `Você classifica mensagens de clientes de uma loja de roupas online. Você NÃO responde ao cliente: só extrai dados no JSON pedido.`,
@@ -1014,7 +1030,9 @@ function descreverOferta(o) {
  * recebe a instrução da fase, os valores já calculados e o código do cupom —
  * nunca a escada inteira.
  */
-export function promptEscrever({ loja, config, faseId, faltando = [], an, pedido, ticket, instrucaoEstilo = null, idiomaAlvo = null, instrucaoIdioma = null, agora = Date.now() }) {
+export function promptEscrever({ loja, config: configBruta, faseId, faltando = [], an, pedido, ticket, instrucaoEstilo = null, idiomaAlvo = null, instrucaoIdioma = null, agora = Date.now() }) {
+  for (const [n, o] of [['loja', loja], ['config', configBruta], ['an', an], ['pedido', pedido], ['ticket', ticket]]) assertSemBaseDeConhecimento(o, n)
+  const config = configDoNovo(configBruta) // só nome e assinatura da loja — políticas, FAQs e comportamentos nunca entram aqui
   const fase = FASES[faseId]
   const moeda = loja?.moeda ?? 'EUR'
   // no modo novo a resposta segue SEMPRE o idioma do cliente — a configuração fixa da loja não entra aqui
