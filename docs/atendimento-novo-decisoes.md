@@ -606,6 +606,59 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     uma única confirmação, uma única linha e o caso reconciliado — e, no
     cenário sem comprovação, o caso com o dono sem reenvio nem relatório.
 
+51. **Segurança da conclusão após o aceite — auditoria (17/09)**:
+
+    a) **Gravação crítica que falha fechado**: toda gravação de um workspace
+    entra numa fila serializada (`enfileirarGravacao`), então uma gravação
+    antiga e lenta nunca termina depois e sobrescreve o estado crítico mais
+    recente. `gravarCritico` espera a fila, grava e PROPAGA o erro; o envio da
+    confirmação usa essa versão. Se `status: enviando` + Message-ID não puderem
+    ser persistidos, o estado em memória é revertido e nenhum canal (SMTP,
+    Resend ou simulado) é chamado: sem e-mail, sem fase, sem relatório, caso
+    com o dono e o motivo exato do erro de persistência na mensagem.
+    `gravarAgora` continua existindo, com retentativa, para as ações normais.
+
+    b) **Estado final atômico**: a confirmação passou a finalizar tudo em
+    memória (transição `conf_*`, conclusão `concluida`, Message-ID, resposta,
+    origem, `respondidoEm`, status `enviado`, `enviaEm` removido, agendamento
+    limpo e — só no automático de verdade — a linha do relatório) e fazer UMA
+    gravação crítica no fim. Queda entre o canal e essa gravação deixa
+    `enviando` persistido, que o arranque reconcilia. Para estado legado meio
+    gravado (conclusão `concluida` ou fase `conf_*` com o ticket ainda em
+    `aprovacao` ou com `enviaEm`), `corrigirConfirmacoesMeioGravadas` fecha o
+    ticket no arranque, sem reenviar, sem segunda transição e sem segunda linha.
+
+    c) **Interrupção vira conclusão manual de verdade**: ao perder os
+    pré-requisitos, `neutralizarConclusaoAutomatica` preserva o id e os dados da
+    solução, grava `modoOriginal: automatico` e o histórico da conversão em
+    `autoHistorico`, muda `modo` para `manual` e marca
+    `relatorioAutomaticoProibido` — `concluirAposEnvio` nunca cria `relatorioAuto`
+    para essa conclusão, mesmo depois da aprovação do dono. O rascunho e a
+    transição de confirmação antigos são invalidados: o clique do dono regera e
+    revalida a confirmação. `/novo/confirmar` roda `faltaParaConcluir` em
+    qualquer conclusão viva (inclusive `interrompida` e `aguardando_dados`), não
+    só em `aguardando_aprovacao`.
+
+    d) **Conclusões que ainda aguardam dados não são quebradas**: quando a
+    interrupção pega uma troca ou reenvio em `aguardando_dados`, a coleta de
+    endereço continua — a pergunta pendente fica em Aprovações para envio
+    manual, a conversa segue esperando o cliente, o endereço é validado
+    normalmente e só depois o caso vai ao dono. Nada fica preso em
+    `aguardando: humano` e nenhuma etapa é pulada. Uma conclusão `interrompida`
+    nunca volta a ser automática.
+
+    e) **Toda perda de pré-requisito protege na hora**: além de desligar o envio
+    automático da loja e a automação geral, `DELETE /api/lojas/:id/email`
+    neutraliza imediatamente as conclusões automáticas daquela loja, e o
+    agendador faz uma última conferência de `podeConclusaoAutomatica` logo antes
+    do envio — se os pré-requisitos caíram, converte com segurança para
+    aprovação manual em vez de enviar.
+
+    Os ganchos de teste (`ATENDO_TESTE_QUEDA` com os pontos `antes`,
+    `depois-memoria` e `depois`, `ATENDO_TESTE_FALHA_GRAVACAO` e
+    `ATENDO_TESTE_ENVIOS`) só funcionam com `ATENDO_SIMULAR=1` e o canal
+    simulado, nunca pela presença acidental de uma variável em produção.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

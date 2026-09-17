@@ -79,9 +79,36 @@ const subir = extra => new Promise((resolve, reject) => {
 const morreu = processo => new Promise(resolve => processo.on('exit', (code, sinal) => resolve({ code, sinal })))
 after(() => { try { filho?.kill() } catch {} ; try { rmSync(DIR, { recursive: true, force: true }) } catch {} })
 
+const entrar = async () => {
+  const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'queda@teste.local', senha: 'senha-queda-1234' }) })
+  assert.equal(login.status, 200)
+  return login.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
+}
+const verTicket = async (cookie, id = 'q1') => {
+  const st = await fetch(base + '/api/state', { headers: { cookie } }).then(r => r.json())
+  return { st: st.state, t: st.state.tickets.find(x => x.id === id) }
+}
+/** Reinicia o estado salvo com uma conclusão automática pronta para a confirmação sair. */
+const prepararAceitePendente = (id, extras = {}) => {
+  const salvo = estadoSalvo()
+  const t0 = salvo.tickets.find(x => x.id === 'q1')
+  const cp = t0.atendimentoNovo.conclusaoPendente
+  cp.id = id; cp.mensagemConfirmacaoId = `atendo-${id}`; cp.status = 'aguardando_cadencia'; cp.modo = 'automatico'
+  delete cp.confirmadaEm; delete cp.faseConfirmada; delete cp.relatorioAutomaticoProibido; delete cp.modoOriginal; delete cp.interrompidaEm; delete cp.motivoInterrupcao; delete cp.envioIniciadoEm
+  t0.atendimentoNovo.etapa = 'reemb_40'
+  t0.atendimentoNovo.historicoEtapas = t0.atendimentoNovo.historicoEtapas.filter(h => h.para !== 'conf_reembolso' && !h.evento)
+  t0.atendimentoNovo.transicaoPendente = { para: 'conf_reembolso', mensagem: 'ok', faltando: [] }
+  t0.atendimentoNovo.aguardando = 'envio'
+  t0.status = 'aprovacao'; t0.rascunho = CONF; t0.enviaEm = Date.now() - 1000
+  delete t0.relatorioAuto; delete t0.relatorioDia; delete t0.relatorioTexto; delete t0.resposta; delete t0.respondidoEm; delete t0.motivoEscalada
+  Object.assign(salvo, extras.estado ?? {})
+  writeFileSync(path.join(DIR, 'ws-queda.json'), JSON.stringify(salvo))
+  return salvo
+}
+
 test('queda no meio do envio da confirmação: o e-mail sai uma vez só, nenhuma segunda confirmação, nenhuma segunda linha e o caso é reconciliado no reinício', async () => {
   // 1) servidor sobe programado para MORRER logo depois de o canal confirmar o envio, antes de gravar
-  const primeiro = await subir({ ATENDO_TESTE_QUEDA: '1' })
+  const primeiro = await subir({ ATENDO_TESTE_QUEDA: 'antes' })
   const fim = await Promise.race([morreu(primeiro.processo), esperar(25_000).then(() => null)])
   assert.ok(fim, 'o servidor deveria cair no ponto de teste'); assert.equal(fim.code, 7, 'queda proposital no ponto exato')
   assert.match(primeiro.saida(), /queda proposital depois do envio, antes da gravação/)
@@ -153,4 +180,72 @@ test('queda no envio SEM comprovação (a mensagem não está na caixa de enviad
   assert.deepEqual(q.atendimentoNovo.conclusaoPendente.faseAceita, 'reemb_40'); assert.equal(q.atendimentoNovo.conclusaoPendente.valor, 40, 'dados da solução preservados')
   await esperar(6500)
   assert.equal(envios().length, antes, 'nenhum e-mail novo, nem pelo agendador')
+})
+
+test('falha da gravação crítica ANTES do envio: nenhum e-mail, fase intacta, nenhum relatório e o motivo do erro visível', async () => {
+  try { filho?.kill() } catch {}
+  await esperar(1200)
+  prepararAceitePendente('ev-q3')
+  const antes = envios().length
+  // DATA_DIR só de leitura para o servidor: a gravação crítica falha e o envio precisa abortar
+  const servidor = await subir({ ATENDO_TESTE_FALHA_GRAVACAO: '1' })
+  filho = servidor.processo
+  await esperar(7000)
+  assert.equal(envios().length, antes, 'nenhum e-mail com a persistência falhando')
+  const cookie = await entrar()
+  const { t: q } = await verTicket(cookie)
+  assert.equal(q.atendimentoNovo.etapa, 'reemb_40', 'a fase não avançou')
+  assert.equal(q.relatorioAuto, undefined, 'nenhum relatório'); assert.equal(q.relatorioDia, undefined)
+  assert.equal(q.atendimentoNovo.historicoEtapas.filter(h => h.para === 'conf_reembolso').length, 0, 'nenhuma transição de confirmação')
+  assert.match(servidor.saida(), /gravação crítica falhou|Confirmação não enviada/, 'o motivo do erro de persistência aparece')
+})
+
+test('queda DEPOIS da gravação final e antes do retorno: o ticket já nasce enviado no reinício, sem reenviar e sem nada em Aprovações', async () => {
+  try { filho?.kill() } catch {}
+  await esperar(1200)
+  prepararAceitePendente('ev-q4')
+  const antes = envios().length
+  const primeiro = await subir({ ATENDO_TESTE_QUEDA: 'depois' })
+  const fim = await Promise.race([morreu(primeiro.processo), esperar(25_000).then(() => null)])
+  assert.ok(fim, 'o servidor deveria cair'); assert.equal(fim.code, 9, 'queda depois da gravação final')
+  assert.equal(envios().length, antes + 1, 'um único e-mail')
+  // o estado final completo já estava persistido: enviado, sem agendamento, com a linha do relatório
+  const salvo = estadoSalvo().tickets.find(x => x.id === 'q1')
+  assert.equal(salvo.status, 'enviado'); assert.equal(salvo.enviaEm, undefined)
+  assert.equal(salvo.atendimentoNovo.etapa, 'conf_reembolso'); assert.equal(salvo.atendimentoNovo.conclusaoPendente.status, 'concluida')
+  assert.equal(salvo.relatorioAuto.eventoId, 'ev-q4')
+  const servidor = await subir({})
+  filho = servidor.processo
+  await esperar(2500)
+  const cookie = await entrar()
+  const { st, t: q } = await verTicket(cookie)
+  assert.equal(q.status, 'enviado', 'nada em Aprovações'); assert.equal(q.enviaEm, undefined)
+  assert.equal(q.atendimentoNovo.historicoEtapas.filter(h => h.para === 'conf_reembolso').length, 1, 'uma transição')
+  assert.equal(st.tickets.filter(x => x.relatorioAuto?.eventoId === 'ev-q4').length, 1, 'uma linha')
+  await esperar(6500)
+  assert.equal(envios().length, antes + 1, 'nenhum reenvio pelo agendador')
+})
+
+test('estado legado (conclusão concluída mas ticket ainda em aprovação com agendamento): o arranque fecha sem reenviar, sem segunda transição e sem segunda linha', async () => {
+  try { filho?.kill() } catch {}
+  await esperar(1200)
+  const salvo = estadoSalvo()
+  const t0 = salvo.tickets.find(x => x.id === 'q1')
+  // simula a gravação meio feita da versão antiga: conclusão e relatório gravados, ticket não
+  t0.status = 'aprovacao'; t0.enviaEm = Date.now() - 1000; t0.rascunho = CONF; delete t0.resposta; delete t0.respondidoEm
+  t0.atendimentoNovo.transicaoPendente = { para: 'conf_reembolso', mensagem: 'ok', faltando: [] }
+  writeFileSync(path.join(DIR, 'ws-queda.json'), JSON.stringify(salvo))
+  const antes = envios().length
+  const servidor = await subir({})
+  filho = servidor.processo
+  await esperar(2500)
+  assert.match(servidor.saida(), /confirmação\(ões\) meio gravada\(s\) fechada\(s\) sem reenviar/)
+  assert.equal(envios().length, antes, 'nenhum reenvio')
+  const cookie = await entrar()
+  const { st, t: q } = await verTicket(cookie)
+  assert.equal(q.status, 'enviado'); assert.equal(q.enviaEm, undefined); assert.equal(q.atendimentoNovo.transicaoPendente, null)
+  assert.equal(q.atendimentoNovo.historicoEtapas.filter(h => h.para === 'conf_reembolso').length, 1, 'nenhuma segunda transição')
+  assert.equal(st.tickets.filter(x => x.relatorioAuto?.eventoId === 'ev-q4').length, 1, 'nenhuma segunda linha')
+  await esperar(6500)
+  assert.equal(envios().length, antes, 'o agendador também não reenviou')
 })

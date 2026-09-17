@@ -80,19 +80,54 @@ const salvar = wsId => {
 // e vira banner vermelho no app) e retenta sozinho a cada 30s.
 let erroBanco = null // string | null
 
+// Toda gravação de um workspace entra nesta fila: uma de cada vez, na ordem em que
+// foi pedida. Assim uma gravação antiga e lenta nunca termina depois e sobrescreve o
+// estado crítico mais recente (ex.: "enviando" gravado antes de chamar o SMTP).
+const cadeiaGravacao = new Map() // wsId → Promise da última gravação enfileirada
+
+function enfileirarGravacao(wsId) {
+  const anterior = cadeiaGravacao.get(wsId) ?? Promise.resolve()
+  const proxima = anterior.catch(() => {}).then(() => {
+    // falha de persistência simulada (SÓ com o ambiente de teste ligado)
+    if (process.env.ATENDO_SIMULAR === '1' && process.env.ATENDO_TESTE_FALHA_GRAVACAO === '1') throw new Error('falha de gravação simulada')
+    const timer = salvarPendentes.get(wsId)
+    if (timer) clearTimeout(timer)
+    salvarPendentes.delete(wsId)
+    const estado = workspaces.get(wsId)
+    if (!estado) return
+    // o estado é serializado AGORA (depois da gravação anterior), nunca antes dela
+    return db.salvarWorkspace(wsId, estado)
+  })
+  cadeiaGravacao.set(wsId, proxima.catch(() => {})) // a fila sobrevive a um erro
+  return proxima
+}
+
+/** Gravação normal: erro não é silencioso, mas não derruba a ação (retenta sozinha). */
 function gravarAgora(wsId) {
-  const timer = salvarPendentes.get(wsId)
-  if (timer) clearTimeout(timer)
-  salvarPendentes.delete(wsId)
-  const estado = workspaces.get(wsId)
-  if (!estado) return Promise.resolve()
-  return db.salvarWorkspace(wsId, estado)
+  return enfileirarGravacao(wsId)
     .then(() => { erroBanco = null })
     .catch(err => {
       erroBanco = err.message
       console.error('[db] salvar falhou:', err.message)
       if (!encerrado) setTimeout(() => salvar(wsId), 30_000) // retenta até conseguir
     })
+}
+
+/**
+ * Gravação CRÍTICA: espera a fila do workspace, grava o estado mais recente e
+ * PROPAGA o erro. Usada antes e depois do envio de uma confirmação — se o banco
+ * ou o arquivo falhar, quem chamou precisa abortar (nada de e-mail, fase ou
+ * relatório em cima de um estado que não foi persistido).
+ */
+async function gravarCritico(wsId) {
+  try {
+    await enfileirarGravacao(wsId)
+    erroBanco = null
+  } catch (err) {
+    erroBanco = err.message
+    console.error('[db] gravação crítica falhou:', err.message)
+    throw new Error(`não foi possível salvar o estado antes de continuar: ${err.message}`)
+  }
 }
 
 // deploy/restart (SIGTERM): descarrega as gravações pendentes antes de morrer
@@ -408,7 +443,8 @@ function concluirAposEnvio(estado, wsId, t, faseConfirmada, mensagemId) {
   const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
   if (!cp || !FASES[faseConfirmada]?.confirmacao || cp.status === 'concluida') return
   cp.status = 'concluida'; cp.confirmadaEm = new Date().toISOString(); cp.faseConfirmada = faseConfirmada; cp.mensagemConfirmacaoId = mensagemId
-  if (cp.modo !== 'automatico') return
+  // conclusão convertida para manual (interrompida) NUNCA cria linha automática: o relatório volta a ser do dono
+  if (cp.modo !== 'automatico' || cp.relatorioAutomaticoProibido) return
   // relatório diário: exatamente UMA linha por evento de aceite (chave = ticket + id do aceite)
   if (t.relatorioAuto?.eventoId === cp.id) return
   const pedido = pedidoDoTicket(estado, t); const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
@@ -426,15 +462,42 @@ function concluirAposEnvio(estado, wsId, t, faseConfirmada, mensagemId) {
   t.relatorioLinha = undefined
 }
 
+/**
+ * Estado legado meio gravado: a conclusão está "concluida" (ou a fase já é conf_*) mas o
+ * ticket ficou em "aprovacao" ou com agendamento. Fecha o ticket SEM reenviar, sem segunda
+ * transição e sem segunda linha no relatório.
+ */
+function corrigirConfirmacoesMeioGravadas(wsId) {
+  const estado = workspaces.get(wsId); if (!estado) return
+  let n = 0
+  for (const t of estado.tickets ?? []) {
+    const an = t.atendimentoNovo; if (!an) continue
+    const confirmada = an.conclusaoPendente?.status === 'concluida' || FASES[an.etapa]?.confirmacao
+    if (!confirmada) continue
+    if (t.status !== 'aprovacao' && !t.enviaEm) continue
+    t.enviaEm = undefined
+    an.proximoEnvioMinimo = undefined
+    if (FASES[an.transicaoPendente?.para]?.confirmacao) { an.transicaoPendente = null; an.rascunhoGerado = undefined } // nunca uma segunda transição
+    if (t.status === 'aprovacao') {
+      t.status = 'enviado'
+      t.resposta = t.resposta ?? t.rascunho
+      t.respondidoEm = t.respondidoEm || an.conclusaoPendente?.confirmadaEm || new Date().toISOString()
+      t.lido = true
+    }
+    n++
+  }
+  if (n) { console.log(`[arranque] ${wsId}: ${n} confirmação(ões) meio gravada(s) fechada(s) sem reenviar`); salvar(wsId) }
+}
+
 /** Registro durável dos envios simulados (só em teste): permite conferir o Message-ID depois de uma queda. */
 function registrarEnvioSimulado(mensagemId) {
-  const arq = process.env.ATENDO_TESTE_ENVIOS
+  const arq = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_TESTE_ENVIOS : null
   if (!arq) return
   try { fs.appendFileSync(arq, mensagemId + '\n') } catch { /* teste */ }
 }
 /** A confirmação com este Message-ID chegou a sair? true | false | null (não deu para conferir). */
 async function confirmacaoFoiEnviada(wsId, t, mensagemId) {
-  const arq = process.env.ATENDO_TESTE_ENVIOS
+  const arq = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_TESTE_ENVIOS : null
   if (arq) { try { return fs.readFileSync(arq, 'utf8').split('\n').includes(mensagemId) } catch { return false } }
   const conta = contasDe(wsId).find(c => c.id === (t.lojaId ?? 'loja1'))
   if (!conta?.procurarEnviado) return null
@@ -482,6 +545,9 @@ async function reconciliarEnviosInterrompidos(wsId) {
   if (mudou) await gravarAgora(wsId)
 }
 
+/** Igual a neutralizarConclusaoAutomatica, mas no próximo tique — para rotas que só mudam o pré-requisito no fim do handler. */
+const neutralizarConclusaoAutomaticaDepois = (wsId, motivo, opcoes) => setTimeout(() => { try { neutralizarConclusaoAutomatica(wsId, motivo, opcoes) } catch (e) { console.error('[segurança]', e.message) } }, 0)
+
 /** Pré-requisitos da conclusão automática numa loja (fora do momento de desligar a aprovação). */
 const podeConclusaoAutomatica = (estado, wsId, loja) =>
   modoDaLoja(loja) === 'novo' && loja?.novoEnvioAutomatico === true && estado.config.automacaoAtiva === true
@@ -512,15 +578,34 @@ function neutralizarConclusaoAutomatica(wsId, motivo, { por = 'sistema (seguran�
     if (lojaId && (t.lojaId ?? 'loja1') !== lojaId) continue
     const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
     if (podeConclusaoAutomatica(estado, wsId, loja)) continue
-    cp.status = 'interrompida'; cp.interrompidaEm = new Date().toISOString(); cp.motivoInterrupcao = motivo
+    // a continuação passa a ser MANUAL de verdade: o id e os dados da solução ficam,
+    // a origem automática vira auditoria e o relatório automático fica proibido para sempre
+    cp.modoOriginal = cp.modoOriginal ?? cp.modo
+    cp.modo = 'manual'
+    cp.relatorioAutomaticoProibido = true
+    cp.interrompidaEm = new Date().toISOString(); cp.motivoInterrupcao = motivo
+    cp.autoHistorico = [...(cp.autoHistorico ?? []), { de: 'automatico', para: 'manual', em: cp.interrompidaEm, motivo, por }]
     t.enviaEm = undefined
     an.proximoEnvioMinimo = undefined
     an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: motivo, em: cp.interrompidaEm, evento: 'conclusao_interrompida' })
-    an.aguardando = 'humano'
-    t.status = 'humano'
-    t.motivoEscalada = `${motivo} Cliente aceitou ${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita} — aprove para gerar a confirmação.`
-    t.decisaoPendente = decisaoDaOferta(FASES[cp.faseAceita]?.oferta ?? null)
-    t.resolucao = `Aceite pendente: ${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita}`
+    if (cp.status === 'aguardando_dados') {
+      // ainda falta dado do cliente (endereço da troca/reenvio): a COLETA continua.
+      // O rascunho da pergunta fica em Aprovações para envio manual; a conversa segue
+      // esperando o cliente. Nada de "aguardando: humano" preso, nada de etapa pulada.
+      cp.status = 'aguardando_dados'
+      t.status = t.status === 'humano' ? 'humano' : 'aprovacao'
+    } else {
+      // confirmação pendente: o rascunho/transição antigos são invalidados — o clique do
+      // dono regera e revalida a confirmação certa
+      cp.status = 'interrompida'
+      if (FASES[an.transicaoPendente?.para]?.confirmacao) { an.transicaoPendente = null; an.rascunhoGerado = undefined; t.rascunho = undefined; t.rascunhoTraducao = undefined }
+      an.aguardando = 'humano'
+      an.acaoAceita = an.acaoAceita ?? cp.faseAceita
+      t.status = 'humano'
+      t.motivoEscalada = `${motivo} Cliente aceitou ${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita} — aprove para gerar a confirmação.`
+      t.decisaoPendente = decisaoDaOferta(FASES[cp.faseAceita]?.oferta ?? null)
+      t.resolucao = `Aceite pendente: ${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita}`
+    }
     n++
   }
   if (n) salvar(wsId)
@@ -1483,18 +1568,28 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   // tentativa, para reconciliar pela caixa de enviados se o servidor cair durante o envio
   const confirmandoAceite = modoNovo && transicao && FASES[transicao.para]?.confirmacao && an?.conclusaoPendente
   const cpEnvio = confirmandoAceite ? an.conclusaoPendente : null
+  let finalizarConfirmacao = null // fase conf_* a fechar no fim (estado final atômico)
   if (cpEnvio && !cpEnvio.mensagemConfirmacaoId) cpEnvio.mensagemConfirmacaoId = `atendo-${cpEnvio.id}`
   const mensagemId = cpEnvio?.mensagemConfirmacaoId ?? `atendo-${crypto.randomUUID()}`
   if (cpEnvio && cpEnvio.status !== 'concluida') {
-    // janela crítica: grava "enviando" + o Message-ID ANTES de chamar o canal, e persiste de verdade
+    // JANELA CRÍTICA: "enviando" + Message-ID precisam estar PERSISTIDOS antes de qualquer
+    // canal ser chamado. Se a gravação falhar, nada é enviado (falha fechada) e o estado
+    // em memória volta ao que era, para o caso ficar seguro para o dono.
+    const statusAntes = cpEnvio.status
     cpEnvio.status = 'enviando'; cpEnvio.envioIniciadoEm = new Date().toISOString()
-    await gravarAgora(wsId)
+    try {
+      await gravarCritico(wsId)
+    } catch (err) {
+      cpEnvio.status = statusAntes; cpEnvio.envioIniciadoEm = undefined
+      throw new Error(`Confirmação não enviada — ${err.message}`)
+    }
   }
   if (simulado === 'ok') { registrarEnvioSimulado(mensagemId); enviou = true }
   else if (simulado === 'falha') throw new Error('Envio simulado falhou')
   else if (canal) { await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto, messageId: mensagemId }); enviou = true }
-  // ponto de queda controlado (só em teste): o canal confirmou, o servidor morre antes de gravar
-  if (enviou && cpEnvio && process.env.ATENDO_TESTE_QUEDA === '1') { console.error('[teste] queda proposital depois do envio, antes da gravação'); process.exit(7) }
+  // pontos de queda controlados: SÓ com o canal simulado (ATENDO_SIMULAR=1 + ATENDO_SMTP_FAKE),
+  // nunca por uma variável solta em produção. 'antes' = depois do canal e antes da gravação final.
+  if (enviou && cpEnvio && simulado && process.env.ATENDO_TESTE_QUEDA === 'antes') { console.error('[teste] queda proposital depois do envio, antes da gravação'); process.exit(7) }
   // modo novo: a fase só muda depois de um canal real enviar com sucesso — sem
   // canal, nem envia (nada abaixo é executado, então nada muda no ticket)
   if (modoNovo && !enviou) {
@@ -1505,8 +1600,9 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
     confirmarTransicao(an, { para: transicao.para, mensagem: transicao.mensagem, observacao: transicao.observacao })
     an.proximoEnvioMinimo = undefined
     an.rascunhoGerado = undefined
-    // confirmação enviada de verdade: conclusão fechada; no modo automático, linha única no relatório
-    if (FASES[transicao.para]?.confirmacao) { concluirAposEnvio(estado, wsId, ticket, transicao.para, mensagemId); await gravarAgora(wsId) }
+    // a conclusão, o relatório e os campos do ticket são finalizados JUNTOS, no fim desta função,
+    // numa única gravação crítica — nunca metade persistida (ver "estado final atômico")
+    if (FASES[transicao.para]?.confirmacao) finalizarConfirmacao = transicao.para
   } else if (modoNovo && an) {
     // resposta humana sem transição (com produto informado): sai pela conta própria, sem inventar fase
     an.proximoEnvioMinimo = undefined
@@ -1534,6 +1630,17 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   ticket.respondidoEm = new Date().toISOString()
   ticket.enviaEm = undefined
   ticket.lido = true
+
+  // ESTADO FINAL ATÔMICO da confirmação: transição, conclusão, Message-ID, resposta,
+  // origem, respondidoEm, status "enviado", agendamento removido e (só no automático de
+  // verdade) a linha do relatório — tudo em memória e UMA gravação crítica. Se o servidor
+  // cair antes dela, o estado persistido continua "enviando" e o arranque reconcilia.
+  if (finalizarConfirmacao) {
+    concluirAposEnvio(estado, wsId, ticket, finalizarConfirmacao, mensagemId)
+    if (simulado && process.env.ATENDO_TESTE_QUEDA === 'depois-memoria') { console.error('[teste] queda proposital com o estado final só em memória'); process.exit(8) }
+    await gravarCritico(wsId)
+    if (simulado && process.env.ATENDO_TESTE_QUEDA === 'depois') { console.error('[teste] queda proposital depois da gravação final'); process.exit(9) }
+  }
 }
 
 const enviando = new Set()
@@ -1555,6 +1662,12 @@ agendar(async () => {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
           if (anL.aprovacaoObrigatoria) { t.enviaEm = undefined; continue }
           if (FASES[anL.transicaoPendente.para]?.confirmacao && anL.conclusaoPendente?.status === 'concluida') { t.enviaEm = undefined; anL.transicaoPendente = null; t.rascunho = undefined; continue } // idempotência: nunca duas confirmações
+          // ÚLTIMA conferência antes do envio: confirmação automática só sai se os pré-requisitos
+          // continuarem válidos neste instante — senão vira aprovação manual com segurança
+          if (FASES[anL.transicaoPendente.para]?.confirmacao && anL.conclusaoPendente?.modo === 'automatico' && !anL.conclusaoPendente.aprovadoEm && !podeConclusaoAutomatica(estado, wsId, lojaL)) {
+            neutralizarConclusaoAutomatica(wsId, 'Conclusão automática interrompida porque a loja perdeu os pré-requisitos automáticos.', { por: 'sistema (conferência antes do envio)', lojaId: t.lojaId ?? 'loja1' })
+            continue
+          }
           // cadência reconferida no momento do envio: nunca antes de 3 min / 5 h da mensagem mais recente do cliente
           const minimoL = horarioMinimoEnvio(t, agora)
           if (agora < minimoL) { t.enviaEm = minimoL; anL.proximoEnvioMinimo = new Date(minimoL).toISOString(); continue }
@@ -2312,6 +2425,8 @@ app.post('/api/lojas/:id/email', async (req, res) => {
 })
 
 app.delete('/api/lojas/:id/email', (req, res) => {
+  // sem caixa própria não existe conclusão automática: protege ANTES de remover a conta
+  neutralizarConclusaoAutomaticaDepois(req.wsId, 'Conclusão automática interrompida porque a conta de e-mail da loja foi removida.', { por: req.usuario?.nome || req.usuario?.email || 'lojista', lojaId: req.params.id })
   const loja = req.estado.lojas.find(l => l.id === req.params.id)
   if (loja) {
     delete loja.emailCfg
@@ -3010,8 +3125,10 @@ app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
   if (!faseId) {
     return res.status(400).json({ erro: `Não há confirmação prevista para "${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}".`, state: visao(req.wsId) })
   }
+  // pré-condições do mapa em TODA conclusão aprovada pelo dono — inclusive quando o estado
+  // anterior era "interrompida" (automática convertida) ou "aguardando_dados"
   const cpA = an.conclusaoPendente
-  if (cpA && cpA.faseAceita === an.acaoAceita && cpA.status === 'aguardando_aprovacao') {
+  if (cpA && cpA.faseAceita === an.acaoAceita && !['concluida', 'cancelada', 'recusada'].includes(cpA.status)) {
     const faltando = faltaParaConcluir(req.estado, req.wsId, t, cpA).filter(f => !/caixa de e-mail/.test(f))
     if (faltando.length) return res.status(400).json({ erro: `Antes de confirmar: ${faltando.join('; ')}.`, faltando, state: visao(req.wsId) })
   }
@@ -3592,7 +3709,7 @@ async function iniciar() {
   fixarMotorDasConversas()
   neutralizarAutoEnvioNoPiloto()
   for (const wsId of workspaces.keys()) neutralizarConclusaoAutomatica(wsId, 'Conclusão automática interrompida porque a loja não tem mais todos os pré-requisitos (envio automático, automação geral, piloto ou caixa própria).', { por: 'sistema (arranque)' })
-  for (const wsId of workspaces.keys()) await reconciliarEnviosInterrompidos(wsId)
+  for (const wsId of workspaces.keys()) { corrigirConfirmacoesMeioGravadas(wsId); await reconciliarEnviosInterrompidos(wsId) }
   migrarCasosSemProduto()
 
   servidorHttp = app.listen(PORT, async () => {
