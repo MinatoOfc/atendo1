@@ -209,32 +209,19 @@ function sugestaoRelatorio(t: Ticket, fasesNovo?: Record<string, { oferta: { tip
   return partes.join(' ')
 }
 
-/** Motor desta conversa (nasce com ela e não muda com a loja) + migração manual, individual e confirmada. */
+/** Motor desta conversa: definido no nascimento (data real do primeiro e-mail × ativação do novo) e nunca muda. Não existe migração. */
 function PainelMotor({ t }: { t: Ticket }) {
-  const { lojas, migrarConversaParaNovo } = useStore()
-  const [confirmando, setConfirmando] = useState(false)
+  const { lojas } = useStore()
   const loja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-  const motor = t.motor ?? (t.atendimentoNovo ? 'novo' : 'classico')
+  const motor = t.motorAtendimento ?? t.motor ?? (t.atendimentoNovo ? 'novo' : 'classico')
   const lojaNovo = loja?.modoAtendimento === 'novo'
-  const aberta = ['inbox', 'aprovacao', 'humano'].includes(t.status)
   if (motor === 'novo' && !lojaNovo) {
-    return <div className="muted-sm" style={{ marginBottom: 10 }}>Motor desta conversa: <b>novo</b> — a loja voltou ao clássico, mas esta conversa segue suas fases até o fim.</div>
+    return <div className="muted-sm" style={{ marginBottom: 10 }}>Motor desta conversa: <b>novo</b> — a loja voltou ao clássico, mas esta conversa segue suas etapas até o fim. O motor de uma conversa nunca muda.</div>
   }
   if (motor === 'classico' && lojaNovo) {
     return (
       <div className="card" style={{ padding: 12, marginBottom: 12, fontSize: 12.5 }}>
-        <div>Motor desta conversa: <b>clássico</b> (começou antes de a loja mudar para o novo). Ela continua no clássico até terminar.</div>
-        {aberta && !confirmando && <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setConfirmando(true)}>Migrar esta conversa para o novo (começa pela triagem)</button>}
-        {confirmando && (
-          <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--panel-soft)', borderRadius: 8 }}>
-            <div style={{ marginBottom: 6 }}>Confirma migrar <b>só esta conversa</b> para o motor novo? Ela recomeça pela triagem, o rascunho atual é descartado e o histórico fica guardado. Isso não muda as outras conversas.</div>
-            <div className="row gap-8">
-              <button className="btn btn-sm btn-primary" onClick={() => { setConfirmando(false); migrarConversaParaNovo(t.id) }}><Check size={13} /> Confirmar migração</button>
-              <button className="btn btn-sm" onClick={() => setConfirmando(false)}>Cancelar</button>
-            </div>
-          </div>
-        )}
-        {(t.motorHistorico?.length ?? 0) > 0 && <div className="muted-sm" style={{ marginTop: 4 }}>migrada: {t.motorHistorico!.map(h => `${h.de} → ${h.para} (${h.por})`).join('; ')}</div>}
+        <div>Motor desta conversa: <b>clássico</b> — o primeiro e-mail chegou antes de a loja ativar o novo. Ela fica no clássico para sempre; o motor de uma conversa nunca muda e não existe migração.</div>
       </div>
     )
   }

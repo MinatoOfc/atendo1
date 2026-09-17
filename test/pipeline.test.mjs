@@ -35,15 +35,15 @@ estado.config.atrasoMinutos = 0.1 // 6 s: dá tempo de editar o rascunho antes d
 estado.config.automacaoAtiva = true
 const CUPONS = { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }
 estado.lojas = [
-  { id: 'loja1', nome: 'Loja Nova', ativa: true, moeda: 'EUR', idioma: 'de', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
+  { id: 'loja1', nome: 'Loja Nova', ativa: true, moeda: 'EUR', idioma: 'de', modoAtendimento: 'novo', novoAtivadoEm: '2026-07-01T00:00:00.000Z', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
   { id: 'loja2', nome: 'Loja Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' },
-  { id: 'loja3', nome: 'Loja Nova Automática', ativa: true, moeda: 'EUR', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: true },
-  { id: 'loja4', nome: 'Loja Nova Sem Email', ativa: true, moeda: 'USD', idioma: 'auto', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
+  { id: 'loja3', nome: 'Loja Nova Automática', ativa: true, moeda: 'EUR', idioma: 'auto', modoAtendimento: 'novo', novoAtivadoEm: '2026-07-01T00:00:00.000Z', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: true },
+  { id: 'loja4', nome: 'Loja Nova Sem Email', ativa: true, moeda: 'USD', idioma: 'auto', modoAtendimento: 'novo', novoAtivadoEm: '2026-07-01T00:00:00.000Z', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 }, novoEnvioAutomatico: false },
   { id: 'loja5', nome: 'Loja Só Prazo', ativa: true, moeda: 'EUR', idioma: 'auto', prazoEntrega: { min: 5, max: 12, processamento: 3 } }, // sem e-mail, sem cupons
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3'), pedido(81, 'loja1'), pedido(82, 'loja6'), pedido(83, 'loja6'), pedido(84, 'loja6'), pedido(85, 'loja6')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -71,6 +71,8 @@ estado.tickets = [
   semProva('sp7', 57, 'loja1', { etapa: 'qual_troca', historicoEtapas: hist(['qual_troca']), produtosAfetados: [], aguardando: 'cliente' }, { status: 'humano', motivoEscalada: 'Enviado e mantido com você' }), // sem produto, com o dono, sem ação automática
   semProva('sp8', 58, 'loja4', { etapa: null, historicoEtapas: [], produtosInformados: true, aguardando: 'cliente' }, { status: 'humano', motivoEscalada: 'Mantido com você' }), // loja SEM e-mail (nada enviado nela), produto informado
   semProva('sp9', 59, 'loja1', { etapa: 'qual_troca', historicoEtapas: hist(['qual_troca']), produtosInformados: true, aguardando: 'cliente' }, { status: 'humano', motivoEscalada: 'Mantido com você' }), // produto informado, resposta humana
+  // clássico ATRASADO há vários dias (rascunho parado, sem agendamento): o agendador do novo nunca pode capturá-lo
+  { id: 'sp10', nome: 'Antigo 81', de: 'c81@web.de', assunto: 'Bestellung #81', corpo: 'Wo ist mein Paket?', data: new Date(Date.now() - 5 * 86400_000).toISOString(), primeiroEmailEm: new Date(Date.now() - 5 * 86400_000).toISOString(), lido: true, origem: 'cliente', categoria: 'rastreio', status: 'aprovacao', idioma: 'de', lojaId: 'loja1', historico: [], motor: 'classico', motorAtendimento: 'classico', rascunho: 'Ihr Paket ist unterwegs.', geradoPorIA: true },
   semProva('sp6', 56, 'loja3', { etapa: 'reemb_25', historicoEtapas: hist(['qual_troca', 'qual_cupom_35', 'reemb_25']), aguardando: 'envio', transicaoPendente: { para: 'reemb_40', mensagem: 'nein', faltando: [] }, rascunhoGerado: TEXTO40 }, { status: 'aprovacao', rascunho: TEXTO40, geradoPorIA: true, enviaEm: Date.now() - 1000 }), // envio AUTOMÁTICO vencido
   // modo novo com produtos "afetados" e endereço contaminados de propósito (nada pode vazar)
   { id: 'n909', nome: 'Fulano da Silva Sauro', de: 'c16@web.de', assunto: 'Bestellung #16', corpo: 'ik wil mijn geld terug, Hauptstraße 5, 10115 Berlin, Deutschland', data: '2026-08-01T10:00:00.000Z', lido: true, origem: 'cliente', categoria: 'reembolso', status: 'aprovacao', idioma: 'nl', lojaId: 'loja1', historico: [], motor: 'novo',
@@ -708,7 +710,7 @@ test('modo por loja: loja sem e-mail, prazo ou cupom não ativa o novo; troca ex
   assert.equal(r.state.lojas.find(l => l.id === 'loja6').modoHistorico.length, 2)
 })
 
-test('alternância antigo → novo → antigo: cada conversa fica no motor em que nasceu; migração só manual e confirmada', async () => {
+test('alternância antigo → novo → antigo: cada conversa fica no motor em que nasceu; não existe migração', async () => {
   // loja6 no clássico: conversa A nasce clássica
   let a = await cliente(null, { de: 'c31@web.de', nome: 'C31', corpo: 'Wo ist mein Paket?', lojaId: 'loja6' })
   assert.equal(a.motor, 'classico'); assert.equal(a.atendimentoNovo, undefined); assert.equal(a.status, 'aprovacao')
@@ -733,18 +735,11 @@ test('alternância antigo → novo → antigo: cada conversa fica no motor em qu
   // conversa C nasce clássica de novo
   const c = await cliente(null, { de: 'c33@web.de', nome: 'C33', corpo: 'Tracking?', lojaId: 'loja6' })
   assert.equal(c.motor, 'classico'); assert.equal(c.atendimentoNovo, undefined)
-  // migração manual: só com a loja no novo, só conversa clássica aberta, só confirmada
-  r = await api(`/api/tickets/${c.id}/migrar-motor`, { confirmar: true }); assert.equal(r.status, 400); assert.match(r.erro, /loja .* clássico/)
+  // NÃO existe migração de conversa antiga para o novo — nem com a loja no novo, nem confirmada
   r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200)
-  r = await api(`/api/tickets/${c.id}/migrar-motor`, {}); assert.equal(r.status, 400); assert.equal(r.precisaConfirmar, true)
-  r = await api(`/api/tickets/${b.id}/migrar-motor`, { confirmar: true }); assert.equal(r.status, 400); assert.match(r.erro, /já está no motor novo/)
-  fila.push({ intencao: 'pergunta_status', motivo: 'nao_recebido' }) // a triagem do novo classifica a mensagem atual de C
-  r = await api(`/api/tickets/${c.id}/migrar-motor`, { confirmar: true }); assert.equal(r.status, 200, r.erro)
-  const c2 = await ticket(c.id)
-  assert.equal(c2.motor, 'novo'); assert.ok(c2.atendimentoNovo); assert.equal(an(c2).etapa, null, 'começa pela triagem'); assert.equal(an(c2).fluxo, 'entregue_nao_recebido', 'triagem do novo: pedido consta entregue e o cliente pergunta onde está')
-  assert.deepEqual([c2.motorHistorico[0].de, c2.motorHistorico[0].para, c2.motorHistorico[0].por], ['classico', 'novo', 'Teste'])
-  // A (clássica, aberta) NÃO foi migrada junto: migração nunca é automática
-  const a2 = await ticket(a.id); assert.equal(a2.motor, 'classico'); assert.equal(a2.atendimentoNovo, undefined)
+  r = await api(`/api/tickets/${c.id}/migrar-motor`, { confirmar: true }); assert.equal(r.status, 410); assert.match(r.erro, /não existe migração/i)
+  const c2 = await ticket(c.id); assert.equal(c2.motorAtendimento, 'classico'); assert.equal(c2.motor, 'classico'); assert.equal(c2.atendimentoNovo, undefined); assert.equal(c2.motorHistorico, undefined)
+  const a2 = await ticket(a.id); assert.equal(a2.motorAtendimento, 'classico'); assert.equal(a2.atendimentoNovo, undefined)
   await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
 })
 
@@ -1065,6 +1060,66 @@ test('cadência ponta a ponta (loja automática, envio liberado): 3 min na prime
     const k = await cliente(null, { de: 'c74@web.de', nome: 'C74', corpo: 'Wo ist mein Paket?', lojaId: 'loja2' })
     assert.equal(k.atendimentoNovo, undefined); assert.ok(k.enviaEm, 'clássico agenda pelo seletor'); perto(k.enviaEm, Date.now() + 6000, 3000, 'clássico: atrasoMinutos')
   } finally { delete process.env.ATENDO_SMTP_FAKE }
+})
+
+test('separação definitiva antigo × novo: motor gravado no nascimento pela data real do primeiro e-mail × novoAtivadoEm, nunca recalculado', async () => {
+  const iso = ms => new Date(ms).toISOString()
+  // loja6 volta ao clássico (o teste da alternância a deixou no novo)
+  let r = await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true }); assert.equal(r.status, 200, r.erro)
+  // conversa A nasce clássica (loja no clássico)
+  let a = await cliente(null, { de: 'c82@web.de', nome: 'C82', corpo: 'Wo ist mein Paket?', lojaId: 'loja6' })
+  assert.equal(a.motorAtendimento, 'classico'); assert.ok(a.primeiroEmailEm)
+  await esperar(50)
+  // ativa o novo: data e hora exatas gravadas no servidor
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200, r.erro)
+  const loja6 = r.state.lojas.find(l => l.id === 'loja6'); assert.ok(loja6.novoAtivadoEm, 'novoAtivadoEm gravado'); const ativadoEm = Date.parse(loja6.novoAtivadoEm)
+  assert.ok(Math.abs(ativadoEm - Date.now()) < 5000); assert.ok(Date.parse(a.primeiroEmailEm) < ativadoEm)
+  // e-mail recebido UM MINUTO ANTES da ativação, processado só agora (sincronização atrasada): continua clássico pela data real
+  const antes = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c83@web.de', nome: 'C83', corpo: 'Schlecht.', lojaId: 'loja6', agora: iso(ativadoEm - 60_000) })
+  assert.equal(antes.motorAtendimento, 'classico'); assert.equal(antes.atendimentoNovo, undefined); assert.equal(antes.motor, 'classico')
+  // e-mail recebido logo DEPOIS da ativação: nasce no novo
+  const depois = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c84@web.de', nome: 'C84', corpo: 'Schlecht.', lojaId: 'loja6', agora: iso(ativadoEm + 1000) })
+  assert.equal(depois.motorAtendimento, 'novo'); assert.ok(depois.atendimentoNovo); assert.equal(an(depois).transicaoPendente.para, 'qual_troca')
+  // resposta nova em thread antiga (A): continua clássica — e a resposta pelo assunto volta à conversa original, sem criar conversa nova no novo
+  const total = (await api('/api/state', null, 'GET')).state.tickets.length
+  a = await cliente(null, { de: 'c82@web.de', corpo: 'Immer noch nichts.', ticketId: a.id })
+  assert.equal(a.motorAtendimento, 'classico'); assert.equal(a.atendimentoNovo, undefined)
+  // o caminho real da caixa de entrada passa por acharConversa: a resposta pelo assunto volta à conversa original
+  const { acharConversa } = await import('../server/index.js')
+  const st = (await api('/api/state', null, 'GET')).state
+  const achada = acharConversa({ tickets: st.tickets }, 'c82@web.de', 'Re: Bestellung', 'loja6', 'Immer noch nichts.')
+  assert.ok(achada && achada.id === a.id, 'a resposta na thread antiga volta à conversa clássica original'); void total
+  // alternância novo → antigo → novo: nenhum ticket existente muda de motor
+  const antesDaTroca = Object.fromEntries(st.tickets.map(t => [t.id, t.motorAtendimento]))
+  r = await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true }); assert.equal(r.status, 200)
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200)
+  const st2 = (await api('/api/state', null, 'GET')).state
+  for (const t of st2.tickets) if (antesDaTroca[t.id]) assert.equal(t.motorAtendimento, antesDaTroca[t.id], 'motor de ' + t.id + ' não muda com a alternância')
+  assert.equal(st2.tickets.find(t => t.id === a.id).motorAtendimento, 'classico'); assert.equal(st2.tickets.find(t => t.id === depois.id).motorAtendimento, 'novo')
+  // a nova ativação tem data nova: conversa recebida entre as ativações é clássica
+  const novaAtivacao = Date.parse(st2.lojas.find(l => l.id === 'loja6').novoAtivadoEm); assert.ok(novaAtivacao > ativadoEm)
+  const entre = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c85@web.de', nome: 'C85', corpo: 'Schlecht.', lojaId: 'loja6', agora: iso(novaAtivacao - 10) })
+  assert.equal(entre.motorAtendimento, 'classico')
+  // clássico atrasado há vários dias: o agendador (3 min / 5 h) nunca o captura; nunca recebe fase, rascunho ou histórico do novo
+  await esperar(6500)
+  const s10 = await ticket('sp10'); assert.equal(s10.motorAtendimento, 'classico'); assert.equal(s10.enviaEm, undefined); assert.equal(s10.atendimentoNovo, undefined); assert.equal(s10.status, 'aprovacao'); assert.equal(s10.rascunho, 'Ihr Paket ist unterwegs.')
+  for (const t of [a, antes, entre]) { const x = await ticket(t.id); assert.equal(x.atendimentoNovo, undefined, x.id + ': clássico sem estado do novo'); assert.equal(x.motorAtendimento, 'classico') }
+  // inferência da Central (Parte 8) não altera o motor
+  const inferidos = st2.tickets.filter(t => t.inferenciaCentral)
+  assert.ok(inferidos.length > 0, 'há casos inferidos pela Central'); for (const t of inferidos) { assert.equal(t.motorAtendimento, 'classico', t.id); assert.equal(t.atendimentoNovo, undefined, t.id) }
+  // não existe rota nem botão de migração
+  r = await api(`/api/tickets/${a.id}/migrar-motor`, { confirmar: true }); assert.equal(r.status, 410)
+  const fs = await import('node:fs')
+  for (const arq of ['src/components/Tickets.tsx', 'src/store.tsx', 'src/pages/Central.tsx']) { const txt = fs.readFileSync(arq, 'utf8'); assert.ok(!/migrar-motor|migrarConversaParaNovo|Migrar esta conversa/.test(txt), arq + ' sem migração') }
+  // conversa antiga (clássica) e conversa nova (novo) do MESMO cliente/pedido não se fundem
+  const { fundirConversasDuplicadas } = await import('../server/index.js')
+  const par = [
+    { id: 'f1', nome: 'C86', de: 'c86@web.de', assunto: 'Bestellung #86', corpo: 'Wo ist #86?', data: '2026-06-01T10:00:00.000Z', primeiroEmailEm: '2026-06-01T10:00:00.000Z', lido: true, origem: 'cliente', categoria: 'rastreio', status: 'enviado', idioma: 'de', lojaId: 'loja6', historico: [], motor: 'classico', motorAtendimento: 'classico' },
+    { id: 'f2', nome: 'C86', de: 'c86@web.de', assunto: 'Bestellung #86', corpo: 'Schlecht, #86', data: iso(Date.now()), primeiroEmailEm: iso(Date.now()), lido: true, origem: 'cliente', categoria: 'reembolso', status: 'aprovacao', idioma: 'de', lojaId: 'loja6', historico: [], motor: 'novo', motorAtendimento: 'novo', atendimentoNovo: { versao: 1, fluxo: 'qualidade', etapa: null, produtosAfetados: [], historicoEtapas: [], transicaoPendente: { para: 'coleta', faltando: ['produtos'] }, aguardando: 'envio' } },
+  ]
+  const estadoF = { tickets: par, pedidos: [], lojas: [] }
+  assert.equal(fundirConversasDuplicadas(estadoF), false); assert.deepEqual(estadoF.tickets.map(t => t.id).sort(), ['f1', 'f2'])
+  await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

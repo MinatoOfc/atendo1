@@ -27,8 +27,8 @@ estado.tokenPipeline = TOKEN
 estado.config.automacaoAtiva = false
 const CUPONS = { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }
 estado.lojas = [
-  { id: 'loja1', nome: 'Von Alder', ativa: true, moeda: 'EUR', idioma: 'de', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 } },
-  { id: 'loja2', nome: 'Northway UK', ativa: true, moeda: 'GBP', idioma: 'en', modoAtendimento: 'novo', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 } },
+  { id: 'loja1', nome: 'Von Alder', ativa: true, moeda: 'EUR', idioma: 'de', modoAtendimento: 'novo', novoAtivadoEm: '2026-07-01T00:00:00.000Z', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 } },
+  { id: 'loja2', nome: 'Northway UK', ativa: true, moeda: 'GBP', idioma: 'en', modoAtendimento: 'novo', novoAtivadoEm: '2026-07-01T00:00:00.000Z', cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 } },
 ]
 const PRODUTOS = [['Polo Premium', 'Schwarz / L'], ['Hemd Classic', 'Weiß / M'], ['Chino Slim', 'Beige / 32'], ['Jacke Urban', 'Navy / XL']]
 const pedido = (n, lojaId, valor, extra = {}) => ({

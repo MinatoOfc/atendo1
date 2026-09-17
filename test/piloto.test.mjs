@@ -27,7 +27,7 @@ estado.config.atrasoMinutos = 0.05
 estado.config.automacaoAtiva = true
 const CUPONS = { 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }
 estado.lojas = [
-  { id: 'loja1', nome: 'Loja Piloto', ativa: true, moeda: 'EUR', idioma: 'auto', modoAtendimento: 'novo', novoEnvioAutomatico: true, cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 } },
+  { id: 'loja1', nome: 'Loja Piloto', ativa: true, moeda: 'EUR', idioma: 'auto', modoAtendimento: 'novo', novoAtivadoEm: '2026-07-01T00:00:00.000Z', novoEnvioAutomatico: true, cupons: CUPONS, prazoEntrega: { min: 5, max: 12, processamento: 3 } },
   { id: 'loja2', nome: 'Loja Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' },
 ]
 estado.pedidos = [1, 2, 3].map(n => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: n === 3 ? 'loja2' : 'loja1', itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }] }))

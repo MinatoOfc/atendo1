@@ -460,7 +460,10 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   o modo ativo e desde quando, a prontidão conferida no servidor (e-mail
   próprio, prazo, cupons — com o que falta listado), confirmação visual antes
   de mudar e histórico de trocas. Cada conversa fica no motor em que nasceu;
-  migrar uma conversa aberta para o novo é ação manual e confirmada dentro
+  NÃO existe migração de conversa para o novo: o motor é gravado no nascimento
+  (motorAtendimento) pela data real do primeiro e-mail × a data/hora exata da
+  ativação do novo (novoAtivadoEm) e nunca muda. (Texto antigo:) migrar uma
+  conversa aberta para o novo era ação manual e confirmada dentro
   da própria conversa.
 - **Pipeline em link externo** (Configurações → Loja → "Pipeline em link
   externo": gerar, copiar, gerar novo, revogar): página "Pipeline completo",

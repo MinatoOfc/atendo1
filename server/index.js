@@ -172,7 +172,45 @@ const catalogoFases = () => Object.fromEntries(Object.entries(FASES).map(([id, f
  * nasce (pelo modo da loja naquele dia) e não muda quando a loja troca de modo.
  * Conversas antigas sem o campo: novo se já têm estado do motor, senão clássico.
  */
-const motorDaConversa = t => (t?.motor === 'novo' || t?.motor === 'classico') ? t.motor : (t?.atendimentoNovo ? 'novo' : 'classico')
+/**
+ * Motor DEFINITIVO da conversa. Gravado em motorAtendimento no nascimento e
+ * nunca recalculado pela configuração atual da loja (nem por reabertura,
+ * status, alternância de modo, importação tardia ou assunto/pedido coincidente).
+ * Conversas antigas sem o campo: o que já tinham (motor / atendimentoNovo),
+ * fixado no arranque por fixarMotorDasConversas().
+ */
+const motorDaConversa = t => (t?.motorAtendimento === 'novo' || t?.motorAtendimento === 'classico') ? t.motorAtendimento
+  : (t?.motor === 'novo' || t?.motor === 'classico') ? t.motor : (t?.atendimentoNovo ? 'novo' : 'classico')
+/**
+ * Motor de uma conversa que NASCE agora: só pode ser "novo" se a loja está no
+ * novo E o primeiro e-mail do cliente foi realmente recebido (data real da caixa
+ * de entrada) depois de novoAtivadoEm. Tudo o que começou antes é clássico para
+ * sempre.
+ */
+function motorDeNascimento(loja, dataPrimeiroEmail) {
+  if (modoDaLoja(loja) !== 'novo' || !loja?.novoAtivadoEm) return 'classico'
+  const recebido = Date.parse(dataPrimeiroEmail), ativado = Date.parse(loja.novoAtivadoEm)
+  return Number.isFinite(recebido) && Number.isFinite(ativado) && recebido > ativado ? 'novo' : 'classico'
+}
+/** Data real do primeiro e-mail do cliente na conversa (a mais antiga registrada). */
+const primeiroEmailDe = t => {
+  const datas = [t.primeiroEmailEm, t.data, ...(t.historico ?? []).filter(m => m.autor === 'cliente').map(m => m.data)].filter(Boolean).map(d => Date.parse(d)).filter(Number.isFinite)
+  return datas.length ? new Date(Math.min(...datas)).toISOString() : null
+}
+/** Arranque: fixa o motor de toda conversa que ainda não tem o campo definitivo e a data de ativação das lojas no novo. */
+function fixarMotorDasConversas() {
+  for (const [wsId, estado] of workspaces) {
+    let mudou = false
+    for (const l of estado.lojas ?? []) {
+      if (modoDaLoja(l) === 'novo' && !l.novoAtivadoEm) { l.novoAtivadoEm = l.modoDesde || new Date().toISOString(); mudou = true }
+    }
+    for (const t of estado.tickets ?? []) {
+      if (t.motorAtendimento !== 'novo' && t.motorAtendimento !== 'classico') { t.motorAtendimento = motorDaConversa(t); t.motor = t.motorAtendimento; mudou = true }
+      if (!t.primeiroEmailEm) { const p = primeiroEmailDe(t); if (p) { t.primeiroEmailEm = p; mudou = true } }
+    }
+    if (mudou) salvar(wsId)
+  }
+}
 
 /** Cupons que o mapa usa (percentuais das fases com cupom). */
 const CUPONS_NECESSARIOS = [...new Set(Object.values(FASES).map(f => f.oferta?.cupom).filter(Boolean))].sort((a, b) => a - b)
@@ -356,7 +394,7 @@ function visaoLojas(wsId, estado) {
       idioma: l.idioma || 'auto',
       iaModelo: l.iaModelo || 'claude',
       modoAtendimento: l.modoAtendimento === 'novo' ? 'novo' : 'classico',
-      modoDesde: l.modoDesde ?? null,
+      modoDesde: l.modoDesde ?? null, novoAtivadoEm: l.novoAtivadoEm ?? null,
       modoHistorico: l.modoHistorico ?? [],
       prontidaoNovo: prontidaoModoNovo(wsId, l),
       novoEnvioAutomatico: l.novoEnvioAutomatico === true,
@@ -726,6 +764,7 @@ async function exigirColetaDeProduto(estado, wsId, t, motivoHumano) {
  * aoFalhar: 'humano' manda o caso para o lojista; 'manter' não mexe no ticket.
  */
 async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo = '', instrucaoEstilo = null, aoFalhar = 'humano' }) {
+  if (motorDaConversa(t) !== 'novo') throw new Error('conversa clássica nunca recebe rascunho, fase ou agendamento do motor novo')
   // TRAVA GLOBAL DE PRODUTO em toda saída de rascunho: sem prova, só a coleta do produto pode nascer
   if (faseId !== 'coleta' && !produtoFoiInformado(t.atendimentoNovo)) {
     const anP = t.atendimentoNovo
@@ -799,6 +838,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
 }
 
 async function processarNovo(estado, t, { agora = Date.now() } = {}) {
+  if (motorDaConversa(t) !== 'novo') throw new Error('conversa clássica nunca entra no motor novo')
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
   t.atendimentoNovo ??= novoEstado()
@@ -895,10 +935,12 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
   // e-mail passou no filtro local: guarda as imagens (a faxina limpa órfãs)
   if (wsId && anexos?.length) base.anexos = await guardarAnexos(wsId, anexos)
 
-  // o motor da conversa nasce com ela (modo da loja HOJE) e não muda depois
-  base.motor = modoDaLoja(estado.lojas.find(l => l.id === lojaId))
+  // o motor nasce com a conversa, pela DATA REAL do primeiro e-mail × novoAtivadoEm da loja, e nunca muda depois
+  base.primeiroEmailEm = base.data
+  base.motorAtendimento = motorDeNascimento(estado.lojas.find(l => l.id === lojaId), base.data)
+  base.motor = base.motorAtendimento
   // loja no modo novo: o motor de etapas cuida de tudo (classificar, decidir, escrever)
-  if (base.motor === 'novo') {
+  if (base.motorAtendimento === 'novo') {
     const rn = await processarNovo(estado, base, { agora })
     if (rn.spam) { base.status = 'spam'; base.anexos = undefined }
     return base
@@ -1250,8 +1292,9 @@ agendar(async () => {
     for (const t of vencidos) {
       enviando.add(t.id)
       try {
-        // modo novo: o rascunho pode ter sido editado depois de gerado — reconfere
-        const anL = t.atendimentoNovo
+        // modo novo: o rascunho pode ter sido editado depois de gerado — reconfere.
+        // Só conversas com motorAtendimento === 'novo' passam por aqui; o clássico nunca.
+        const anL = motorDaConversa(t) === 'novo' ? t.atendimentoNovo : null
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
           if (anL.aprovacaoObrigatoria) { t.enviaEm = undefined; continue }
@@ -1929,10 +1972,12 @@ async function importarHistorico(wsId, lojaId, prog) {
         conversa.respondidoEm = undefined
         conversa.traducao = undefined
       } else {
+        const motorAtendimento = motorDeNascimento(estado.lojas.find(l => l.id === lojaId), e.data) // data real de recebimento, não a de importação
         estado.tickets.push({
           id: uid(), nome: e.nome, de: e.de, assunto: e.assunto, corpo: e.corpo, lojaId,
-          data: e.data, lido: true, origem: 'cliente',
+          data: e.data, primeiroEmailEm: e.data, lido: true, origem: 'cliente',
           categoria: classificarLocal(texto), idioma: detectarIdiomaLocal(texto), status: 'inbox',
+          motorAtendimento, motor: motorAtendimento,
         })
       }
     }
@@ -2200,27 +2245,18 @@ app.post('/api/lojas/:id/modo', (req, res) => {
   loja.modoAtendimento = modo
   loja.modoDesde = em
   loja.modoHistorico = [...(loja.modoHistorico ?? []), { de: atual, para: modo, por: req.usuario?.nome || req.usuario?.email || 'lojista', lojaId: loja.id, em }].slice(-100)
-  // toda ativação do novo começa com o envio automático DESLIGADO, sem exceção
-  if (modo === 'novo') loja.novoEnvioAutomatico = false
+  // toda ativação do novo começa com o envio automático DESLIGADO, sem exceção;
+  // e grava a data/hora EXATA da ativação: só conversas cujo primeiro e-mail
+  // chegar depois dela nascem no motor novo
+  if (modo === 'novo') { loja.novoEnvioAutomatico = false; loja.novoAtivadoEm = em }
   salvar(req.wsId); ok(req, res)
 })
 
 /* Migração MANUAL de uma conversa aberta do clássico para o novo: individual,
    confirmada, começa pela triagem. Nunca automática; nunca ao contrário. */
-app.post('/api/tickets/:id/migrar-motor', async (req, res) => {
-  const t = acharTicket(req, res); if (!t) return
-  const loja = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
-  if (modoDaLoja(loja) !== 'novo') return res.status(400).json({ erro: 'A loja desta conversa está no clássico — só dá para migrar conversas de uma loja no modo novo.', state: visao(req.wsId) })
-  if (motorDaConversa(t) === 'novo') return res.status(400).json({ erro: 'Esta conversa já está no motor novo.', state: visao(req.wsId) })
-  if (!['inbox', 'aprovacao', 'humano'].includes(t.status)) return res.status(400).json({ erro: 'Só conversas abertas (caixa, aprovação ou com você) podem ser migradas.', state: visao(req.wsId) })
-  if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'A migração desta conversa precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
-  const em = new Date().toISOString()
-  t.motorHistorico = [...(t.motorHistorico ?? []), { de: 'classico', para: 'novo', por: req.usuario?.nome || req.usuario?.email || 'lojista', em }]
-  t.motor = 'novo'
-  t.atendimentoNovo = novoEstado() // começa pela triagem
-  t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined; t.decisaoPendente = undefined; t.motivoEscalada = undefined
-  await processarNovo(req.estado, t)
-  salvar(req.wsId); ok(req, res)
+app.post('/api/tickets/:id/migrar-motor', (req, res) => {
+  // o motor é definitivo desde o nascimento: NÃO existe migração de conversa antiga para o novo
+  res.status(410).json({ erro: 'Não existe migração de conversa para o motor novo: o motor é definido no nascimento da conversa, pela data real do primeiro e-mail, e nunca muda.', state: visao(req.wsId) })
 })
 
 app.post('/api/lojas', (req, res) => {
@@ -3238,6 +3274,7 @@ async function iniciar() {
   await db.iniciarDb()
   segredo = await db.obterSegredo()
   await carregarWorkspaces()
+  fixarMotorDasConversas()
   neutralizarAutoEnvioNoPiloto()
   migrarCasosSemProduto()
 

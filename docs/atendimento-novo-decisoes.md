@@ -483,6 +483,28 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     reiniciam) e ponta a ponta pelo pipeline real com relógio simulado (nada
     sai antes; fase e histórico intactos; clássico usa o seu atraso).
 
+47. **Separação definitiva antigo × novo (16/09)**: ao ativar o novo numa loja,
+    o servidor grava `novoAtivadoEm` (data e hora exatas). Toda conversa nasce
+    com `motorAtendimento: "classico" | "novo"` gravado DEFINITIVAMENTE
+    (`motorDeNascimento`): "novo" só quando a loja está no novo E a data real
+    do primeiro e-mail do cliente (data da caixa de entrada — `primeiroEmailEm`,
+    nunca a de importação, processamento ou o horário atual) é posterior a
+    `novoAtivadoEm`. Depois de gravado, o campo nunca é recalculado: nem por
+    resposta nova, reabertura, importação tardia, edição de status, alternância
+    de modo ou assunto/pedido coincidente. Conversas antigas sem o campo são
+    fixadas no arranque (`fixarMotorDasConversas`) com o que já tinham; lojas no
+    novo sem data ganham `modoDesde` (ou o arranque) como ativação. NÃO existe
+    migração de conversa para o novo: a rota devolve 410 e o botão foi removido;
+    a inferência da Central segue só para métricas. O agendador (3 min / 5 h) e
+    `prepararRascunhoNovo`/`processarNovo` só aceitam `motorAtendimento === "novo"`;
+    conversa clássica nunca recebe fase, rascunho, histórico ou `enviaEm` do novo.
+    Motores diferentes nunca se fundem; a resposta numa thread antiga volta à
+    conversa clássica original (`acharConversa`). Testes ponta a ponta: um
+    minuto antes/depois da ativação, importação tardia pela data real, resposta
+    em thread antiga, alternância novo → antigo → novo, clássico atrasado há
+    dias fora do agendador, inferência sem mudar o motor, rota 410 e fontes sem
+    botão, sem fusão entre motores.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

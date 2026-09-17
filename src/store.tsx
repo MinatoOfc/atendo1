@@ -66,7 +66,9 @@ export interface Ticket {
   inferenciaCentral?: InferenciaCentral
   /** motor em que esta conversa nasceu (não muda quando a loja troca de modo) */
   motor?: 'classico' | 'novo'
-  motorHistorico?: { de: string; para: string; por: string; em: string }[]
+  /** motor DEFINITIVO, gravado no nascimento pela data real do primeiro e-mail × ativação do novo; nunca muda */
+  motorAtendimento?: 'classico' | 'novo'
+  primeiroEmailEm?: string
 }
 
 export interface InferenciaCentral {
@@ -429,8 +431,6 @@ interface Store extends ServerState {
   /** Parte 8: quantos casos históricos existem, quantos já têm inferência e quantos faltam */
   /** troca o modo da loja (individual, com validação e confirmação no servidor) */
   mudarModoLoja: (id: string, modo: 'classico' | 'novo') => Promise<{ erro?: string; faltando?: { chave: string; texto: string }[] }>
-  /** migração manual e confirmada de UMA conversa aberta do clássico para o novo (começa pela triagem) */
-  migrarConversaParaNovo: (id: string) => Promise<{ erro?: string }>
   /** link externo do pipeline: gerar (cria se não houver), novo (troca o token) ou revogar */
   configurarPipelineLink: (acao: 'gerar' | 'novo' | 'revogar') => Promise<void>
   statusMigracaoCentral: () => Promise<{ candidatos: number; inferidos: number; pendentes: number; iaConfigurada: boolean; ultima: { em: string; lidos: number; custoIA: number; por: string } | null }>
@@ -717,12 +717,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     corrigirFaseCentral: (id, patch) => api(`/tickets/${id}/central/fase`, 'POST', patch).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     mudarModoLoja: async (id, modo) => {
       const r = await api(`/lojas/${id}/modo`, 'POST', { modo, confirmar: true }) as { erro?: string; faltando?: { chave: string; texto: string }[]; state?: ServerState }
-      aplicar(r)
-      return r
-    },
-    migrarConversaParaNovo: async id => {
-      const r = await api(`/tickets/${id}/migrar-motor`, 'POST', { confirmar: true })
-      if (r.erro) alert(r.erro)
       aplicar(r)
       return r
     },
