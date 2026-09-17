@@ -23,6 +23,8 @@ export interface Caso {
   /** fluxo e subfluxo reais do motor (null no clássico) */
   fluxo: string | null
   subfluxo: string | null
+  /** solução aceita (motor novo): modo fotografado no aceite e situação da confirmação */
+  conclusao: { modo: 'manual' | 'automatico'; status: string; faseAceita: string } | null
   jornada: string
   faseAtual: string | null
   faseTitulo: string

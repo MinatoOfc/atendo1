@@ -189,6 +189,7 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
   const [prazo, setPrazo] = useState({ min: 5, max: 12, processamento: 3 })
   const [cupons, setCupons] = useState<Record<string, string>>({})
   const [confirmandoAuto, setConfirmandoAuto] = useState(false)
+  const [confirmandoAceite, setConfirmandoAceite] = useState(false)
   useEffect(() => {
     setPrazo({ min: loja?.prazoEntrega?.min ?? 5, max: loja?.prazoEntrega?.max ?? 12, processamento: loja?.prazoEntrega?.processamento ?? 3 })
     setCupons(Object.fromEntries(PERCENTUAIS_CUPOM.map(p => [p, loja?.cupons?.[p] ?? ''])))
@@ -238,6 +239,39 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
           )}
         </div>
       </div>
+
+      {(() => {
+        const exige = loja?.exigirAprovacaoAceiteNovo !== false
+        const podeDesligar = emNovo && s.envioAutomaticoLiberado && s.config.automacaoAtiva && !!loja?.novoEnvioAutomatico && (loja?.prontidaoNovo?.pronto ?? false)
+        const porque = !emNovo ? 'Só no atendimento novo' : !s.envioAutomaticoLiberado ? 'Bloqueado durante o piloto' : !s.config.automacaoAtiva ? 'Ligue a automação geral' : !loja?.novoEnvioAutomatico ? 'Ligue o envio automático desta loja' : !(loja?.prontidaoNovo?.pronto ?? false) ? 'Falta caixa própria, prazo ou cupons' : ''
+        return (
+          <div className="row spread mb-12" style={{ alignItems: 'flex-start' }}>
+            <button className={'switch' + (exige ? ' on' : '')} disabled={!emNovo || (exige && !podeDesligar)}
+              onClick={() => { if (!exige) s.atualizarLoja(lojaId, { exigirAprovacaoAceiteNovo: true }); else setConfirmandoAceite(true) }}
+              title={exige ? (podeDesligar ? 'Ligado — clique para desligar (com confirmação)' : porque || 'Ligado') : 'Desligado — clique para voltar à aprovação humana'} />
+            <div>
+              <b style={{ fontSize: 13.5 }}>Exigir minha aprovação após o aceite</b>
+              <div className="muted-sm" style={{ lineHeight: 1.5 }}>
+                A IA negocia normalmente pelo mapa nos dois casos. <b>Ligado (padrão):</b> quando o cliente aceitar uma proposta, o caso vem
+                para você e nada é confirmado antes da sua aprovação. <b>Desligado:</b> a confirmação da solução aceita sai sozinha
+                após a cadência de 5 horas e o caso entra no relatório diário. Reembolso de 100%, cancelamento, foto de defeito,
+                dados faltando e casos sensíveis continuam sempre com você. Toda ativação do novo volta para "ligado".
+                {porque && exige && <> <b>{porque}.</b></>}
+              </div>
+              {confirmandoAceite && (
+                <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--panel-soft)', borderRadius: 8, fontSize: 12.5 }}>
+                  <div style={{ marginBottom: 6 }}>A IA continuará negociando normalmente. Depois que o cliente aceitar, a confirmação será enviada automaticamente após a cadência de 5 horas e o caso será incluído no relatório diário.</div>
+                  <div className="row gap-8">
+                    <button className="btn btn-sm btn-primary" onClick={() => { setConfirmandoAceite(false); s.atualizarLoja(lojaId, { exigirAprovacaoAceiteNovo: false, confirmar: true }) }}><Check size={13} /> Confirmar e desligar a aprovação</button>
+                    <button className="btn btn-sm" onClick={() => setConfirmandoAceite(false)}>Cancelar</button>
+                  </div>
+                </div>
+              )}
+              {(loja?.aceiteHistorico?.length ?? 0) > 0 && <div className="muted-sm" style={{ marginTop: 4, fontSize: 11.5 }}>auditoria: {loja!.aceiteHistorico!.slice(-3).map(h => `${h.por}: ${h.de ? 'ligado' : 'desligado'} → ${h.para ? 'ligado' : 'desligado'} (${new Date(h.em).toLocaleString('pt-BR')})`).join('; ')}</div>}
+            </div>
+          </div>
+        )
+      })()}
 
       <div className="field" style={{ marginBottom: 12 }}>
         <label>Prazo de entrega prometido (dias úteis)</label>

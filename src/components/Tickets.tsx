@@ -229,7 +229,7 @@ function PainelMotor({ t }: { t: Ticket }) {
 }
 
 function PainelFaseNovo({ t }: { t: Ticket }) {
-  const { fasesNovo, jornadasNovo, lojas, validarFotoNovo, confirmarAceiteNovo } = useStore()
+  const { fasesNovo, jornadasNovo, lojas, validarFotoNovo, confirmarAceiteNovo, recusarAceiteNovo } = useStore()
   const an = t.atendimentoNovo
   if (!an || !fasesNovo) return null
   const titulo = (id?: string | null) => (id ? fasesNovo[id]?.titulo ?? id : '')
@@ -271,6 +271,47 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
         {an.ofertaEnviadaEm && fase?.oferta && <span className="muted-sm"> · enviada {quando(an.ofertaEnviadaEm)}</span>}
       </LinhaFase>
       <LinhaFase rotulo="Aguardando">{aguardando}</LinhaFase>
+      {(() => {
+        const loja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+        const cp = an.conclusaoPendente
+        const modoAceite = cp ? cp.modo : (loja?.exigirAprovacaoAceiteNovo !== false ? 'manual' : 'automatico')
+        const ativa = cp && !['concluida', 'cancelada', 'recusada'].includes(cp.status)
+        if (!ativa) {
+          return (
+            <LinhaFase rotulo="Negociação">
+              Negociação automática pelo mapa · fase atual: <b>{fase ? fase.titulo : 'triagem'}</b>
+              {an.ofertaAtual ? <> · última oferta: {descreverOferta(an.ofertaAtual)}</> : null}
+              {fase?.aoRecusar ? <> · se recusar → {titulo(fase.aoRecusar)}</> : null}
+              {' '}· depois do aceite: <b>{modoAceite === 'manual' ? 'aprovação humana' : 'conclusão automática'}</b>
+            </LinhaFase>
+          )
+        }
+        const dinheiro = (v: number | null) => (v == null ? '—' : `${v.toFixed(2).replace('.', ',')} ${cp!.moeda}`)
+        const dados = [
+          `proposta: ${titulo(cp!.faseAceita)}`,
+          cp!.percentual ? `${cp!.percentual}% = ${dinheiro(cp!.valor)}` : null,
+          cp!.cupom ? `cupom ${cp!.cupom}` : null,
+          cp!.produtos.length ? `produtos: ${cp!.produtos.join('; ')}` : null,
+          cp!.endereco ? `endereço: ${cp!.endereco}` : null,
+        ].filter(Boolean).join(' · ')
+        if (cp!.modo === 'manual') {
+          return (
+            <LinhaFase rotulo="Aceite">
+              <b>Cliente aceitou — aguardando sua aprovação.</b> {dados}
+              {cp!.status === 'aguardando_aprovacao' ? ' · nenhum envio agendado antes da sua aprovação' : cp!.status === 'aguardando_cadencia' ? ` · confirmação autorizada; sai a partir de ${an.proximoEnvioMinimo ? quando(an.proximoEnvioMinimo) : 'agora'}` : ''}
+            </LinhaFase>
+          )
+        }
+        return (
+          <LinhaFase rotulo="Aceite">
+            <b>Cliente aceitou — confirmação automática.</b> {dados}
+            {cp!.status === 'aguardando_dados' ? ` · faltam: ${(cp!.faltando ?? ['endereço completo']).join('; ')}` : ''}
+            {cp!.status === 'aguardando_cadencia' ? ` · confirmação agendada; horário mínimo: ${an.proximoEnvioMinimo ? quando(an.proximoEnvioMinimo) : 'agora'}` : ''}
+            {cp!.status === 'falha' ? ` · falha: ${cp!.falha}` : ''}
+            {' '}· relatório: {t.relatorioAuto ? 'registrado automaticamente' : 'só depois do envio real da confirmação'}
+          </LinhaFase>
+        )
+      })()}
       <LinhaFase rotulo="Idioma da conversa">
         {an.idioma
           ? <>{nomeIdioma[an.idioma] ?? an.idioma}{an.idiomaOriginal && an.idiomaOriginal.toLowerCase() !== an.idioma ? ` (${an.idiomaOriginal})` : ''}{an.idiomaIncerto ? ' · ainda incerto (mensagem curta)' : ''}</>
@@ -318,11 +359,16 @@ function PainelFaseNovo({ t }: { t: Ticket }) {
           <div style={{ fontSize: 12.5, marginBottom: 6 }}>
             {fasesNovo[an.acaoAceita]?.decisaoDono
               ? <>O caso chegou a <b>{titulo(an.acaoAceita)}</b>. Se você conceder, gere a confirmação ao cliente.</>
-              : <>O cliente aceitou <b>{titulo(an.acaoAceita)}</b>. Ao aprovar, a IA escreve a confirmação{descreverConfirmacao(fasesNovo[an.acaoAceita]?.oferta?.tipo)} — ela passa pela Aprovações antes de sair.</>}
+              : <>O cliente aceitou <b>{titulo(an.acaoAceita)}</b>. Ao aprovar, a IA escreve a confirmação{descreverConfirmacao(fasesNovo[an.acaoAceita]?.oferta?.tipo)} — ela sai na cadência (5 h da última mensagem do cliente; se já passou, na hora){an.conclusaoPendente?.faltando?.length ? <> — antes disso falta: {an.conclusaoPendente.faltando.join('; ')}</> : null}.</>}
           </div>
-          <button className="btn btn-sm btn-primary" onClick={() => confirmarAceiteNovo(t.id)}>
-            <CheckCheck size={13} /> Aprovar e gerar a confirmação
-          </button>
+          <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+            <button className="btn btn-sm btn-primary" onClick={() => confirmarAceiteNovo(t.id)}>
+              <CheckCheck size={13} /> Aprovar e gerar a confirmação
+            </button>
+            {!fasesNovo[an.acaoAceita]?.decisaoDono && an.conclusaoPendente?.status === 'aguardando_aprovacao' && (
+              <button className="btn btn-sm" onClick={() => recusarAceiteNovo(t.id)}><X size={13} /> Recusar / corrigir a decisão</button>
+            )}
+          </div>
         </div>
       )}
       <div style={{ marginTop: 8 }}>

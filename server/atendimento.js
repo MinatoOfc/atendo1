@@ -285,7 +285,8 @@ export function novoEstado() {
     subfluxo: null,          // não recebido: 'status' | 'cancelamento' | 'nao_chegou' | 'recusado' | 'entregue'
     etapa: null,
     produtosAfetados: [],
-    produtosInformados: false, // true só quando o CLIENTE informou e o produto casou com um item real do pedido
+    produtosInformados: false,
+    conclusaoPendente: null,   // solução aceita pelo cliente (fotografa o modo manual/automático no instante do aceite)
     motivo: null,
     ajusteTamanho: null,
     fotoSolicitada: false,
@@ -576,6 +577,22 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
   if (an.aguardandoProduto && an.proximaAposColeta && pedido) {
     if (semProduto(an)) return travaProduto(saida, an.proximaAposColeta)
     return retomarPendencia(saida, agora)
+  }
+
+  // --- conclusão AUTOMÁTICA em espera (confirmação agendada / endereço pendente): a nova mensagem reclassifica ---
+  const cp = an.conclusaoPendente
+  if (cp && cp.modo === 'automatico' && ['aguardando_cadencia', 'enviando'].includes(cp.status) && pedido) {
+    if (cls.intencao === 'recusa' || cls.intencao === 'pede_reembolso' || cls.intencao === 'pede_cancelamento' || cls.intencao === 'pede_troca') {
+      // o cliente voltou atrás depois de aceitar: divergência entre aceite e pedido atual → sempre o dono
+      cp.status = 'cancelada'; cp.canceladaEm = new Date(agora).toISOString(); cp.motivoCancelamento = 'cliente voltou atrás depois do aceite'
+      an.aguardando = 'humano'
+      saida.humano = `Cliente aceitou "${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita}" e depois voltou atrás — decida você (a confirmação automática foi cancelada)`
+      return saida
+    }
+    // agradecimento, dado extra ou reforço do aceite: a confirmação continua a mesma, reagendada 5 h após esta mensagem
+    saida.fase = faseDeConfirmacao(cp.faseAceita)
+    saida.reconfirmar = true
+    return saida
   }
 
   // --- já está com o dono: não mexe (mas sem produto informado, nem o dono decide: pede o produto antes) ---

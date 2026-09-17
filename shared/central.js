@@ -193,9 +193,11 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
           : NOME_MOTIVO[an.motivo] ? an.motivo : 'nao_informado'
       produto = an.produtosAfetados?.length ? an.produtosAfetados.join('; ') : null
       comVoce = an.aguardando === 'humano'
-      if (an.acaoAceita) {
-        const d = desfechoDaOferta(fases[an.acaoAceita]?.oferta ?? null); desfecho = d.desfecho; percentual = d.percentual
-        acaoPendente = comVoce ? an.acaoAceita : null
+      const cpC = an.conclusaoPendente && !['cancelada', 'recusada'].includes(an.conclusaoPendente.status) ? an.conclusaoPendente : null
+      if (an.acaoAceita || cpC) {
+        const faseAceitaC = an.acaoAceita ?? cpC.faseAceita
+        const d = desfechoDaOferta(fases[faseAceitaC]?.oferta ?? null); desfecho = d.desfecho; percentual = d.percentual
+        acaoPendente = comVoce ? faseAceitaC : (cpC && cpC.status !== 'concluida' ? faseAceitaC : null)
         escalouAoDono = comVoce && !!fases[an.acaoAceita]?.decisaoDono
         if (percentual != null) situacaoReembolso = (confirmacaoEnviada || t.relatorioProcessado) ? 'efetivado' : 'aceite_pendente'
       } else if (t.status === 'enviado' && /^Encerrada/.test(t.resolucao ?? '')) desfecho = 'encerrado'
@@ -259,6 +261,7 @@ export function montarCasos(tickets, pedidos, lojas, fases) {
       pendente: an?.transicaoPendente?.para ?? null,
       desfecho, percentual, reembolsado, concluido, comVoce, acaoPendente, escalouAoDono,
       situacaoReembolso, confirmacaoEnviada, inferidaPor, inferencia: inf, motivoCategoria, fluxo, subfluxo,
+      conclusao: an?.conclusaoPendente ? { modo: an.conclusaoPendente.modo, status: an.conclusaoPendente.status, faseAceita: an.conclusaoPendente.faseAceita } : null,
       dataMs: new Date(pedido?.criadoEm ? pedido.criadoEm + 'T12:00:00' : t.data).getTime(),
       ajuste: t.centralAjuste ?? null,
       historicoAjustes: t.centralHistorico ?? [],

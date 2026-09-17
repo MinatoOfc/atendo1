@@ -359,6 +359,14 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
   cupons exigidos pela fase, idioma, nome e assinatura da loja. Uma regra da
   base nunca complementa, antecipa ou contradiz uma fase; se a IA do novo
   falhar, o caso vai ao dono sem fallback clássico.
+- **Depois do aceite** (Configurações → Loja → "Exigir minha aprovação após o
+  aceite", ligado por padrão): a IA negocia igual nos dois modos; ligado, o
+  aceite de uma proposta vai para você e nada é confirmado antes da sua
+  aprovação; desligado (só com piloto liberado, automação e envio automático
+  da loja, caixa própria, prazo e cupons, e confirmação explícita), a
+  confirmação da solução aceita sai sozinha 5 h após a última mensagem do
+  cliente e o caso entra no relatório diário com uma linha única. 100%,
+  cancelamento, foto de defeito e qualquer dado faltando continuam com você.
 - **Todo aceite vai para o dono** (troca e reenvio pedem o endereço completo
   antes). Reembolso de 100% e cancelamento também. Ao aprovar ("Aprovar e
   gerar a confirmação", no card da conversa), a IA escreve a confirmação:

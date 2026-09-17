@@ -40,6 +40,8 @@ export interface Ticket {
   resolucao?: string
   relatorioDia?: string
   relatorioTexto?: string
+  /** linha criada sozinha pelo motor novo depois do envio real da confirmação (uma por aceite) */
+  relatorioAuto?: { eventoId: string; solucao: string; percentual: number | null; valor: number | null; moeda: string; cupom: string | null; confirmacaoEnviadaEm: string; origem: string }
   /** linha final editada à mão — tem prioridade sobre a montada automaticamente */
   relatorioLinha?: string
   /** quando o dono marcou este caso como processado no link do relatório (ISO) */
@@ -127,6 +129,14 @@ export interface AtendimentoNovo {
   ofertaEnviadaEm: string | null
   aguardando: 'cliente' | 'envio' | 'humano' | null
   acaoAceita: string | null
+  /** solução aceita pelo cliente — modo (manual/automático) fotografado no instante do aceite */
+  conclusaoPendente?: {
+    id: string; faseAceita: string; tipo: string | null; jornada: string | null; modo: 'manual' | 'automatico'
+    aceitaEm: string; mensagemDoCliente?: string; percentual: number | null; valor: number | null; moeda: string; cupom: string | null; cupomPct?: number | null
+    produtos: string[]; endereco: string | null; historicoFases?: string[]
+    status: 'aguardando_dados' | 'aguardando_aprovacao' | 'aguardando_cadencia' | 'enviando' | 'concluida' | 'cancelada' | 'recusada' | 'falha'
+    faltando?: string[]; falha?: string; aprovadoPor?: string; aprovadoEm?: string; confirmadaEm?: string; recusadaEm?: string; observacao?: string
+  } | null
   /** o que o cliente já escreveu de endereço (pode estar incompleto) */
   enderecoInformado: string | null
   /** só depois de validado: rua+número, código postal e cidade */
@@ -222,6 +232,9 @@ export interface Loja {
   prontidaoNovo?: { pronto: boolean; faltando: { chave: string; texto: string }[] }
   /** modo novo: rascunhos saem sozinhos na cadência (desligado no piloto) */
   novoEnvioAutomatico?: boolean
+  /** modo novo: depois que o cliente aceita, o dono aprova (true, padrão) ou a confirmação sai sozinha e entra no relatório (false) */
+  exigirAprovacaoAceiteNovo?: boolean
+  aceiteHistorico?: { lojaId: string; por: string; de: boolean; para: boolean; em: string }[]
   /** modo novo: prazo de entrega prometido, em dias úteis */
   prazoEntrega?: { min: number; max: number; processamento: number } | null
   /** modo novo: código do cupom por percentual ("15" → "DANKE15") */
@@ -399,6 +412,7 @@ interface Store extends ServerState {
   atualizarLoja: (id: string, patch: {
     nome?: string; ativa?: boolean; idioma?: string; assinatura?: string; iaModelo?: string; modoAtendimento?: string
     novoEnvioAutomatico?: boolean; confirmar?: boolean; prazoEntrega?: { min: number; max: number; processamento: number }; cupons?: Record<string, string>
+    exigirAprovacaoAceiteNovo?: boolean
   }) => void
   criarLoja: (nome?: string) => Promise<string | null>
   removerLoja: (id: string, confirmacao: string) => Promise<string | null>
@@ -424,6 +438,8 @@ interface Store extends ServerState {
   aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual', confirmarAlteracao?: boolean) => void
   /** modo novo: você confirma se a imagem recebida comprova o defeito */
   validarFotoNovo: (id: string, valida: boolean) => void
+  /** o dono recusa/corrige o aceite pendente: nada é confirmado; a conversa fica com ele */
+  recusarAceiteNovo: (id: string) => void
   /** aceite aprovado por você: gera a confirmação ao cliente (troca/reenvio com prazo e endereço; reembolso 3–14 dias) */
   confirmarAceiteNovo: (id: string) => void
   /** Central operacional: correção manual da classificação de um caso */
@@ -713,6 +729,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       })
     },
     validarFotoNovo: (id, valida) => api(`/tickets/${id}/novo/foto`, 'POST', { valida }).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
+    recusarAceiteNovo: id => api(`/tickets/${id}/novo/recusar-aceite`, 'POST', {}).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     confirmarAceiteNovo: id => api(`/tickets/${id}/novo/confirmar`, 'POST', {}).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     corrigirFaseCentral: (id, patch) => api(`/tickets/${id}/central/fase`, 'POST', patch).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     mudarModoLoja: async (id, modo) => {

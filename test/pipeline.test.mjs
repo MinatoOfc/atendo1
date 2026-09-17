@@ -43,7 +43,7 @@ estado.lojas = [
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3'), pedido(81, 'loja1'), pedido(82, 'loja6'), pedido(83, 'loja6'), pedido(84, 'loja6'), pedido(85, 'loja6'), pedido(91, 'loja6'), pedido(92, 'loja2'), pedido(93, 'loja1'), pedido(94, 'loja3'), pedido(95, 'loja1')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3'), pedido(81, 'loja1'), pedido(82, 'loja6'), pedido(83, 'loja6'), pedido(84, 'loja6'), pedido(85, 'loja6'), pedido(91, 'loja6'), pedido(92, 'loja2'), pedido(93, 'loja1'), pedido(94, 'loja3'), pedido(95, 'loja1'), ...[101, 102].map(n => pedido(n, 'loja1')), ...[103, 104, 105, 111, 112, 113, 116, 117, 118, 119, 121, 123, 124, 125, 126, 127, 128, 129, 131, 132].map(n => pedido(n, 'loja3')), pedido(114, 'loja3', { status: 'transito', despachadoEm: '2026-08-01' }), pedido(115, 'loja3', { status: 'transito', despachadoEm: '2026-08-01' }), pedido(106, 'loja3'), pedido(122, 'loja3', { status: 'aguardando', despachadoEm: null }), pedido(130, 'loja4')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -223,7 +223,7 @@ async function cliente(cls, { de, nome, corpo, ticketId, lojaId, comImagem, agor
   return r.ticket
 }
 const aprovar = (t, extra = {}) => api(`/api/tickets/${t.id}/aprovar`, { texto: extra.texto ?? t.rascunho, origem: 'ia', ...extra })
-const comEnvio = async (modo, fn) => { process.env.ATENDO_SMTP_FAKE = modo; try { return await fn() } finally { delete process.env.ATENDO_SMTP_FAKE } }
+const comEnvio = async (modo, fn) => { const anterior = process.env.ATENDO_SMTP_FAKE; process.env.ATENDO_SMTP_FAKE = modo; try { return await fn() } finally { if (anterior === undefined) delete process.env.ATENDO_SMTP_FAKE; else process.env.ATENDO_SMTP_FAKE = anterior } }
 const esperar = ms => new Promise(r => setTimeout(r, ms))
 
 before(async () => {
@@ -1188,6 +1188,254 @@ test('Base de Conhecimento é exclusiva do clássico: marcadores conflitantes en
   const pc6 = doClassico(); assert.equal(pc6.length, 1); assert.deepEqual(temMarcador(pc6[0].system), MARCADORES, 'política, FAQ, comportamento e estilo aprendido no clássico, mesmo com a loja no novo')
   assert.equal(doNovo().length, 0)
   await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
+})
+
+/* ---------- conclusão após o aceite: aprovação humana (padrão) × conclusão automática ---------- */
+const H5 = 5 * 3600_000
+const iso = ms => new Date(ms).toISOString()
+const enviadoAte = async (id, alvo = 'enviado', max = 30) => { for (let i = 0; i < max && (await ticket(id)).status !== alvo; i++) await esperar(1000); return ticket(id) }
+/** Negocia pelo mapa até a fase alvo estar ENVIADA (recusas sucessivas), usando envio simulado. Devolve o ticket. */
+async function negociarAte(t, de, alvo, opcoes = {}) {
+  let atual = t
+  for (let i = 0; i < 10; i++) {
+    const pendente = an(atual).transicaoPendente?.para
+    assert.ok(pendente, 'há rascunho pendente em ' + de); assert.equal(atual.status, 'aprovacao', 'durante a negociação o caso não vai para o dono (' + pendente + ')')
+    const r = await comEnvio('ok', () => aprovar(atual)); assert.equal(r.status, 200, r.erro)
+    atual = await ticket(atual.id)
+    if (an(atual).etapa === alvo) return atual
+    atual = await cliente({ intencao: 'recusa', resumo: 'nein, 100%' }, { de, corpo: 'Nein! 100%!', ticketId: atual.id, ...(opcoes.agora ? { agora: opcoes.agora() } : {}) })
+    assert.equal(atual.status, 'aprovacao', 'recusa não manda ao dono; avança UMA etapa (' + de + ' em ' + an(atual).etapa + ': ' + (atual.motivoEscalada || '') + ')')
+  }
+  throw new Error('não chegou a ' + alvo)
+}
+const FASES_ESPERADAS = { qual_troca: 'qual_cupom_35', qual_cupom_35: 'reemb_25', reemb_25: 'reemb_40', reemb_40: 'reemb_50', reemb_50: 'reemb_60', reemb_60: 'reemb_70' }
+
+test('aceite — aprovação humana (padrão): a IA negocia sem escalar; só o aceite vai ao dono; nada sai antes da aprovação; nenhuma linha automática no relatório', async () => {
+  process.env.ATENDO_SMTP_FAKE = 'ok'
+  try {
+  const st0 = (await api('/api/state', null, 'GET')).state
+  assert.equal(st0.lojas.find(l => l.id === 'loja1').exigirAprovacaoAceiteNovo, true, 'padrão: exigir aprovação')
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c101@web.de', nome: 'C101', corpo: 'Schlecht.', lojaId: 'loja1' })
+  t = await negociarAte(t, 'c101@web.de', 'reemb_40')
+  assert.deepEqual(an(t).historicoEtapas.map(h => h.para), ['qual_troca', 'qual_cupom_35', 'reemb_25', 'reemb_40'], 'uma etapa por recusa')
+  // aceita o 40%
+  t = await cliente({ intencao: 'aceita', resumo: 'ok 40' }, { de: 'c101@web.de', corpo: 'Ok, 40%.', ticketId: t.id })
+  assert.equal(t.status, 'humano'); assert.match(t.motivoEscalada, /^Cliente aceitou Reembolso de 40%[^—]* — aguardando sua aprovação\.$/)
+  const cp = an(t).conclusaoPendente
+  assert.ok(cp); assert.equal(cp.modo, 'manual'); assert.equal(cp.status, 'aguardando_aprovacao'); assert.equal(cp.faseAceita, 'reemb_40'); assert.equal(cp.percentual, 40); assert.equal(cp.valor, 40); assert.equal(cp.moeda, 'EUR'); assert.equal(cp.jornada, 'qualidade')
+  assert.deepEqual(cp.produtos, ['Polo Premium (Schwarz / L)']); assert.deepEqual(cp.historicoFases, ['qual_troca', 'qual_cupom_35', 'reemb_25', 'reemb_40']); assert.ok(cp.aceitaEm); assert.match(cp.mensagemDoCliente, /40%/)
+  assert.equal(an(t).transicaoPendente, null, 'nenhuma confirmação gerada antes da aprovação'); assert.equal(t.enviaEm, undefined); assert.equal(t.relatorioDia, undefined); assert.equal(t.relatorioAuto, undefined)
+  // o dono pode recusar/corrigir
+  let u = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c102@web.de', nome: 'C102', corpo: 'Schlecht.', lojaId: 'loja1' })
+  u = await negociarAte(u, 'c102@web.de', 'qual_cupom_35')
+  u = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de: 'c102@web.de', corpo: 'Ok.', ticketId: u.id }); assert.equal(u.status, 'humano')
+  let r = await api(`/api/tickets/${u.id}/novo/recusar-aceite`); assert.equal(r.status, 200, r.erro); u = await ticket(u.id)
+  assert.equal(an(u).conclusaoPendente.status, 'recusada'); assert.equal(u.status, 'humano'); assert.equal(an(u).transicaoPendente, null); assert.equal(an(u).acaoAceita, null)
+  r = await api(`/api/tickets/${u.id}/novo/confirmar`); assert.equal(r.status, 400)
+  } finally { delete process.env.ATENDO_SMTP_FAKE }
+})
+
+test('aceite — aprovação concedida pelo dono (loja3, envio liberado): confirmação certa, autorizada e agendada; antes das 5 h não sai, depois sai; fase só muda com o envio real; sem linha automática', async () => {
+  process.env.ATENDO_SMTP_FAKE = 'ok'
+  try {
+  // A: aceite "há 4h59" → confirmação autorizada para daqui a 1 min: não sai agora
+  let a = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c103@web.de', nome: 'C103', corpo: 'Schlecht.', lojaId: 'loja3', agora: iso(Date.now() - H5 - 4 * 60_000) })
+  a = await negociarAte(a, 'c103@web.de', 'reemb_40', { agora: () => iso(Date.now() - H5 - 3 * 60_000) })
+  a = await cliente({ intencao: 'aceita', resumo: 'ok 40' }, { de: 'c103@web.de', corpo: 'Ok, 40%.', ticketId: a.id, agora: iso(Date.now() - H5 + 60_000) })
+  assert.equal(a.status, 'humano'); assert.equal(an(a).conclusaoPendente.modo, 'manual')
+  let r = await api(`/api/tickets/${a.id}/novo/confirmar`); assert.equal(r.status, 200, r.erro); a = await ticket(a.id)
+  assert.equal(an(a).transicaoPendente.para, 'conf_reembolso'); assert.match(a.rascunho, /40%/); assert.match(a.rascunho, /40,00 €/); assert.match(a.rascunho, /3 bis 14 Tagen/)
+  assert.equal(an(a).conclusaoPendente.status, 'aguardando_cadencia'); assert.ok(an(a).conclusaoPendente.aprovadoEm)
+  assert.ok(a.enviaEm && Math.abs(a.enviaEm - (Date.now() + 60_000)) < 3000, 'autorizada e agendada para as 5 h da última mensagem')
+  await esperar(6500); a = await ticket(a.id); assert.equal(a.status, 'aprovacao'); assert.equal(an(a).etapa, 'reemb_40', 'antes das 5 h a fase não muda'); assert.equal(an(a).conclusaoPendente.status, 'aguardando_cadencia')
+  // B: aceite "há mais de 5 h" → aprovado → sai agora; fase muda só depois do envio real; NENHUMA linha automática (modo manual)
+  let b = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c104@web.de', nome: 'C104', corpo: 'Schlecht.', lojaId: 'loja3', agora: iso(Date.now() - H5 - 10 * 60_000) })
+  b = await negociarAte(b, 'c104@web.de', 'qual_cupom_35', { agora: () => iso(Date.now() - H5 - 8 * 60_000) })
+  b = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de: 'c104@web.de', corpo: 'Ok, den Gutschein.', ticketId: b.id, agora: iso(Date.now() - H5 - 5000) })
+  assert.equal(b.status, 'humano')
+  r = await api(`/api/tickets/${b.id}/novo/confirmar`); assert.equal(r.status, 200, r.erro); b = await ticket(b.id); assert.ok(b.enviaEm <= Date.now() + 1000)
+  b = await enviadoAte(b.id); assert.equal(b.status, 'enviado'); assert.equal(an(b).etapa, 'conf_cupom'); assert.match(b.resposta, /KEEP35/)
+  assert.equal(an(b).conclusaoPendente.status, 'concluida'); assert.ok(an(b).conclusaoPendente.mensagemConfirmacaoId); assert.equal(b.relatorioAuto, undefined, 'modo manual: o relatório fica com o dono'); assert.equal(b.relatorioDia, undefined)
+  } finally { delete process.env.ATENDO_SMTP_FAKE }
+})
+
+test('aceite — conclusão automática (loja3 com a aprovação desligada): mesma negociação, aceite não vai ao dono, confirmação agendada para 5 h, nova mensagem reagenda, envio real cria exatamente UMA linha no relatório; idempotente', async () => {
+  process.env.ATENDO_SMTP_FAKE = 'ok'
+  try {
+  // desligar exige confirmação e todas as condições; fica na auditoria
+  let r = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: false }); assert.equal(r.status, 400); assert.equal(r.precisaConfirmar, true); assert.match(r.erro, /confirmação será enviada automaticamente após a cadência de 5 horas/)
+  r = await api('/api/lojas', { id: 'loja1', exigirAprovacaoAceiteNovo: false, confirmar: true }); assert.equal(r.status, 400, 'loja1 não tem envio automático ligado'); assert.match(r.erro, /envio automático/)
+  r = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: false, confirmar: true }); assert.equal(r.status, 200, r.erro)
+  const l3 = r.state.lojas.find(l => l.id === 'loja3'); assert.equal(l3.exigirAprovacaoAceiteNovo, false); assert.equal(l3.aceiteHistorico.at(-1).de, true); assert.equal(l3.aceiteHistorico.at(-1).para, false); assert.equal(l3.aceiteHistorico.at(-1).por, 'Teste')
+  // T1: negociação idêntica (recusas avançam uma etapa; nada vai ao dono); aceite "há 4h59" → confirmação agendada para daqui a 1 min
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c105@web.de', nome: 'C105', corpo: 'Schlecht.', lojaId: 'loja3', agora: iso(Date.now() - H5 - 4 * 60_000) })
+  t = await negociarAte(t, 'c105@web.de', 'reemb_40', { agora: () => iso(Date.now() - H5 - 3 * 60_000) })
+  assert.deepEqual(an(t).historicoEtapas.filter(h => !h.evento).map(h => h.para), ['qual_troca', 'qual_cupom_35', 'reemb_25', 'reemb_40'])
+  t = await cliente({ intencao: 'aceita', resumo: 'ok 40' }, { de: 'c105@web.de', corpo: 'Ok, 40%.', ticketId: t.id, agora: iso(Date.now() - H5 + 60_000) })
+  assert.equal(t.status, 'aprovacao', 'não vai ao dono'); const cp = an(t).conclusaoPendente
+  assert.equal(cp.modo, 'automatico'); assert.equal(cp.status, 'aguardando_cadencia'); assert.equal(cp.faseAceita, 'reemb_40'); assert.equal(cp.valor, 40)
+  assert.equal(an(t).transicaoPendente.para, 'conf_reembolso'); assert.match(t.rascunho, /40%/); assert.ok(Math.abs(t.enviaEm - (Date.now() + 60_000)) < 3000, 'agendada para 5 h após a mensagem'); assert.equal(t.relatorioDia, undefined, 'aceite pendente não é solução concluída')
+  // Central: aceite pendente, NÃO efetivado
+  let c = await api('/api/central', null, 'GET'); let reg = c.registros.find(x => x.pedidoNumero === '105'); assert.equal(reg.situacaoReembolso, 'aceite_pendente'); assert.equal(reg.conclusao.modo, 'automatico')
+  // nova mensagem durante a espera (agradecimento, 1 min depois): cancela o horário anterior, reclassifica e reagenda 5 h após ela; nada desatualizado sai
+  const idT1 = cp.id
+  t = await cliente({ intencao: 'informa', resumo: 'obrigado, aguardo' }, { de: 'c105@web.de', corpo: 'Danke, ich warte.', ticketId: t.id, agora: iso(Date.now() - H5 + 2 * 60_000) })
+  assert.equal(t.status, 'aprovacao'); assert.equal(an(t).transicaoPendente.para, 'conf_reembolso'); assert.equal(an(t).conclusaoPendente.id, idT1); assert.ok(Math.abs(t.enviaEm - (Date.now() + 2 * 60_000)) < 3000, 'reagendada'); assert.ok(an(t).historicoEtapas.some(h => h.evento === 'confirmacao_reagendada'))
+  await esperar(6500); t = await ticket(t.id); assert.equal(an(t).etapa, 'reemb_40', 'nada saiu antes das 5 h'); assert.equal(t.relatorioAuto, undefined)
+  // T2: aceite "há mais de 5 h" → envio real → fase muda, conclusão fechada, UMA linha no relatório
+  let u = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c106@web.de', nome: 'C106', corpo: 'Schlecht.', lojaId: 'loja3', agora: iso(Date.now() - H5 - 20 * 60_000) })
+  u = await negociarAte(u, 'c106@web.de', 'reemb_40', { agora: () => iso(Date.now() - H5 - 15 * 60_000) })
+  u = await cliente({ intencao: 'aceita', resumo: 'ok 40' }, { de: 'c106@web.de', corpo: 'Ok, 40%.', ticketId: u.id, agora: iso(Date.now() - H5 - 5000) })
+  const idAntes = an(u).conclusaoPendente.id; assert.equal(u.status, 'aprovacao'); assert.ok(u.enviaEm <= Date.now() + 1000, 'sai já')
+  u = await enviadoAte(u.id); assert.equal(u.status, 'enviado'); assert.equal(an(u).etapa, 'conf_reembolso'); assert.equal(an(u).historicoEtapas.filter(h => h.para === 'conf_reembolso').length, 1)
+  assert.equal(an(u).conclusaoPendente.status, 'concluida'); assert.equal(an(u).conclusaoPendente.id, idAntes)
+  assert.ok(u.relatorioDia); assert.match(u.relatorioTexto, /Reembolso de 40%[^—]* — 40% = 40,00 EUR — Polo Premium \(Schwarz \/ L\) — motor novo, conclusão automática/)
+  const ra = u.relatorioAuto; assert.equal(ra.eventoId, idAntes); assert.equal(ra.ticketId, u.id); assert.equal(ra.pedido, '#106'); assert.equal(ra.loja, 'Loja Nova Automática'); assert.equal(ra.jornada, 'qualidade'); assert.equal(ra.faseAceita, 'reemb_40'); assert.equal(ra.percentual, 40); assert.equal(ra.valor, 40); assert.equal(ra.moeda, 'EUR'); assert.equal(ra.cupom, null); assert.equal(ra.origem, 'motor novo — conclusão automática'); assert.ok(ra.aceitaEm && ra.confirmacaoEnviadaEm && ra.mensagemConfirmacaoId); assert.equal(ra.mensagemConfirmacaoId, an(u).conclusaoPendente.mensagemConfirmacaoId)
+  c = await api('/api/central', null, 'GET'); reg = c.registros.find(x => x.pedidoNumero === '106'); assert.equal(reg.situacaoReembolso, 'efetivado'); assert.equal(reg.confirmacaoEnviada, 'conf_reembolso')
+  // idempotência: o agendador roda de novo, a mesma mensagem se repete, e nada duplica
+  const foto = JSON.stringify({ hist: an(u).historicoEtapas.map(h => h.para), rel: u.relatorioAuto, dia: u.relatorioDia })
+  await esperar(6500)
+  u = await cliente({ intencao: 'informa', resumo: 'ok' }, { de: 'c106@web.de', corpo: 'Ok.', ticketId: u.id, agora: iso(Date.now() - H5 - 4000) })
+  assert.equal(u.status, 'humano', 'depois da confirmação, mensagem nova vai ao dono (nunca outra confirmação)'); assert.equal(an(u).transicaoPendente, null)
+  await esperar(1500); u = await ticket(u.id)
+  assert.equal(JSON.stringify({ hist: an(u).historicoEtapas.map(h => h.para), rel: u.relatorioAuto, dia: u.relatorioDia }), foto, 'exatamente uma confirmação e uma linha')
+  const st = (await api('/api/state', null, 'GET')).state; assert.equal(st.tickets.filter(x => x.relatorioAuto?.eventoId === idAntes).length, 1)
+  } finally { delete process.env.ATENDO_SMTP_FAKE }
+})
+
+test('aceite automático por tipo: cupom, troca (endereço antes), troca + 20%, reenvio, reenvio + 20%, reembolsos 25/50/60/70 — só a confirmação da solução aceita, todos os validadores, uma linha cada', async () => {
+  process.env.ATENDO_SMTP_FAKE = 'ok'
+  try {
+  const antes = () => iso(Date.now() - H5 - 20 * 60_000)
+  let r0 = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: false, confirmar: true }); assert.equal(r0.status, 200, r0.erro)
+  const cenarios = [
+    ['c111@web.de', 111, { intencao: 'pede_reembolso', motivo: 'qualidade' }, 'qual_cupom_35', 'conf_cupom', /KEEP35/, false],
+    ['c112@web.de', 112, { intencao: 'pede_reembolso', motivo: 'tamanho', ajustes: [{ produto: 'Polo Premium', ajuste: 'pequeno' }] }, 'tam_troca', 'conf_troca', /Umtausch|Lieferadresse/, true],
+    ['c113@web.de', 113, { intencao: 'pede_reembolso', motivo: 'tamanho', ajustes: [{ produto: 'Polo Premium', ajuste: 'grande' }] }, 'troca_20', 'conf_troca', /20%/, true],
+    ['c114@web.de', 114, { intencao: 'pede_reembolso', motivo: 'nao_recebido', situacaoEntrega: 'nao_chegou' }, 'nr_reenvio_30', 'conf_troca', /BACK30|erneut/, true],
+    ['c115@web.de', 115, { intencao: 'pede_reembolso', motivo: 'nao_recebido', situacaoEntrega: 'nao_chegou' }, 'nr_reenvio_20', 'conf_troca', /20%/, true],
+    ['c116@web.de', 116, { intencao: 'pede_reembolso', motivo: 'qualidade' }, 'reemb_25', 'conf_reembolso', /25%/, false],
+    ['c117@web.de', 117, { intencao: 'pede_reembolso', motivo: 'qualidade' }, 'reemb_50', 'conf_reembolso', /50%/, false],
+    ['c118@web.de', 118, { intencao: 'pede_reembolso', motivo: 'qualidade' }, 'reemb_60', 'conf_reembolso', /60%/, false],
+    ['c119@web.de', 119, { intencao: 'pede_reembolso', motivo: 'qualidade' }, 'reemb_70', 'conf_reembolso', /70%/, false],
+  ]
+  for (const [de, n, cls, alvo, conf, re, precisaEndereco] of cenarios) {
+    let t = await cliente(cls, { de, nome: 'C' + n, corpo: 'Problem.', lojaId: 'loja3', agora: antes() })
+    if (an(t).transicaoPendente.para === 'tam_ajuste') { const r0 = await comEnvio('ok', () => aprovar(t)); assert.equal(r0.status, 200, r0.erro); t = await cliente({ intencao: 'informa', ajustes: cls.ajustes, resumo: 'ajuste' }, { de, corpo: 'zu klein', ticketId: t.id, agora: antes() }) }
+    t = await negociarAte(t, de, alvo, { agora: antes })
+    t = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de, corpo: 'Ok!', ticketId: t.id, agora: antes() })
+    const cp = an(t).conclusaoPendente; assert.ok(cp, de); assert.equal(cp.modo, 'automatico', de); assert.equal(cp.faseAceita, alvo, de)
+    if (precisaEndereco) {
+      // troca/reenvio: pede o endereço; NÃO confirma enquanto faltar rua, número, código postal ou cidade
+      assert.equal(t.status, 'aprovacao', de); assert.equal(an(t).transicaoPendente.para, 'endereco', de + ': pede o endereço'); assert.equal(cp.status, 'aguardando_dados', de)
+      const r1 = await comEnvio('ok', () => aprovar(t)); assert.equal(r1.status, 200, r1.erro)
+      t = await cliente({ intencao: 'informa', endereco: 'Hauptstr. 5', resumo: 'rua' }, { de, corpo: 'Hauptstr. 5', ticketId: t.id, agora: antes() })
+      assert.equal(an(t).transicaoPendente.para, 'endereco', de + ': ainda falta'); assert.ok(an(t).transicaoPendente.faltando.length, 'pede só o que falta'); assert.equal(an(t).conclusaoPendente.status, 'aguardando_dados')
+      const r2 = await comEnvio('ok', () => aprovar(t)); assert.equal(r2.status, 200, r2.erro)
+      t = await cliente({ intencao: 'informa', endereco: '10115 Berlin', resumo: 'cep e cidade' }, { de, corpo: '10115 Berlin', ticketId: t.id, agora: antes() })
+      assert.equal(an(t).conclusaoPendente.id, cp.id, de + ': retoma a MESMA solução aceita'); assert.match(an(t).conclusaoPendente.endereco, /Hauptstr\. 5/)
+    }
+    assert.equal(t.status, 'aprovacao', de + ': não vai ao dono'); assert.equal(an(t).transicaoPendente.para, conf, de); assert.equal(an(t).conclusaoPendente.status, 'aguardando_cadencia', de); assert.match(t.rascunho, re, de)
+    t = await enviadoAte(t.id); assert.equal(t.status, 'enviado', de); assert.equal(an(t).etapa, conf, de); assert.equal(an(t).conclusaoPendente.status, 'concluida', de)
+    assert.equal(t.relatorioAuto.eventoId, cp.id, de); assert.equal(t.relatorioAuto.faseAceita, alvo, de); assert.match(t.relatorioTexto, /conclusão automática/)
+    if (precisaEndereco) assert.match(t.relatorioAuto.enderecoConfirmado, /Hauptstr\. 5/, de)
+  }
+  } finally { delete process.env.ATENDO_SMTP_FAKE }
+})
+
+test('aceite — sempre humano mesmo no automático: reembolso de 100%, cancelamento, defeito sem foto validada; e as falhas (texto fora da fase, percentual, valor, cupom, idioma, envio) nunca avançam fase nem criam relatório', async () => {
+  process.env.ATENDO_SMTP_FAKE = 'ok'
+  try {
+  const antes = () => iso(Date.now() - H5 - 20 * 60_000)
+  let r = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: false, confirmar: true }); assert.equal(r.status, 200, r.erro)
+  // 100%: recusas até o fim → dono
+  let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c121@web.de', nome: 'C121', corpo: 'Schlecht.', lojaId: 'loja3', agora: antes() })
+  t = await negociarAte(t, 'c121@web.de', 'reemb_70', { agora: antes })
+  t = await cliente({ intencao: 'recusa', resumo: 'nein 100' }, { de: 'c121@web.de', corpo: 'Nein! 100%!', ticketId: t.id, agora: antes() })
+  assert.equal(t.status, 'humano'); assert.equal(an(t).acaoAceita, 'reemb_100'); assert.equal(an(t).transicaoPendente, null); assert.equal(t.relatorioAuto, undefined)
+  // cancelamento de pedido não processado → dono
+  const naoProc = (await api('/api/state', null, 'GET')).state.pedidos.find(p => p.numero === '#122'); assert.ok(naoProc)
+  let k = await cliente({ intencao: 'pede_cancelamento' }, { de: 'c122@web.de', nome: 'C122', corpo: 'Stornieren!', lojaId: 'loja3', agora: antes() })
+  assert.equal(k.status, 'humano'); assert.equal(an(k).acaoAceita, 'cancel_nao_processado'); assert.equal(k.relatorioAuto, undefined)
+  // defeito: a imagem chega, mas a troca só depois da validação do dono — não automatiza
+  let d = await cliente({ intencao: 'pede_troca', motivo: 'defeito' }, { de: 'c123@web.de', nome: 'C123', corpo: 'Kaputt.', lojaId: 'loja3', comImagem: true, agora: antes() })
+  assert.equal(d.status, 'humano'); assert.equal(an(d).aguardandoComprovacao, true); assert.equal(an(d).conclusaoPendente, null)
+  // falhas na confirmação automática: rascunho editado (fora da fase / percentual / valor / cupom) e idioma errado → dono, sem fase, sem relatório
+  const casos = [
+    ['c124@web.de', 124, 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Möchten Sie das annehmen?', /não pertence mais à etapa|mudou a oferta/],
+    ['c125@web.de', 125, 'Hallo! Wir haben die Rückerstattung von 50% (50,00 €) veranlasst. Das Geld ist in 3 bis 14 Tagen wieder da.', /não pertence mais à etapa|mudou a oferta/],
+    ['c126@web.de', 126, 'Hallo! Wir haben die Rückerstattung von 40% (99,00 €) veranlasst. Das Geld ist in 3 bis 14 Tagen wieder da.', /não pertence mais à etapa|mudou a oferta/],
+    ['c127@web.de', 127, 'Hallo! Wir haben die Rückerstattung von 40% (40,00 €) veranlasst. Gutschein: FALSO99. Das Geld ist in 3 bis 14 Tagen wieder da.', /não pertence mais à etapa|mudou a oferta/],
+  ]
+  for (const [de, n, texto, re] of casos) {
+    let f = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de, nome: 'C' + n, corpo: 'Schlecht.', lojaId: 'loja3', agora: antes() })
+    f = await negociarAte(f, de, 'reemb_40', { agora: antes })
+    f = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de, corpo: 'Ok, 40%.', ticketId: f.id, agora: iso(Date.now() - H5 + 12_000) })
+    assert.equal(an(f).transicaoPendente.para, 'conf_reembolso', de)
+    await api(`/api/tickets/${f.id}/rascunho`, { texto }) // rascunho adulterado antes do horário
+    f = await enviadoAte(f.id, 'humano', 40)
+    assert.equal(f.status, 'humano', de); assert.match(f.motivoEscalada, re, de); assert.equal(an(f).etapa, 'reemb_40', de + ': fase não avança'); assert.equal(f.relatorioAuto, undefined, de); assert.equal(f.relatorioDia, undefined, de); assert.notEqual(an(f).conclusaoPendente.status, 'concluida', de)
+  }
+  // idioma errado na confirmação: regenera uma vez; se insistir, dono
+  let g = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c128@web.de', nome: 'C128', corpo: 'Schlecht.', lojaId: 'loja3', agora: antes() })
+  g = await negociarAte(g, 'c128@web.de', 'reemb_40', { agora: antes })
+  idiomaSabotado = { idioma: 'en', vezes: 2 }
+  g = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de: 'c128@web.de', corpo: 'Ok, 40%.', ticketId: g.id, agora: iso(Date.now() - H5 - 5000) })
+  idiomaSabotado = null
+  assert.equal(g.status, 'humano'); assert.match(g.motivoEscalada, /idioma/i); assert.equal(an(g).etapa, 'reemb_40'); assert.equal(g.relatorioAuto, undefined); assert.equal(an(g).conclusaoPendente.status, 'falha')
+  // falha de envio: não avança, não conclui, não registra; vai ao dono com o motivo
+  let h = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c129@web.de', nome: 'C129', corpo: 'Schlecht.', lojaId: 'loja3', agora: antes() })
+  h = await negociarAte(h, 'c129@web.de', 'reemb_40', { agora: antes })
+  h = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de: 'c129@web.de', corpo: 'Ok, 40%.', ticketId: h.id, agora: iso(Date.now() - H5 - 5000) })
+  assert.equal(an(h).transicaoPendente.para, 'conf_reembolso'); assert.ok(h.enviaEm <= Date.now() + 1000)
+  process.env.ATENDO_SMTP_FAKE = 'falha'
+  try { for (let i = 0; i < 25 && (await ticket(h.id)).status !== 'humano'; i++) await esperar(1000) } finally { process.env.ATENDO_SMTP_FAKE = 'ok' }
+  h = await ticket(h.id); assert.equal(h.status, 'humano'); assert.match(h.motivoEscalada, /Não foi possível enviar a confirmação automática: Envio simulado falhou/); assert.equal(an(h).etapa, 'reemb_40'); assert.equal(h.relatorioAuto, undefined); assert.equal(an(h).conclusaoPendente.status, 'falha'); assert.equal(an(h).conclusaoPendente.falha, 'Envio simulado falhou')
+  // loja sem e-mail próprio (loja4): a conclusão nunca é automática — dono
+  let s4 = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c130@web.de', nome: 'C130', corpo: 'Schlecht.', lojaId: 'loja4' })
+  assert.equal(an(s4).transicaoPendente.para, 'qual_troca')
+  r = await api('/api/lojas', { id: 'loja4', exigirAprovacaoAceiteNovo: false, confirmar: true }); assert.equal(r.status, 400, 'loja4 não pode desligar a aprovação')
+  void r
+  } finally { delete process.env.ATENDO_SMTP_FAKE }
+})
+
+test('aceite — mudar a configuração não mexe em aceites pendentes (modo fotografado); nova ativação do novo volta para aprovação humana; Base conflitante não altera; clássico intacto', async () => {
+  process.env.ATENDO_SMTP_FAKE = 'ok'
+  try {
+  const antes = () => iso(Date.now() - H5 - 20 * 60_000)
+  // pendente MANUAL (loja1) continua manual depois de... (loja1 nem pode desligar) — usa loja3: liga a aprovação de novo com um automático pendente
+  let a = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c131@web.de', nome: 'C131', corpo: 'Schlecht.', lojaId: 'loja3', agora: antes() })
+  a = await negociarAte(a, 'c131@web.de', 'reemb_40', { agora: antes })
+  a = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de: 'c131@web.de', corpo: 'Ok, 40%.', ticketId: a.id, agora: iso(Date.now() - H5 + 12_000) })
+  assert.equal(an(a).conclusaoPendente.modo, 'automatico'); assert.equal(an(a).conclusaoPendente.status, 'aguardando_cadencia')
+  let r = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: true }); assert.equal(r.status, 200, r.erro)
+  // o automático pendente NÃO vira manual; um aceite novo já nasce manual
+  a = await ticket(a.id); assert.equal(an(a).conclusaoPendente.modo, 'automatico'); assert.equal(a.status, 'aprovacao'); assert.ok(a.enviaEm)
+  let b = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c132@web.de', nome: 'C132', corpo: 'Schlecht.', lojaId: 'loja3', agora: antes() })
+  b = await negociarAte(b, 'c132@web.de', 'qual_cupom_35', { agora: antes })
+  b = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de: 'c132@web.de', corpo: 'Ok.', ticketId: b.id, agora: antes() })
+  assert.equal(b.status, 'humano'); assert.equal(an(b).conclusaoPendente.modo, 'manual')
+  // desligar de novo: o manual pendente NÃO é capturado retroativamente
+  r = await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: false, confirmar: true }); assert.equal(r.status, 200, r.erro)
+  b = await ticket(b.id); assert.equal(b.status, 'humano'); assert.equal(an(b).conclusaoPendente.modo, 'manual'); assert.equal(an(b).transicaoPendente, null); assert.equal(b.enviaEm, undefined)
+  // e o automático (a) segue seu curso na hora agendada: uma confirmação, uma linha
+  a = await enviadoAte(a.id, 'enviado', 40); assert.equal(an(a).etapa, 'conf_reembolso'); assert.equal(a.relatorioAuto.eventoId, an(a).conclusaoPendente.id)
+  // nova ativação do motor novo volta para aprovação humana (loja6)
+  await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
+  r = await api('/api/lojas/loja6/modo', { modo: 'novo', confirmar: true }); assert.equal(r.status, 200, r.erro)
+  const l6 = r.state.lojas.find(l => l.id === 'loja6'); assert.equal(l6.exigirAprovacaoAceiteNovo, true); assert.equal(l6.novoEnvioAutomatico, false)
+  await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
+  // Base de Conhecimento conflitante (cadastrada no teste da Base) não entra na confirmação automática nem no relatório
+  const st = (await api('/api/state', null, 'GET')).state
+  const auto = st.tickets.filter(t => t.relatorioAuto)
+  assert.ok(auto.length >= 3, 'há conclusões automáticas registradas: ' + auto.length)
+  for (const t of auto) { assert.doesNotMatch(t.resposta || '', /OFERECER 100% IMEDIATAMENTE|XK[1-4]|TOTAL100/); assert.doesNotMatch(t.relatorioTexto || '', /XK[1-4]|100%/); assert.ok(!t.relatorioProcessado, 'linha automática não é "processada" sozinha') }
+  for (const p of promptsCapturados.filter(p => p.tipo === 'escrita' && /confirma/i.test(p.system))) assert.doesNotMatch(p.system + p.user, /OFERECER 100% IMEDIATAMENTE|MARCADOR-/)
+  // clássico intacto: sem conclusaoPendente, sem relatório automático, atraso próprio
+  const classicos = st.tickets.filter(t => t.motorAtendimento === 'classico')
+  assert.ok(classicos.length > 5); for (const t of classicos) { assert.equal(t.atendimentoNovo, undefined, t.id); assert.equal(t.relatorioAuto, undefined, t.id) }
+  await api('/api/lojas', { id: 'loja3', exigirAprovacaoAceiteNovo: true })
+  } finally { delete process.env.ATENDO_SMTP_FAKE }
 })
 
 test('loja clássica não passa pelo motor novo', async () => {

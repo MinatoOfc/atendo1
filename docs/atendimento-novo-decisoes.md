@@ -529,6 +529,43 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     falha da IA do novo → dono, sem prompt clássico; clássico continua com a
     Base depois de a loja ativar o novo.
 
+49. **"Exigir minha aprovação após o aceite" (17/09)** — `exigirAprovacaoAceiteNovo`
+    por loja, padrão `true`. NÃO liga nem desliga a negociação: nos dois modos a
+    IA classifica, coleta, faz só a oferta da fase, avança uma etapa por recusa,
+    respeita idioma e cadência (3 min / 5 h) e nunca escala só por recusa,
+    insistência, mensagem nova ou avanço de fase. A opção decide só o que
+    acontece DEPOIS do aceite de uma proposta (25%, 40%, cupom, troca, reenvio —
+    não é o 100%). No aceite, `conclusaoPendente` fotografa jornada, fase,
+    tipo, percentual, valor/moeda (calculados pelo servidor), cupom, produtos,
+    endereço, data e texto do aceite, histórico das fases e o MODO
+    (`manual`/`automatico`) — o modo nunca é recalculado depois. Pré-condições
+    (`faltaParaConcluir`): produto informado e do pedido, motivo/ajuste quando
+    exigidos, foto validada no defeito, endereço completo em troca/reenvio,
+    aceite = última oferta realmente enviada, cupom cadastrado, idioma com
+    validação local, caixa própria; qualquer falta → dono. **Manual**: o caso
+    vai ao dono com "Cliente aceitou [proposta] — aguardando sua aprovação.";
+    nada é confirmado antes; o card mostra a solução e os botões "Aprovar e
+    gerar confirmação" e "Recusar / corrigir"; ao aprovar, só a confirmação da
+    proposta aceita é gerada e validada, autorizada e agendada para as 5 h da
+    última mensagem (se já passou, sai já); a fase muda só com o envio real; o
+    relatório continua manual. **Automático** (desligar exige piloto liberado,
+    automação geral e da loja, caixa própria, prazo e cupons, e confirmação com
+    o texto "A IA continuará negociando normalmente…"; fica na auditoria
+    `aceiteHistorico`): o aceite não vai ao dono; troca/reenvio pede o endereço
+    antes e retoma a mesma solução; a confirmação passa por todos os
+    validadores e sai 5 h após a mensagem mais recente; mensagem nova durante
+    a espera reagenda (recusa/novo pedido cancela e vai ao dono); só depois do
+    envio real: transição, conclusão fechada e UMA linha no relatório diário
+    (`relatorioAuto`, chave = id do aceite; idempotente entre agendador,
+    reinício, mensagem repetida e nova tentativa). Falha de geração, validação
+    ou entrega: não avança, não conclui, não registra, vai ao dono com o motivo.
+    Sempre humanos: 100%, cancelamento, foto de defeito, casos sensíveis, fora
+    do mapa, divergência aceite × oferta, produto/pedido/cupom/endereço/idioma
+    faltando, falha de IA ou envio, loja sem caixa própria. Toda ativação do
+    novo e o piloto sem liberação voltam a exigir aprovação; mudar a opção não
+    toca aceites já pendentes. Clássico intacto. Sem movimentação financeira:
+    "processar" = enviar a confirmação válida e registrar no relatório.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

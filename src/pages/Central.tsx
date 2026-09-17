@@ -221,7 +221,7 @@ export default function Central() {
                       <td style={{ whiteSpace: 'nowrap' }}>{l.valor != null ? dinheiro(l.valor, l.moeda) : '—'}</td>
                       <td>
                         {!c ? <span className="muted-sm">—</span> : c.percentual != null ? `${c.percentual}%` : c.desfecho === 'em_aberto' ? <span className="muted-sm">em aberto</span> : NOME_DESFECHO[c.desfecho]}
-                        {c?.situacaoReembolso && <div className="muted-sm" style={{ fontSize: 11 }}>{c.situacaoReembolso === 'efetivado' ? 'efetivado' : c.situacaoReembolso === 'aceite_pendente' ? 'aceite pendente' : c.situacaoReembolso === 'inferido' ? 'só inferido pela IA' : 'no relatório, não processado'}</div>}
+                        {c?.situacaoReembolso && <div className="muted-sm" style={{ fontSize: 11 }}>{c.situacaoReembolso === 'efetivado' ? 'efetivado' : c.situacaoReembolso === 'aceite_pendente' ? (c.conclusao?.modo === 'automatico' ? 'aceite — confirmação automática agendada' : 'aceite pendente — aguardando o dono') : c.situacaoReembolso === 'inferido' ? 'só inferido pela IA' : 'no relatório, não processado'}</div>}
                       </td>
                       <td style={{ maxWidth: 200 }}>{c?.motivo ?? <span className="muted-sm">—</span>}</td>
                       <td>

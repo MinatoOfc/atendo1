@@ -11,7 +11,7 @@ import {
 import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, extrairMotivosReembolso, CATEGORIAS_REEMBOLSO, classificarNovo, escreverNovo, inferirFasesHistoricas } from './ai.js'
 import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
-  horarioMinimoEnvio, promptClassificar, promptEscrever, configDoNovo, FASES, JORNADAS, PERCENTUAIS_CUPOM,
+  horarioMinimoEnvio, promptClassificar, promptEscrever, configDoNovo, FASES, JORNADAS, PERCENTUAIS_CUPOM, validarEndereco,
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS,
 } from './atendimento.js'
@@ -228,7 +228,10 @@ function neutralizarAutoEnvioNoPiloto() {
   if (envioAutomaticoLiberado()) return
   for (const [wsId, estado] of workspaces) {
     let mudou = false
-    for (const l of estado.lojas ?? []) if (l.novoEnvioAutomatico === true) { l.novoEnvioAutomatico = false; mudou = true }
+    for (const l of estado.lojas ?? []) {
+      if (l.novoEnvioAutomatico === true) { l.novoEnvioAutomatico = false; mudou = true }
+      if (l.exigirAprovacaoAceiteNovo === false) { l.exigirAprovacaoAceiteNovo = true; mudou = true }
+    }
     for (const t of estado.tickets ?? []) {
       if (t.atendimentoNovo?.transicaoPendente?.para && t.enviaEm) {
         t.enviaEm = undefined
@@ -311,6 +314,116 @@ async function gerarColetasDeProduto(wsId) {
     an.pedirProduto = false; mudou = true
   }
   if (mudou) salvar(wsId)
+}
+
+/* ------------------------------------------------------------------ */
+/* Conclusão após o aceite (motor novo): manual (dono aprova) ou       */
+/* automática (confirmação na cadência + relatório) — por loja.          */
+/* ------------------------------------------------------------------ */
+
+/** Padrão: exigir a aprovação do dono depois do aceite. Só é false quando o dono desligou com confirmação. */
+const exigeAprovacaoAceite = loja => loja?.exigirAprovacaoAceiteNovo !== false
+const wsIdDoEstado = estado => { for (const [id, e] of workspaces) if (e === estado) return id; return null }
+const arredondar = v => Math.round(Number(v) * 100) / 100
+
+/**
+ * Pré-condições para QUALQUER conclusão (manual ou automática). Devolve a lista
+ * do que falta; vazia = pronto. Nada aqui usa a Base de Conhecimento.
+ */
+function faltaParaConcluir(estado, wsId, t, cp) {
+  const an = t.atendimentoNovo; const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1')); const pedido = pedidoDoTicket(estado, t)
+  const fase = FASES[cp?.faseAceita]; const oferta = fase?.oferta
+  const faltando = []
+  if (!produtoFoiInformado(an)) faltando.push('produto informado pelo cliente')
+  if (!pedido) faltando.push('pedido localizado')
+  if (pedido && an.produtosAfetados.some(p => !rotulosDoPedidoItens(pedido).includes(p))) faltando.push('produto citado pertence ao pedido')
+  if (!fase || !oferta) faltando.push('oferta da fase aceita')
+  if (FASES_HUMANAS.has(cp?.faseAceita)) faltando.push('fase marcada como humana no mapa')
+  // o aceite tem de corresponder à ÚLTIMA OFERTA realmente enviada (a coleta de endereço/produto no meio não conta)
+  const ultimaOfertaEnviada = [...(an.historicoEtapas ?? [])].reverse().find(h => !h.evento && FASES[h.para]?.oferta)?.para ?? null
+  if (fase && !fase.decisaoDono && ultimaOfertaEnviada !== cp.faseAceita) faltando.push(`aceite corresponde à última oferta realmente enviada (enviada: ${ultimaOfertaEnviada ?? 'nenhuma'})`)
+  if (fase?.requer?.includes('motivo') && !an.motivo) faltando.push('motivo identificado')
+  if (fase?.requer?.includes('ajuste') && !(an.ajusteTamanho && Object.keys(an.ajusteTamanho).length)) faltando.push('tamanho: pequeno ou grande')
+  if (an.fluxo === 'defeito' && an.fotoValidada !== true) faltando.push('foto do defeito validada por você')
+  if (oferta && /troca|reenvio/.test(oferta.tipo) && !validarEndereco(an.enderecoConfirmado).ok) faltando.push('endereço completo (rua, número, código postal, cidade)')
+  if (oferta?.cupom && !loja?.cupons?.[String(oferta.cupom)]) faltando.push(`cupom de ${oferta.cupom}% cadastrado`)
+  const idioma = an.idioma ?? null
+  if (!idioma || !IDIOMAS_VALIDADOS.has(idioma)) faltando.push('idioma da conversa com validação local')
+  const conta = contasDe(wsId).find(c => c.id === (t.lojaId ?? 'loja1'))
+  if (!conta || !(conta.configurado || envioPorApi)) faltando.push('caixa de e-mail própria da loja')
+  return faltando
+}
+const rotulosDoPedidoItens = pedido => (pedido?.itens ?? []).map(i => `${i.titulo}${i.variante ? ` (${i.variante})` : ''}`)
+
+/** Fotografa a solução aceita no instante do aceite (modo manual/automático decidido AGORA e nunca recalculado). */
+function novaConclusao(estado, t, faseAceita, status) {
+  const an = t.atendimentoNovo; const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1')); const pedido = pedidoDoTicket(estado, t)
+  const oferta = FASES[faseAceita]?.oferta ?? null
+  const valorPedido = pedido?.valor != null ? Number(pedido.valor) : null
+  return {
+    id: crypto.randomUUID(), ticketId: t.id, faseAceita, ofertaAceita: oferta, tipo: oferta?.tipo ?? null, jornada: an.fluxo ?? null,
+    modo: exigeAprovacaoAceite(loja) ? 'manual' : 'automatico',
+    aceitaEm: t.data || new Date().toISOString(), mensagemDoCliente: String(t.corpo || '').slice(0, 300),
+    percentual: oferta?.pct ?? null, valor: oferta?.pct && valorPedido != null ? arredondar(valorPedido * oferta.pct / 100) : null, valorPedido, moeda: loja?.moeda ?? 'EUR',
+    cupom: oferta?.cupom ? (loja?.cupons?.[String(oferta.cupom)] ?? null) : null, cupomPct: oferta?.cupom ?? null,
+    produtos: [...(an.produtosAfetados ?? [])], endereco: an.enderecoConfirmado ?? null,
+    historicoFases: (an.historicoEtapas ?? []).filter(h => !h.evento).map(h => h.para),
+    status,
+  }
+}
+
+/**
+ * O cliente aceitou uma proposta (fase com oferta, não humana). Grava a conclusão
+ * e decide pelo modo FOTOGRAFADO: manual → o dono aprova; automático → a
+ * confirmação é gerada e agendada na cadência, sem passar pelo dono, desde que
+ * TODAS as pré-condições estejam satisfeitas. Qualquer falta → dono, com o motivo.
+ */
+async function registrarAceite(estado, t, d) {
+  const an = t.atendimentoNovo; const wsId = wsIdDoEstado(estado)
+  const faseAceita = d.aceite.fase; const fase = FASES[faseAceita]
+  let cp = an.conclusaoPendente
+  if (!cp || cp.faseAceita !== faseAceita || ['concluida', 'cancelada', 'recusada'].includes(cp.status)) { cp = novaConclusao(estado, t, faseAceita, 'aguardando_dados'); an.conclusaoPendente = cp }
+  cp.endereco = an.enderecoConfirmado ?? cp.endereco ?? null
+  cp.produtos = [...(an.produtosAfetados ?? [])]
+  const faltando = faltaParaConcluir(estado, wsId, t, cp)
+  if (cp.modo === 'manual' || faltando.length) {
+    cp.status = 'aguardando_aprovacao'; cp.faltando = faltando.length ? faltando : undefined
+    mandarParaHumanoNovo(t, `Cliente aceitou ${fase.titulo} — aguardando sua aprovação.${faltando.length ? ' Antes de concluir: ' + faltando.join('; ') + '.' : ''}`)
+    t.decisaoPendente = decisaoDaOferta(fase.oferta)
+    t.resolucao = `Aceite pendente: ${fase.titulo}${an.produtosAfetados.length ? ' — ' + an.produtosAfetados.join('; ') : ''}`
+    return
+  }
+  // conclusão AUTOMÁTICA: confirmação da solução aceita, na cadência de 5 h; a fase só muda com o envio real
+  cp.status = 'aguardando_cadencia'; cp.faltando = undefined
+  an.aguardando = null
+  an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: `Aceite registrado — conclusão automática: ${fase.titulo}`, em: new Date().toISOString(), evento: 'aceite_automatico' })
+  t.decisaoPendente = undefined
+  const r = await prepararRascunhoNovo(estado, t, { faseId: faseDeConfirmacao(faseAceita), resumo: 'aceite do cliente — conclusão automática' })
+  if (!r.ok) { cp.status = 'falha'; cp.falha = r.motivo; return } // prepararRascunhoNovo já mandou ao dono com o motivo exato
+  cp.status = 'aguardando_cadencia'
+}
+
+/** Depois do ENVIO REAL de uma confirmação (conf_*): fecha a conclusão e, no modo automático, registra no relatório (idempotente). */
+function concluirAposEnvio(estado, wsId, t, faseConfirmada, mensagemId) {
+  const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
+  if (!cp || !FASES[faseConfirmada]?.confirmacao || cp.status === 'concluida') return
+  cp.status = 'concluida'; cp.confirmadaEm = new Date().toISOString(); cp.faseConfirmada = faseConfirmada; cp.mensagemConfirmacaoId = mensagemId
+  if (cp.modo !== 'automatico') return
+  // relatório diário: exatamente UMA linha por evento de aceite (chave = ticket + id do aceite)
+  if (t.relatorioAuto?.eventoId === cp.id) return
+  const pedido = pedidoDoTicket(estado, t); const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+  const dinheiro = v => v == null ? null : `${v.toFixed(2).replace('.', ',')} ${cp.moeda}`
+  const solucao = FASES[cp.faseAceita]?.titulo ?? cp.faseAceita
+  const partes = [solucao, cp.percentual ? `${cp.percentual}% = ${dinheiro(cp.valor)}` : null, cp.cupom ? `cupom ${cp.cupom}` : null, cp.produtos.length ? cp.produtos.join('; ') : null, cp.endereco ? `endereço: ${cp.endereco}` : null].filter(Boolean)
+  t.relatorioAuto = {
+    eventoId: cp.id, ticketId: t.id, pedido: pedido?.numero ?? null, lojaId: loja?.id ?? t.lojaId, loja: loja?.nome ?? null, cliente: t.nome || t.de,
+    jornada: cp.jornada, faseAceita: cp.faseAceita, solucao, produtos: cp.produtos, percentual: cp.percentual, valor: cp.valor, moeda: cp.moeda, cupom: cp.cupom,
+    trocaOuReenvio: /troca|reenvio/.test(cp.tipo ?? '') ? cp.tipo : null, enderecoConfirmado: cp.endereco, aceitaEm: cp.aceitaEm, confirmacaoEnviadaEm: cp.confirmadaEm,
+    origem: 'motor novo — conclusão automática', mensagemConfirmacaoId: mensagemId,
+  }
+  if (!t.relatorioDia) t.relatorioDia = diaLocal(Date.now())
+  t.relatorioTexto = `${partes.join(' — ')} — motor novo, conclusão automática`
+  t.relatorioLinha = undefined
 }
 
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
@@ -398,6 +511,8 @@ function visaoLojas(wsId, estado) {
       modoHistorico: l.modoHistorico ?? [],
       prontidaoNovo: prontidaoModoNovo(wsId, l),
       novoEnvioAutomatico: l.novoEnvioAutomatico === true,
+      exigirAprovacaoAceiteNovo: l.exigirAprovacaoAceiteNovo !== false,
+      aceiteHistorico: l.aceiteHistorico ?? [],
       prazoEntrega: l.prazoEntrega ?? null,
       cupons: l.cupons ?? {},
       assinatura: l.assinatura ?? null,
@@ -873,12 +988,23 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
     return { spam: false }
   }
   if (d.humano) {
+    // aceite de uma OFERTA (não fase humana): conclusão manual ou automática, pelo modo fotografado no aceite
+    if (d.aceite && !FASES_HUMANAS.has(d.aceite.fase)) { await registrarAceite(estado, t, d); return { spam: false } }
     mandarParaHumanoNovo(t, d.humano)
     if (d.aceite) {
       t.decisaoPendente = decisaoDaOferta(d.aceite.oferta)
       t.resolucao = `Aceite pendente: ${FASES[d.aceite.fase]?.titulo ?? d.aceite.fase}${an.produtosAfetados.length ? ' — ' + an.produtosAfetados.join('; ') : ''}`
     }
     return { spam: false }
+  }
+  // aceite de troca/reenvio: o endereço vem antes — a conclusão já nasce aqui (modo fotografado agora), aguardando os dados
+  if (d.fase === 'endereco' && an.acaoAceita && !FASES_HUMANAS.has(an.acaoAceita) && !(an.conclusaoPendente && !['concluida', 'cancelada', 'recusada'].includes(an.conclusaoPendente.status))) {
+    an.conclusaoPendente = novaConclusao(estado, t, an.acaoAceita, 'aguardando_dados')
+  }
+  if (d.reconfirmar && an.conclusaoPendente) {
+    // mensagem nova durante a espera da confirmação automática: cancela o horário anterior e reagenda 5 h após ela
+    an.conclusaoPendente.status = 'aguardando_cadencia'
+    an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: 'Mensagem nova durante a espera: confirmação reagendada', em: new Date().toISOString(), evento: 'confirmacao_reagendada' })
   }
 
   // 3. escrever, conferir e agendar — a fase só muda quando o e-mail sair
@@ -1239,9 +1365,11 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   // canal simulado só nos testes (ATENDO_SIMULAR=1): 'ok' envia, 'falha' quebra
   const simulado = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_SMTP_FAKE : null
   let enviou = false
+  const mensagemId = `atendo-${crypto.randomUUID()}` // identificador da mensagem enviada (relatório/auditoria)
+  const estado = workspaces.get(wsId)
   if (simulado === 'ok') enviou = true
   else if (simulado === 'falha') throw new Error('Envio simulado falhou')
-  else if (canal) { await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto }); enviou = true }
+  else if (canal) { await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto, messageId: mensagemId }); enviou = true }
   // modo novo: a fase só muda depois de um canal real enviar com sucesso — sem
   // canal, nem envia (nada abaixo é executado, então nada muda no ticket)
   if (modoNovo && !enviou) {
@@ -1252,6 +1380,8 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
     confirmarTransicao(an, { para: transicao.para, mensagem: transicao.mensagem, observacao: transicao.observacao })
     an.proximoEnvioMinimo = undefined
     an.rascunhoGerado = undefined
+    // confirmação enviada de verdade: conclusão fechada; no modo automático, linha única no relatório
+    if (FASES[transicao.para]?.confirmacao) concluirAposEnvio(estado, wsId, ticket, transicao.para, mensagemId)
   } else if (modoNovo && an) {
     // resposta humana sem transição (com produto informado): sai pela conta própria, sem inventar fase
     an.proximoEnvioMinimo = undefined
@@ -1299,6 +1429,7 @@ agendar(async () => {
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
           if (anL.aprovacaoObrigatoria) { t.enviaEm = undefined; continue }
+          if (FASES[anL.transicaoPendente.para]?.confirmacao && anL.conclusaoPendente?.status === 'concluida') { t.enviaEm = undefined; anL.transicaoPendente = null; t.rascunho = undefined; continue } // idempotência: nunca duas confirmações
           // cadência reconferida no momento do envio: nunca antes de 3 min / 5 h da mensagem mais recente do cliente
           const minimoL = horarioMinimoEnvio(t, agora)
           if (agora < minimoL) { t.enviaEm = minimoL; anL.proximoEnvioMinimo = new Date(minimoL).toISOString(); continue }
@@ -1331,6 +1462,14 @@ agendar(async () => {
         t.tentativasEnvio = (t.tentativasEnvio || 0) + 1
         t.erroEnvio = err.message
         console.error(`[auto-envio ${wsId}] tentativa ${t.tentativasEnvio}/${MAX_TENTATIVAS} falhou para ${t.de}: ${err.message}`)
+        // confirmação automática de um aceite: falha de entrega vai ao dono NA HORA, com o motivo exato (nada avança, nada é registrado)
+        const cpF = t.atendimentoNovo?.conclusaoPendente
+        if (cpF && cpF.modo === 'automatico' && cpF.status === 'aguardando_cadencia' && FASES[t.atendimentoNovo?.transicaoPendente?.para]?.confirmacao) {
+          cpF.status = 'falha'; cpF.falha = err.message
+          t.status = 'humano'; t.enviaEm = undefined
+          t.motivoEscalada = `Não foi possível enviar a confirmação automática: ${err.message} — confira e envie você`
+          continue
+        }
         if (t.tentativasEnvio >= MAX_TENTATIVAS) {
           t.status = 'humano'
           t.enviaEm = undefined
@@ -2249,7 +2388,11 @@ app.post('/api/lojas/:id/modo', (req, res) => {
   // toda ativação do novo começa com o envio automático DESLIGADO, sem exceção;
   // e grava a data/hora EXATA da ativação: só conversas cujo primeiro e-mail
   // chegar depois dela nascem no motor novo
-  if (modo === 'novo') { loja.novoEnvioAutomatico = false; loja.novoAtivadoEm = em }
+  if (modo === 'novo') {
+    loja.novoEnvioAutomatico = false; loja.novoAtivadoEm = em
+    if (loja.exigirAprovacaoAceiteNovo === false) loja.aceiteHistorico = [...(loja.aceiteHistorico ?? []), { lojaId: loja.id, por: 'sistema (ativação do novo)', de: false, para: true, em }].slice(-100)
+    loja.exigirAprovacaoAceiteNovo = true
+  }
   salvar(req.wsId); ok(req, res)
 })
 
@@ -2261,7 +2404,7 @@ app.post('/api/tickets/:id/migrar-motor', (req, res) => {
 })
 
 app.post('/api/lojas', (req, res) => {
-  const { id, nome, ativa, idioma, assinatura, iaModelo, modoAtendimento, novoEnvioAutomatico, prazoEntrega, cupons } = req.body ?? {}
+  const { id, nome, ativa, idioma, assinatura, iaModelo, modoAtendimento, novoEnvioAutomatico, prazoEntrega, cupons, exigirAprovacaoAceiteNovo } = req.body ?? {}
   const loja = req.estado.lojas.find(l => l.id === id)
   if (!loja) return res.status(404).json({ erro: 'loja não encontrada', state: visao(req.wsId) })
   if (typeof nome === 'string' && nome.trim()) loja.nome = nome.trim()
@@ -2278,6 +2421,24 @@ app.post('/api/lojas', (req, res) => {
       if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'Ligar o envio automático precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
     }
     loja.novoEnvioAutomatico = novoEnvioAutomatico
+  }
+  // "Exigir minha aprovação após o aceite": padrão true; desligar exige piloto liberado, automação global e da loja,
+  // caixa própria, prazo e cupons, e confirmação explícita. Nunca toca aceites já pendentes (o modo é fotografado no aceite).
+  if (typeof exigirAprovacaoAceiteNovo === 'boolean') {
+    const atual = loja.exigirAprovacaoAceiteNovo !== false
+    if (!exigirAprovacaoAceiteNovo) {
+      if (modoDaLoja(loja) !== 'novo') return res.status(400).json({ erro: 'A conclusão automática após o aceite só existe no atendimento novo.', state: visao(req.wsId) })
+      if (!envioAutomaticoLiberado()) return res.status(400).json({ erro: 'Bloqueado durante o piloto: a aprovação após o aceite continua obrigatória.', bloqueadoPiloto: true, state: visao(req.wsId) })
+      if (!req.estado.config.automacaoAtiva) return res.status(400).json({ erro: 'Ligue a automação geral antes de desligar a aprovação após o aceite.', state: visao(req.wsId) })
+      if (!loja.novoEnvioAutomatico) return res.status(400).json({ erro: 'Ligue o envio automático desta loja antes de desligar a aprovação após o aceite.', state: visao(req.wsId) })
+      const pr = prontidaoModoNovo(req.wsId, loja)
+      if (!pr.pronto) return res.status(400).json({ erro: `Falta: ${pr.faltando.map(f => f.texto).join('; ')}.`, faltando: pr.faltando, state: visao(req.wsId) })
+      if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'Desligar a aprovação após o aceite precisa de confirmação: a IA continuará negociando normalmente; depois que o cliente aceitar, a confirmação será enviada automaticamente após a cadência de 5 horas e o caso será incluído no relatório diário.', precisaConfirmar: true, state: visao(req.wsId) })
+    }
+    if (atual !== exigirAprovacaoAceiteNovo) {
+      loja.exigirAprovacaoAceiteNovo = exigirAprovacaoAceiteNovo
+      loja.aceiteHistorico = [...(loja.aceiteHistorico ?? []), { lojaId: loja.id, por: req.usuario?.nome || req.usuario?.email || 'lojista', de: atual, para: exigirAprovacaoAceiteNovo, em: new Date().toISOString() }].slice(-100)
+    }
   }
   if (prazoEntrega && typeof prazoEntrega === 'object') {
     const n = (v, padrao) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 && x <= 90 ? x : padrao }
@@ -2721,12 +2882,35 @@ app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
   if (!faseId) {
     return res.status(400).json({ erro: `Não há confirmação prevista para "${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}".`, state: visao(req.wsId) })
   }
+  const cpA = an.conclusaoPendente
+  if (cpA && cpA.faseAceita === an.acaoAceita && cpA.status === 'aguardando_aprovacao') {
+    const faltando = faltaParaConcluir(req.estado, req.wsId, t, cpA).filter(f => !/caixa de e-mail/.test(f))
+    if (faltando.length) return res.status(400).json({ erro: `Antes de confirmar: ${faltando.join('; ')}.`, faltando, state: visao(req.wsId) })
+  }
   an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: `Aceite aprovado pelo lojista: ${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}`, em: new Date().toISOString(), evento: 'aceite_aprovado' })
   an.aguardando = null
   const r = await prepararRascunhoNovo(req.estado, t, { faseId, resumo: 'aceite aprovado pelo lojista' })
+  if (cpA && cpA.faseAceita === an.acaoAceita) {
+    cpA.aprovadoPor = req.usuario?.nome || req.usuario?.email || 'lojista'; cpA.aprovadoEm = new Date().toISOString()
+    cpA.status = r.ok ? 'aguardando_cadencia' : 'falha'
+    // aprovação do dono = confirmação AUTORIZADA: sai na cadência (5 h da última mensagem do cliente; se já passou, agora)
+    if (r.ok && envioAutomaticoLiberado() && req.estado.config.automacaoAtiva && !an.aprovacaoObrigatoria) { const minimo = horarioMinimoEnvio(t); t.enviaEm = minimo; an.proximoEnvioMinimo = new Date(minimo).toISOString(); an.envioBloqueado = undefined }
+  }
   salvar(req.wsId)
   if (!r.ok) return res.status(400).json({ erro: r.motivo, state: visao(req.wsId) })
   ok(req, res)
+})
+
+// O dono recusa ou corrige o aceite pendente: nada é confirmado; a conversa fica com ele para responder à mão.
+app.post('/api/tickets/:id/novo/recusar-aceite', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
+  if (!an || !cp || cp.status !== 'aguardando_aprovacao') return res.status(400).json({ erro: 'Esta conversa não tem aceite aguardando a sua aprovação.', state: visao(req.wsId) })
+  cp.status = 'recusada'; cp.recusadaPor = req.usuario?.nome || req.usuario?.email || 'lojista'; cp.recusadaEm = new Date().toISOString(); cp.observacao = String(req.body?.observacao || '').slice(0, 300) || undefined
+  an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: `Aceite recusado/corrigido pelo lojista: ${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita}`, em: cp.recusadaEm, evento: 'aceite_recusado' })
+  an.acaoAceita = null; an.aguardando = 'humano'
+  t.status = 'humano'; t.decisaoPendente = undefined; t.motivoEscalada = 'Você recusou/corrigiu o aceite — responda ao cliente à mão'
+  salvar(req.wsId); ok(req, res)
 })
 
 // Central operacional: correção manual da classificação (jornada/fase). Fica
