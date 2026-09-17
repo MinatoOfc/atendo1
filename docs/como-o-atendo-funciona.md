@@ -391,9 +391,13 @@ O **modo novo** é um motor de estados (`server/atendimento.js`), especificado e
 - **Imagem** (defeito): registrada como "imagem recebida", nunca como prova. A
   troca só é oferecida depois que o dono confirma na conversa que a foto
   comprova o defeito; se recusar, o sistema pede outra foto.
-- **Cadência**: primeira resposta com o atraso normal; depois, 5 h após a última
-  mensagem do cliente (mensagem nova reinicia e recalcula o rascunho). O envio
-  automático do modo novo é uma chave por loja, desligada no piloto.
+- **Cadência (fixa no modo novo)**: primeira resposta automática 3 minutos
+  depois da mensagem mais recente do cliente; depois que a loja já respondeu,
+  próxima resposta automática 5 horas depois da mensagem mais recente. O prazo
+  parte do horário da mensagem, não do processamento (`max(agora, mensagem +
+  prazo)`); uma nova mensagem reinicia o relógio. O seletor "Esperar antes de
+  enviar" é só do clássico. O envio automático do modo novo é uma chave por
+  loja, desligada no piloto.
 - **Por loja**: prazo de entrega em dias úteis (base do "atrasado") e códigos de
   cupom por percentual (10, 15, 25, 30, 35, 40).
 - **Idioma**: a resposta sai sempre no idioma da última mensagem completa do

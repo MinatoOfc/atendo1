@@ -783,7 +783,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   an.rascunhoGerado = t.rascunho // referência para detectar edição humana que mude a oferta
   an.transicaoPendente = { para: faseId, mensagem: resumo, faltando }
   an.aguardando = 'envio'
-  const minimo = horarioMinimoEnvio(t, estado.config.atrasoMinutos)
+  const minimo = horarioMinimoEnvio(t) // cadência fixa do modo novo (3 min / 5 h a partir da mensagem do cliente)
   an.proximoEnvioMinimo = new Date(minimo).toISOString()
   t.status = 'aprovacao'
   // agenda só com a loja ligada, a automação geral ligada E o envio automático liberado (fora do piloto)
@@ -873,7 +873,7 @@ function resgatarSpamComPedido(estado) {
   return resgatados
 }
 
-async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, anexos }, lojaId = 'loja1', wsId = null) {
+async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, anexos, agora }, lojaId = 'loja1', wsId = null) {
   const base = {
     id: uid(), nome, de, assunto, corpo, lojaId,
     data: data || new Date().toISOString(),
@@ -899,7 +899,7 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
   base.motor = modoDaLoja(estado.lojas.find(l => l.id === lojaId))
   // loja no modo novo: o motor de etapas cuida de tudo (classificar, decidir, escrever)
   if (base.motor === 'novo') {
-    const rn = await processarNovo(estado, base)
+    const rn = await processarNovo(estado, base, { agora })
     if (rn.spam) { base.status = 'spam'; base.anexos = undefined }
     return base
   }
@@ -1255,6 +1255,9 @@ agendar(async () => {
         if (anL?.transicaoPendente?.para) {
           const lojaL = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
           if (anL.aprovacaoObrigatoria) { t.enviaEm = undefined; continue }
+          // cadência reconferida no momento do envio: nunca antes de 3 min / 5 h da mensagem mais recente do cliente
+          const minimoL = horarioMinimoEnvio(t, agora)
+          if (agora < minimoL) { t.enviaEm = minimoL; anL.proximoEnvioMinimo = new Date(minimoL).toISOString(); continue }
           // sem prova de produto: o rascunho antigo de oferta nunca sai — vira a pergunta do produto
           if (anL.transicaoPendente.para !== 'coleta' && !produtoFoiInformado(anL)) {
             t.enviaEm = undefined
@@ -1851,7 +1854,9 @@ if (process.env.ATENDO_SIMULAR === '1') {
         salvar(req.wsId)
         return res.json({ ok: true, ticket: t, state: visao(req.wsId) })
       }
-      const t = await criarTicket(req.estado, { nome: nome || 'Cliente', de: String(de || ''), assunto: String(assunto || ''), corpo: String(corpo || ''), data: new Date().toISOString(), anexos }, lojaId || 'loja1', req.wsId)
+      // relógio simulado também na conversa nova (só nesta rota de ensaio)
+      const agoraNovo = req.body.agora ? Date.parse(String(req.body.agora)) : NaN
+      const t = await criarTicket(req.estado, { nome: nome || 'Cliente', de: String(de || ''), assunto: String(assunto || ''), corpo: String(corpo || ''), data: new Date(Number.isFinite(agoraNovo) ? agoraNovo : Date.now()).toISOString(), anexos, agora: Number.isFinite(agoraNovo) ? agoraNovo : undefined }, lojaId || 'loja1', req.wsId)
       req.estado.tickets = [t, ...req.estado.tickets]
       salvar(req.wsId)
       res.json({ ok: true, ticket: t, state: visao(req.wsId) })

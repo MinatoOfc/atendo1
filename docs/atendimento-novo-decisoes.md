@@ -466,6 +466,23 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     (`exigirColetaManualDeProduto`), com o motivo preservado. O teardown dos
     testes visuais lança erro se 8798 ou 8796 continuar aberta.
 
+46. **Cadência fixa do modo novo (16/09)**: `PRIMEIRA_RESPOSTA_MS = 3 min` e
+    `CADENCIA_MS = 5 h` (server/atendimento.js). `horarioMinimoEnvio(t, agora)` =
+    `max(agora, últimaMensagemDoCliente + prazo)`: 3 min enquanto a loja ainda
+    não respondeu, 5 h depois disso. O prazo parte do horário da mensagem do
+    cliente, não do fim do processamento; se o servidor processar depois do
+    prazo, sai na hora; uma mensagem nova reinicia o relógio (a mais recente
+    manda) — e o rascunho é recalculado. O laço de envio reconfere a cadência
+    no momento do envio: nunca sai antes, e a fase só muda depois do envio
+    real. `config.atrasoMinutos` NÃO entra no modo novo (é só do clássico; a
+    interface diz isso). Textos da interface: "Primeira resposta: automática
+    após 3 minutos. Depois que o cliente responder: próxima resposta
+    automática após 5 horas. Uma nova mensagem reinicia o relógio." Testes:
+    unitários (2min59 não / 3min sim; recebida há 2 min → +1 min; há mais de
+    3 min → já; 4h59 não / 5h sim; nova mensagem reagenda; várias mensagens
+    reiniciam) e ponta a ponta pelo pipeline real com relógio simulado (nada
+    sai antes; fase e histórico intactos; clássico usa o seu atraso).
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

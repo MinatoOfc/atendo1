@@ -221,14 +221,15 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
           <b style={{ fontSize: 13 }}>Envio automático no modo novo</b>
           <div className="muted-sm" style={{ lineHeight: 1.5 }}>
             Desligado (recomendado no piloto): cada resposta espera sua aprovação, com o horário mínimo da cadência
-            anotado. Ligado: sai sozinha 5 h após a última mensagem do cliente.
+            anotado. Ligado: primeira resposta automática após 3 minutos; depois que o cliente responder, próxima resposta
+            automática após 5 horas; uma nova mensagem reinicia o relógio. O seletor "Esperar antes de enviar" não muda isso.
             {!emNovo && <> <b>Só existe no atendimento novo.</b></>}
             {emNovo && !s.envioAutomaticoLiberado && <> <b>Bloqueado durante o piloto.</b></>}
             {' '}Toda vez que a loja é ativada no novo, ele volta desligado.
           </div>
           {confirmandoAuto && (
             <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--panel-soft)', borderRadius: 8, fontSize: 12.5 }}>
-              <div style={{ marginBottom: 6 }}>Confirma ligar o envio automático nesta loja? Os rascunhos do modo novo passam a sair <b>sem a sua aprovação</b>, 5 h após a última mensagem do cliente.</div>
+              <div style={{ marginBottom: 6 }}>Confirma ligar o envio automático nesta loja? Os rascunhos do modo novo passam a sair <b>sem a sua aprovação</b>. Primeira resposta: automática após 3 minutos. Depois que o cliente responder: próxima resposta automática após 5 horas. Uma nova mensagem reinicia o relógio.</div>
               <div className="row gap-8">
                 <button className="btn btn-sm btn-primary" onClick={() => { setConfirmandoAuto(false); s.atualizarLoja(lojaId, { novoEnvioAutomatico: true, confirmar: true }) }}><Check size={13} /> Confirmar e ligar</button>
                 <button className="btn btn-sm" onClick={() => setConfirmandoAuto(false)}>Cancelar</button>
@@ -869,7 +870,7 @@ export default function Configuracoes() {
             <option value={0}>na hora</option>
             {[1, 3, 5, 10, 20, 45].map(m => <option key={m} value={m}>{m} min</option>)}
           </select>
-          <span className="muted-sm">um pequeno atraso faz a resposta parecer escrita por uma pessoa</span>
+          <span className="muted-sm">um pequeno atraso faz a resposta parecer escrita por uma pessoa — <b>só no atendimento clássico</b>; não altera a cadência do modo novo (3 min / 5 h)</span>
         </div>
 
         <div className="row spread mb-12">

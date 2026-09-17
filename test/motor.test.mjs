@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   novoEstado, decidir, confirmarTransicao, validarProposta, prazoDoPedido, somarDiasUteis,
-  horarioMinimoEnvio, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
+  horarioMinimoEnvio, PRIMEIRA_RESPOSTA_MS, CADENCIA_MS, FASES, validarEndereco, conferirTextoDaFase, diferencaDeOferta,
   instrucaoAlteraOferta, assinaturaOferta, faseDeConfirmacao, promptEscrever, valoresMonetarios, codigosCitados, mencionaData, ofertaIndevida, acoesDaOferta,
   normalizarIdioma, idiomaConfiavel, definirIdioma, detectarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, mensagemEhDados, casarProdutos,
 } from '../server/atendimento.js'
@@ -229,11 +229,31 @@ test('instrução de regeneração não pode mexer em oferta, percentual, cupom 
   assert.match(instrucaoAlteraOferta('diga que o reembolso está aprovado', loja), /reembols/)
 })
 
-test('cadência e dias úteis', () => {
+test('cadência fixa do modo novo: 3 min na primeira resposta, 5 h depois — sempre a partir da mensagem mais recente do cliente', () => {
   const t0 = Date.parse('2026-09-15T10:00:00Z')
-  assert.equal(horarioMinimoEnvio({ data: new Date(t0).toISOString(), historico: [] }, 10, t0), t0 + 10 * 60_000)
-  const depois = { data: new Date(t0).toISOString(), resposta: 'oi', historico: [{ autor: 'atendo', corpo: 'x', data: new Date(t0 - 3600_000).toISOString() }] }
-  assert.equal(horarioMinimoEnvio(depois, 10, t0 + 60_000), t0 + 5 * 3600_000)
+  const MIN = 60_000, H = 3600_000
+  const iso = ms => new Date(ms).toISOString()
+  assert.equal(PRIMEIRA_RESPOSTA_MS, 3 * MIN); assert.equal(CADENCIA_MS, 5 * H)
+  const primeira = { data: iso(t0), historico: [] }
+  // não depende de config.atrasoMinutos: a assinatura nem recebe atraso
+  assert.equal(horarioMinimoEnvio.length, 1)
+  const m1 = horarioMinimoEnvio(primeira, t0)
+  assert.equal(m1, t0 + 3 * MIN, 'primeira resposta: 3 min depois da mensagem')
+  assert.ok(t0 + 3 * MIN - 1000 < m1, 'com 2min59s ainda NÃO sai'); assert.ok(t0 + 3 * MIN >= m1, 'com 3min sai')
+  assert.equal(horarioMinimoEnvio(primeira, t0 + 2 * MIN), t0 + 3 * MIN, 'mensagem recebida há 2 min e processada agora: agenda para daqui a 1 min')
+  assert.equal(horarioMinimoEnvio(primeira, t0 + 3 * MIN + 1000), t0 + 3 * MIN + 1000, 'recebida há mais de 3 min: pode sair imediatamente (= agora)')
+  // várias mensagens antes da primeira resposta: a mais recente reinicia os 3 minutos
+  const varias = { data: iso(t0 + 2 * MIN), historico: [{ autor: 'cliente', corpo: 'a', data: iso(t0) }, { autor: 'cliente', corpo: 'b', data: iso(t0 + MIN) }] }
+  assert.equal(horarioMinimoEnvio(varias, t0 + 2 * MIN), t0 + 5 * MIN, 'reinicia a partir da última mensagem')
+  // depois da primeira resposta enviada: 5 h a partir da mensagem mais recente do cliente
+  const depois = { data: iso(t0), resposta: 'oi', historico: [{ autor: 'cliente', corpo: 'x', data: iso(t0 - 2 * H) }, { autor: 'atendo', corpo: 'x', data: iso(t0 - H) }] }
+  const m2 = horarioMinimoEnvio(depois, t0 + MIN)
+  assert.equal(m2, t0 + 5 * H, 'segunda resposta: 5 h depois da mensagem')
+  assert.ok(t0 + 5 * H - MIN < m2, 'com 4h59 NÃO sai'); assert.ok(t0 + 5 * H >= m2, 'com 5h sai')
+  assert.equal(horarioMinimoEnvio(depois, t0 + 6 * H), t0 + 6 * H, 'processada depois do prazo: sai agora')
+  // nova mensagem durante as 5 h: cancela o horário anterior e reinicia 5 h a partir da mais recente
+  const reiniciada = { ...depois, data: iso(t0 + 2 * H), historico: [...depois.historico, { autor: 'cliente', corpo: 'y', data: iso(t0) }] }
+  assert.equal(horarioMinimoEnvio(reiniciada, t0 + 2 * H), t0 + 7 * H, 'reagendada para 5 h depois da mensagem mais recente')
   assert.equal(somarDiasUteis(new Date('2026-09-18T12:00:00Z'), 1).toISOString().slice(0, 10), '2026-09-21')
 })
 

@@ -23,8 +23,10 @@ export default function Aprovacoes() {
     <div className="banner card-soft mb-16">
       <Zap size={15} color="var(--green)" />
       <span>
-        <b>Modo automático ligado.</b> Cada resposta sai sozinha{' '}
+        <b>Modo automático ligado.</b> No atendimento clássico, cada resposta sai sozinha{' '}
         {config.atrasoMinutos > 0 ? `${config.atrasoMinutos} min depois de chegar` : 'assim que chega'} — o contador mostra quando.
+        {' '}No modo novo a cadência é fixa: primeira resposta automática após 3 minutos; depois que o cliente responder, próxima
+        resposta automática após 5 horas; uma nova mensagem reinicia o relógio.
       </span>
     </div>
   )

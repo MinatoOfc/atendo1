@@ -349,9 +349,12 @@ export function prazoDoPedido(pedido, loja, agora = Date.now()) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Cadência: 5 horas depois da última mensagem do cliente             */
+/* Cadência do modo novo (fixa, não depende de config.atrasoMinutos)  */
+/*   1ª resposta: 3 minutos depois da mensagem mais recente do cliente  */
+/*   depois: 5 horas depois da mensagem mais recente do cliente         */
 /* ------------------------------------------------------------------ */
 
+export const PRIMEIRA_RESPOSTA_MS = 3 * 60_000
 export const CADENCIA_MS = 5 * 3600_000
 
 /** Já existe resposta da loja nesta conversa? (a cadência só vale depois dela) */
@@ -365,12 +368,17 @@ export function ultimaMensagemClienteMs(t) {
 }
 
 /**
- * Quando a próxima resposta pode sair. Primeira resposta da loja: usa o atraso
- * normal do painel; depois disso, 5 h após a mensagem mais recente do cliente.
+ * Quando a próxima resposta pode sair (modo novo). O prazo parte do horário da
+ * mensagem mais recente do CLIENTE, não do fim do processamento:
+ *   primeira resposta da loja: max(agora, últimaMensagem + 3 min)
+ *   demais respostas:          max(agora, últimaMensagem + 5 h)
+ * Mensagem nova do cliente reinicia o relógio (a mais recente manda). Se o
+ * servidor só processar depois do prazo, a resposta já pode sair (= agora).
+ * Não usa config.atrasoMinutos — esse seletor é só do atendimento clássico.
  */
-export function horarioMinimoEnvio(t, atrasoMinutos = 0, agora = Date.now()) {
-  if (!lojaJaRespondeu(t)) return agora + Math.max(0, atrasoMinutos) * 60_000
-  return Math.max(agora, ultimaMensagemClienteMs(t) + CADENCIA_MS)
+export function horarioMinimoEnvio(t, agora = Date.now()) {
+  const espera = lojaJaRespondeu(t) ? CADENCIA_MS : PRIMEIRA_RESPOSTA_MS
+  return Math.max(agora, ultimaMensagemClienteMs(t) + espera)
 }
 
 /* ------------------------------------------------------------------ */

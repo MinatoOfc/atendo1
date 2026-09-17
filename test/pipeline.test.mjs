@@ -43,7 +43,7 @@ estado.lojas = [
   { id: 'loja6', nome: 'Loja Alternância', ativa: true, moeda: 'EUR', idioma: 'auto' }, // clássica, com e-mail; prazo e cupons chegam depois
 ]
 const pedido = (n, lojaId, extra = {}) => ({ id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId, itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }], ...extra })
-estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1')]
+estado.pedidos = [pedido(1, 'loja1'), pedido(2, 'loja1'), pedido(3, 'loja1'), pedido(4, 'loja1'), pedido(5, 'loja1'), pedido(6, 'loja1'), pedido(7, 'loja2', { status: 'transito' }), pedido(8, 'loja3'), pedido(9, 'loja3'), pedido(10, 'loja3'), pedido(11, 'loja1'), pedido(12, 'loja1'), pedido(13, 'loja1'), pedido(14, 'loja1'), pedido(15, 'loja4'), pedido(16, 'loja1'), pedido(17, 'loja1', { pais: 'Netherlands' }), pedido(18, 'loja1', { pais: 'Belgium' }), pedido(19, 'loja1', { pais: 'Belgium' }), pedido(20, 'loja1', { pais: 'Austria' }), pedido(21, 'loja1', { pais: 'Austria' }), pedido(22, 'loja1'), pedido(23, 'loja1'), pedido(24, 'loja1', { pais: 'Netherlands' }), pedido(25, 'loja3', { pais: 'Netherlands' }), pedido(26, 'loja1', { pais: 'Netherlands' }), pedido(27, 'loja1', { pais: 'Netherlands' }), pedido(31, 'loja6'), pedido(32, 'loja6'), pedido(33, 'loja6'), pedido(34, 'loja6'), pedido(41, 'loja1'), pedido(42, 'loja1'), pedido(43, 'loja1'), pedido(44, 'loja1'), pedido(51, 'loja1'), pedido(52, 'loja1'), pedido(53, 'loja1'), pedido(54, 'loja1', { itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 50 }, { titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] }), pedido(55, 'loja1'), pedido(56, 'loja3'), pedido(57, 'loja1'), pedido(58, 'loja4'), pedido(59, 'loja1'), pedido(61, 'loja1'), pedido(62, 'loja1'), pedido(71, 'loja3'), pedido(72, 'loja3'), pedido(73, 'loja3'), pedido(74, 'loja2'), pedido(75, 'loja3'), pedido(76, 'loja3')]
 // blocos da conversa "no limite" (h908): início ≈ 900 caracteres, fim ≈ 2.600, com a oferta final e a última resposta no extremo
 const encher = (prefixo, tamanho) => (prefixo + ' ' + 'wort '.repeat(400)).slice(0, tamanho).trim()
 const LIMITE = {
@@ -348,16 +348,18 @@ test('auto-envio reconfere o rascunho: editado fora da fase ou com oferta mudada
   process.env.ATENDO_SMTP_FAKE = 'ok'
   try {
     // rascunho editado para outro percentual antes de o relógio vencer
-    let a = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c8@web.de', nome: 'C8', corpo: 'Schlecht.', lojaId: 'loja3' })
-    assert.ok(a.enviaEm, 'loja automática agenda o envio')
+    // cadência fixa do novo: a 1ª resposta só sai 3 min depois da mensagem — aqui as mensagens "chegaram" há 4 min (relógio simulado)
+    const ha4min = () => new Date(Date.now() - 4 * 60_000).toISOString()
+    let a = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c8@web.de', nome: 'C8', corpo: 'Schlecht.', lojaId: 'loja3', agora: ha4min() })
+    assert.ok(a.enviaEm, 'loja automática agenda o envio'); assert.ok(a.enviaEm <= Date.now() + 2000, 'mensagem com mais de 3 min: sai já')
     await api(`/api/tickets/${a.id}/rascunho`, { texto: 'Wir bieten 70% an. Ok?' })
     // rascunho com a oferta removida
-    let b = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c9@web.de', nome: 'C9', corpo: 'Schlecht.', lojaId: 'loja3' })
+    let b = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c9@web.de', nome: 'C9', corpo: 'Schlecht.', lojaId: 'loja3', agora: ha4min() })
     await api(`/api/tickets/${b.id}/rascunho`, { texto: 'Hallo, wir melden uns bald.' })
     // rascunho intacto
-    const c = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c10@web.de', nome: 'C10', corpo: 'Schlecht.', lojaId: 'loja3' })
+    const c = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c10@web.de', nome: 'C10', corpo: 'Schlecht.', lojaId: 'loja3', agora: ha4min() })
     // cliente holandês cujo rascunho foi trocado por um texto em alemão (mesma etapa, mesmos números)
-    let d = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'nl' }, { de: 'c25@web.de', nome: 'C25', corpo: 'De kwaliteit is slecht, ik wil mijn geld terug.', lojaId: 'loja3' })
+    let d = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'nl' }, { de: 'c25@web.de', nome: 'C25', corpo: 'De kwaliteit is slecht, ik wil mijn geld terug.', lojaId: 'loja3', agora: ha4min() })
     assert.equal(an(d).idioma, 'nl'); assert.match(d.rascunho, /omruil/)
     await api(`/api/tickets/${d.id}/rascunho`, { texto: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 a 11 dias. Möchten Sie das annehmen?' })
     let fim = Date.now() + 15000
@@ -1014,6 +1016,55 @@ test('rotas — modo novo SEM transição pendente: sem produto nada sai (manual
   // sp9: modo novo sem transição, produto informado → resposta humana sai pela conta própria, sem transição inventada
   r = await comEnvio('ok', () => api('/api/tickets/sp9/aprovar', { texto: 'Hallo, wir kümmern uns darum.', origem: 'manual' })); assert.equal(r.status, 200, r.erro)
   const s9 = await ticket('sp9'); assert.equal(s9.status, 'enviado'); assert.equal(s9.resposta, 'Hallo, wir kümmern uns darum.'); assert.equal(an(s9).etapa, 'qual_troca'); assert.equal(an(s9).historicoEtapas.length, 1, 'nenhuma transição registrada'); assert.equal(an(s9).transicaoPendente, null)
+})
+
+test('cadência ponta a ponta (loja automática, envio liberado): 3 min na primeira resposta, 5 h depois, reinício pela mensagem mais recente, nada sai antes; clássico usa o seu atraso', async () => {
+  const MIN = 60_000, H = 3600_000
+  const iso = ms => new Date(ms).toISOString()
+  const perto = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg}: ${new Date(a).toISOString()} × ${new Date(b).toISOString()}`)
+  process.env.ATENDO_SMTP_FAKE = 'ok'
+  const enviado = async id => { for (let i = 0; i < 15 && (await ticket(id)).status !== 'enviado'; i++) await esperar(1000); return ticket(id) }
+  try {
+    // 1ª resposta: mensagem "chegou" há 2 min → agendada para daqui a ~1 min (3 min a partir da mensagem, não do processamento)
+    let a = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c71@web.de', nome: 'C71', corpo: 'Schlecht.', lojaId: 'loja3', agora: iso(Date.now() - 2 * MIN) })
+    perto(a.enviaEm, Date.now() + 1 * MIN, 3000, '2 min atrás → +1 min'); assert.equal(an(a).etapa, null)
+    // o cliente escreve de novo antes da 1ª resposta (mensagem de agora): os 3 min reiniciam a partir dela
+    a = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', resumo: 'insiste' }, { de: 'c71@web.de', corpo: 'Schlecht, Geld zurück!', ticketId: a.id })
+    assert.equal(an(a).transicaoPendente.para, 'qual_troca'); assert.ok(a.enviaEm, 'rascunho reagendado')
+    perto(a.enviaEm, Date.now() + 3 * MIN, 3000, 'várias mensagens antes da 1ª resposta: reinicia os 3 min')
+    // 2min59s ainda não sai: o laço roda e nada muda (fase e histórico intactos)
+    await esperar(6500)
+    a = await ticket(a.id); assert.equal(a.status, 'aprovacao'); assert.equal(an(a).etapa, null); assert.equal(an(a).historicoEtapas.length, 0, 'nenhum envio antecipado')
+    // mensagem com mais de 3 min: sai já — e só então a fase muda
+    let b = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c72@web.de', nome: 'C72', corpo: 'Schlecht.', lojaId: 'loja3', agora: iso(Date.now() - 5 * H - 4 * MIN) })
+    assert.ok(b.enviaEm <= Date.now() + 1000, 'mais de 3 min: imediato')
+    b = await enviado(b.id); assert.equal(b.status, 'enviado'); assert.equal(an(b).etapa, 'qual_troca')
+    // 2ª resposta com 4h59 (mensagem simulada há 4h59): rascunho pronto, e-mail espera 1 min — nada sai
+    b = await cliente({ intencao: 'recusa', resumo: 'nein' }, { de: 'c72@web.de', corpo: 'Nein.', ticketId: b.id, agora: iso(Date.now() - 5 * H + MIN) })
+    assert.equal(an(b).transicaoPendente.para, 'qual_cupom_35'); perto(b.enviaEm, Date.now() + MIN, 3000, 'com 4h59 falta 1 min')
+    await esperar(6500)
+    b = await ticket(b.id); assert.equal(b.status, 'aprovacao'); assert.equal(an(b).etapa, 'qual_troca'); assert.equal(an(b).historicoEtapas.length, 1, 'nenhum envio antecipado altera fase nem histórico')
+    // nova mensagem durante a espera (há 4 h): cancela o horário anterior e reagenda 5 h a partir da mais recente (= daqui a 1 h)
+    b = await cliente({ intencao: 'recusa', resumo: 'nein' }, { de: 'c72@web.de', corpo: 'Immer noch nein.', ticketId: b.id, agora: iso(Date.now() - 4 * H) })
+    perto(b.enviaEm, Date.now() + 1 * H, 3000, 'reagendada 5 h depois da mensagem mais recente')
+    // 2ª resposta com mensagem de agora: 5 h a partir dela
+    let c = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c73@web.de', nome: 'C73', corpo: 'Schlecht.', lojaId: 'loja3', agora: iso(Date.now() - 4 * MIN) })
+    c = await enviado(c.id); assert.equal(an(c).etapa, 'qual_troca')
+    c = await cliente({ intencao: 'recusa', resumo: 'nein' }, { de: 'c73@web.de', corpo: 'Nein.', ticketId: c.id })
+    perto(c.enviaEm, Date.now() + 5 * H, 3000, 'segunda resposta: 5 h depois da mensagem')
+    // 5 h completas: sai, e a fase muda só depois do envio real
+    let d = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c76@web.de', nome: 'C76', corpo: 'Schlecht.', lojaId: 'loja3', agora: iso(Date.now() - 5 * H - 10 * MIN) })
+    d = await enviado(d.id); assert.equal(an(d).etapa, 'qual_troca')
+    d = await cliente({ intencao: 'recusa', resumo: 'nein' }, { de: 'c76@web.de', corpo: 'Nein.', ticketId: d.id, agora: iso(Date.now() - 5 * H - 5000) })
+    assert.ok(d.enviaEm <= Date.now() + 1000, 'com 5 h sai')
+    d = await enviado(d.id); assert.equal(d.status, 'enviado'); assert.equal(an(d).historicoEtapas.map(h => h.para).join(' → '), 'qual_troca → qual_cupom_35')
+    // a cadência do novo não depende de atrasoMinutos (0,1 min neste arquivo): a 1ª resposta continua em 3 min
+    const e = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c75@web.de', nome: 'C75', corpo: 'Schlecht.', lojaId: 'loja3' })
+    perto(e.enviaEm, Date.now() + 3 * MIN, 3000, 'ignora config.atrasoMinutos')
+    // clássico continua com a sua configuração própria (atrasoMinutos = 0,1 min → 6 s)
+    const k = await cliente(null, { de: 'c74@web.de', nome: 'C74', corpo: 'Wo ist mein Paket?', lojaId: 'loja2' })
+    assert.equal(k.atendimentoNovo, undefined); assert.ok(k.enviaEm, 'clássico agenda pelo seletor'); perto(k.enviaEm, Date.now() + 6000, 3000, 'clássico: atrasoMinutos')
+  } finally { delete process.env.ATENDO_SMTP_FAKE }
 })
 
 test('loja clássica não passa pelo motor novo', async () => {
