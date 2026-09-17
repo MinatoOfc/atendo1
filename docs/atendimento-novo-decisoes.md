@@ -566,6 +566,46 @@ a escolha feita no código — todas fáceis de mudar, porque as fases são dado
     toca aceites já pendentes. Clássico intacto. Sem movimentação financeira:
     "processar" = enviar a confirmação válida e registrar no relatório.
 
+50. **Três travas da conclusão após o aceite (17/09)**:
+
+    a) **Mensagem nova durante a confirmação já autorizada** (automática OU
+    manual já aprovada pelo dono): a confirmação antiga nunca sai sem analisar a
+    mensagem. O agendamento é cancelado, a mensagem é reclassificada e o mesmo
+    `conclusaoPendente.id` é preservado. Agradecimento, reforço do aceite, dado
+    complementar ou pergunta sobre o prazo mantêm a solução, regeram e revalidam
+    a confirmação e reiniciam as 5 h a partir da nova mensagem — no manual, a
+    autorização do dono é preservada e não há segunda aprovação. Recusa, outro
+    percentual, outra solução ou voltar atrás cancelam definitivamente:
+    `enviaEm`, rascunho e transição de confirmação removidos, conclusão
+    `cancelada`, caso com o dono, sem avançar para a próxima oferta e sem
+    relatório.
+
+    b) **Estado incompatível da configuração**: `podeConclusaoAutomatica` exige
+    loja no novo, envio automático da loja, automação geral, piloto liberado e
+    prontidão. `neutralizarConclusaoAutomatica` roda ao desligar o envio
+    automático da loja, ao desligar a automação geral e no arranque: a aprovação
+    volta a `true` (com auditoria em `aceiteHistorico`, incluindo o motivo), as
+    conclusões automáticas ainda não enviadas perdem o agendamento e vão para o
+    dono com "Conclusão automática interrompida porque…", preservando a solução
+    aceita, sem confirmação e sem relatório. Religar a automação não retoma as
+    interrompidas; novos aceites passam a ser manuais.
+
+    c) **Idempotência durável na queda do servidor**: antes de chamar o canal,
+    a confirmação ganha um Message-ID ESTÁVEL (`atendo-<id do aceite>`), o
+    status vira `enviando` e o estado é gravado de verdade (`await gravarAgora`).
+    Depois do envio confirmado: `concluida`, id da mensagem, fase enviada, linha
+    idempotente e gravação imediata. No arranque,
+    `reconciliarEnviosInterrompidos` nunca reenvia às cegas: consulta a caixa de
+    enviados pelo Message-ID (`procurarEnviado` em server/mail.js) — se a
+    mensagem existir, fecha a conclusão e o relatório sem reenviar; se não
+    existir ou não der para conferir, vai ao dono ("O servidor foi interrompido
+    durante o envio da confirmação. Verifique a caixa de enviados antes de
+    tentar novamente."), sem reenvio e sem relatório. `test/queda.test.mjs` sobe
+    o servidor num processo filho que morre (exit 7) exatamente depois de o
+    canal confirmar e antes da gravação, e prova no reinício: um único e-mail,
+    uma única confirmação, uma única linha e o caso reconciliado — e, no
+    cenário sem comprovação, o caso com o dono sem reenvio nem relatório.
+
 39. **Fusão de conversas só no mesmo motor**: `fundirConversasDuplicadas`
     exige `motorDaConversa(a) === motorDaConversa(b)`; clássico e novo nunca
     se unem automaticamente. O Vite encaminha `/p` para o servidor, então o

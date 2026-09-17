@@ -579,17 +579,23 @@ export function decidir({ an: anAntes, cls, pedido, loja, temFoto = false, agora
     return retomarPendencia(saida, agora)
   }
 
-  // --- conclusão AUTOMÁTICA em espera (confirmação agendada / endereço pendente): a nova mensagem reclassifica ---
+  // --- confirmação JÁ AUTORIZADA esperando a cadência (automática, ou manual já aprovada pelo dono):
+  //     a confirmação antiga NUNCA sai sem analisar a mensagem nova. O agendamento é cancelado, a
+  //     mensagem é reclassificada e o mesmo conclusaoPendente.id é preservado nos dois caminhos. ---
   const cp = an.conclusaoPendente
-  if (cp && cp.modo === 'automatico' && ['aguardando_cadencia', 'enviando'].includes(cp.status) && pedido) {
+  const autorizada = cp && ['aguardando_cadencia', 'enviando'].includes(cp.status) && (cp.modo === 'automatico' || !!cp.aprovadoEm)
+  if (autorizada && pedido) {
+    // o cliente voltou atrás: recusa, outro percentual, outra solução → decisão HUMANA (nunca a próxima oferta sozinha)
     if (cls.intencao === 'recusa' || cls.intencao === 'pede_reembolso' || cls.intencao === 'pede_cancelamento' || cls.intencao === 'pede_troca') {
-      // o cliente voltou atrás depois de aceitar: divergência entre aceite e pedido atual → sempre o dono
       cp.status = 'cancelada'; cp.canceladaEm = new Date(agora).toISOString(); cp.motivoCancelamento = 'cliente voltou atrás depois do aceite'
       an.aguardando = 'humano'
-      saida.humano = `Cliente aceitou "${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita}" e depois voltou atrás — decida você (a confirmação automática foi cancelada)`
+      saida.cancelarConfirmacao = true
+      saida.humano = `Cliente aceitou "${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita}" e depois voltou atrás — decida você (a confirmação ${cp.modo === 'automatico' ? 'automática' : 'aprovada'} foi cancelada; a próxima oferta NÃO é automática)`
       return saida
     }
-    // agradecimento, dado extra ou reforço do aceite: a confirmação continua a mesma, reagendada 5 h após esta mensagem
+    // agradece, reafirma o aceite, informa dado complementar ou pergunta quando sai:
+    // mesma solução, confirmação regerada e revalidada, 5 h reiniciadas a partir desta mensagem.
+    // No manual já aprovado, a autorização do dono é preservada — nenhuma segunda aprovação.
     saida.fase = faseDeConfirmacao(cp.faseAceita)
     saida.reconfirmar = true
     return saida

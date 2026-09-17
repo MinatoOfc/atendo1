@@ -426,6 +426,107 @@ function concluirAposEnvio(estado, wsId, t, faseConfirmada, mensagemId) {
   t.relatorioLinha = undefined
 }
 
+/** Registro durável dos envios simulados (só em teste): permite conferir o Message-ID depois de uma queda. */
+function registrarEnvioSimulado(mensagemId) {
+  const arq = process.env.ATENDO_TESTE_ENVIOS
+  if (!arq) return
+  try { fs.appendFileSync(arq, mensagemId + '\n') } catch { /* teste */ }
+}
+/** A confirmação com este Message-ID chegou a sair? true | false | null (não deu para conferir). */
+async function confirmacaoFoiEnviada(wsId, t, mensagemId) {
+  const arq = process.env.ATENDO_TESTE_ENVIOS
+  if (arq) { try { return fs.readFileSync(arq, 'utf8').split('\n').includes(mensagemId) } catch { return false } }
+  const conta = contasDe(wsId).find(c => c.id === (t.lojaId ?? 'loja1'))
+  if (!conta?.procurarEnviado) return null
+  try { return await conta.procurarEnviado(mensagemId) } catch { return null }
+}
+/**
+ * Arranque: conclusão encontrada em "enviando" significa que o servidor caiu durante o
+ * envio da confirmação. NUNCA reenvia cegamente. Se der para conferir a caixa de
+ * enviados pelo Message-ID estável: existindo a mensagem, fecha a conclusão e o
+ * relatório sem reenviar; não existindo, vai ao dono. Sem como comprovar, vai ao dono
+ * pedindo a conferência — e nenhum relatório é criado até haver comprovação.
+ */
+async function reconciliarEnviosInterrompidos(wsId) {
+  const estado = workspaces.get(wsId); if (!estado) return
+  let mudou = false
+  for (const t of estado.tickets ?? []) {
+    const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
+    if (!cp || cp.status !== 'enviando') continue
+    const faseConf = an.transicaoPendente?.para && FASES[an.transicaoPendente.para]?.confirmacao ? an.transicaoPendente.para : faseDeConfirmacao(cp.faseAceita)
+    const saiu = await confirmacaoFoiEnviada(wsId, t, cp.mensagemConfirmacaoId)
+    t.enviaEm = undefined
+    if (saiu === true) {
+      // o e-mail chegou a sair: finaliza SEM reenviar (transição, conclusão e relatório idempotente)
+      if (an.transicaoPendente?.para === faseConf) {
+        confirmarTransicao(an, { para: faseConf, mensagem: an.transicaoPendente.mensagem, observacao: 'confirmação reconciliada após queda do servidor' })
+        an.proximoEnvioMinimo = undefined; an.rascunhoGerado = undefined
+      }
+      t.status = 'enviado'; t.resposta = t.rascunho ?? t.resposta; t.respondidoEm = t.respondidoEm || new Date().toISOString(); t.lido = true
+      concluirAposEnvio(estado, wsId, t, faseConf, cp.mensagemConfirmacaoId)
+      console.log(`[reconciliação] ${wsId}/${t.id}: confirmação já estava na caixa de enviados — fechada sem reenviar`)
+    } else {
+      cp.status = 'interrompida'; cp.interrompidaEm = new Date().toISOString()
+      cp.motivoInterrupcao = saiu === false
+        ? 'O servidor foi interrompido durante o envio da confirmação e a mensagem não está na caixa de enviados.'
+        : 'O servidor foi interrompido durante o envio da confirmação. Verifique a caixa de enviados antes de tentar novamente.'
+      an.aguardando = 'humano'
+      an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: cp.motivoInterrupcao, em: cp.interrompidaEm, evento: 'envio_interrompido' })
+      t.status = 'humano'
+      t.motivoEscalada = cp.motivoInterrupcao
+      t.decisaoPendente = decisaoDaOferta(FASES[cp.faseAceita]?.oferta ?? null)
+      console.log(`[reconciliação] ${wsId}/${t.id}: envio interrompido — com o dono (${saiu === false ? 'não saiu' : 'não foi possível conferir'})`)
+    }
+    mudou = true
+  }
+  if (mudou) await gravarAgora(wsId)
+}
+
+/** Pré-requisitos da conclusão automática numa loja (fora do momento de desligar a aprovação). */
+const podeConclusaoAutomatica = (estado, wsId, loja) =>
+  modoDaLoja(loja) === 'novo' && loja?.novoEnvioAutomatico === true && estado.config.automacaoAtiva === true
+  && envioAutomaticoLiberado() && prontidaoModoNovo(wsId, loja).pronto
+
+/**
+ * SEGURANÇA: não pode existir conclusão automática numa loja sem todos os
+ * pré-requisitos. Quando a dependência cai (envio automático da loja, automação
+ * global, piloto, caixa própria), a aprovação volta a ser obrigatória, as
+ * conclusões automáticas ainda não enviadas perdem o agendamento e vão para o
+ * dono com o motivo — sem confirmação e sem relatório. Devolve quantas mudou.
+ */
+function neutralizarConclusaoAutomatica(wsId, motivo, { por = 'sistema (segurança)', lojaId = null } = {}) {
+  const estado = workspaces.get(wsId); if (!estado) return 0
+  let n = 0
+  for (const loja of estado.lojas ?? []) {
+    if (lojaId && loja.id !== lojaId) continue
+    if (loja.exigirAprovacaoAceiteNovo === false && !podeConclusaoAutomatica(estado, wsId, loja)) {
+      loja.exigirAprovacaoAceiteNovo = true
+      loja.aceiteHistorico = [...(loja.aceiteHistorico ?? []), { lojaId: loja.id, por, de: false, para: true, em: new Date().toISOString(), motivo }].slice(-100)
+      n++
+    }
+  }
+  // conclusões automáticas pendentes (nunca enviadas) da(s) loja(s) afetada(s): agendamento cancelado, caso com o dono
+  for (const t of estado.tickets ?? []) {
+    const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
+    if (!cp || cp.modo !== 'automatico' || !['aguardando_dados', 'aguardando_cadencia'].includes(cp.status)) continue
+    if (lojaId && (t.lojaId ?? 'loja1') !== lojaId) continue
+    const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+    if (podeConclusaoAutomatica(estado, wsId, loja)) continue
+    cp.status = 'interrompida'; cp.interrompidaEm = new Date().toISOString(); cp.motivoInterrupcao = motivo
+    t.enviaEm = undefined
+    an.proximoEnvioMinimo = undefined
+    an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: motivo, em: cp.interrompidaEm, evento: 'conclusao_interrompida' })
+    an.aguardando = 'humano'
+    t.status = 'humano'
+    t.motivoEscalada = `${motivo} Cliente aceitou ${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita} — aprove para gerar a confirmação.`
+    t.decisaoPendente = decisaoDaOferta(FASES[cp.faseAceita]?.oferta ?? null)
+    t.resolucao = `Aceite pendente: ${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita}`
+    n++
+  }
+  if (n) salvar(wsId)
+  return n
+}
+
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
 function prontidaoModoNovo(wsId, loja) {
   const faltando = []
@@ -942,7 +1043,8 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   an.proximoEnvioMinimo = new Date(minimo).toISOString()
   t.status = 'aprovacao'
   // agenda só com a loja ligada, a automação geral ligada E o envio automático liberado (fora do piloto)
-  t.enviaEm = loja?.novoEnvioAutomatico && estado.config.automacaoAtiva && envioAutomaticoLiberado() ? minimo : undefined
+  const confirmacaoAutorizada = FASES[faseId]?.confirmacao && an.conclusaoPendente?.aprovadoEm && ['aguardando_cadencia', 'enviando'].includes(an.conclusaoPendente.status)
+  t.enviaEm = (loja?.novoEnvioAutomatico || confirmacaoAutorizada) && estado.config.automacaoAtiva && envioAutomaticoLiberado() ? minimo : undefined
   if (loja?.novoEnvioAutomatico && !envioAutomaticoLiberado()) an.envioBloqueado = 'envio automático bloqueado durante o piloto'
   else an.envioBloqueado = undefined
   // idioma que o validador local não lê: gera no idioma do cliente, mas NUNCA sai sozinho
@@ -1001,10 +1103,21 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   if (d.fase === 'endereco' && an.acaoAceita && !FASES_HUMANAS.has(an.acaoAceita) && !(an.conclusaoPendente && !['concluida', 'cancelada', 'recusada'].includes(an.conclusaoPendente.status))) {
     an.conclusaoPendente = novaConclusao(estado, t, an.acaoAceita, 'aguardando_dados')
   }
+  if (d.cancelarConfirmacao) {
+    // cliente voltou atrás depois do aceite: nada da confirmação antiga sobrevive
+    t.enviaEm = undefined; t.rascunho = undefined; t.rascunhoTraducao = undefined
+    an.transicaoPendente = null; an.rascunhoGerado = undefined; an.proximoEnvioMinimo = undefined
+    an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: `Confirmação cancelada: o cliente voltou atrás depois de aceitar ${FASES[an.conclusaoPendente?.faseAceita]?.titulo ?? ''}`.trim(), em: new Date().toISOString(), evento: 'confirmacao_cancelada' })
+    mandarParaHumanoNovo(t, d.humano)
+    t.decisaoPendente = undefined
+    return { spam: false }
+  }
   if (d.reconfirmar && an.conclusaoPendente) {
-    // mensagem nova durante a espera da confirmação automática: cancela o horário anterior e reagenda 5 h após ela
+    // mensagem nova durante a espera da confirmação (automática ou manual já aprovada): cancela o horário
+    // anterior e reagenda 5 h após ela, com o MESMO id do aceite e a autorização do dono preservada
     an.conclusaoPendente.status = 'aguardando_cadencia'
-    an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: 'Mensagem nova durante a espera: confirmação reagendada', em: new Date().toISOString(), evento: 'confirmacao_reagendada' })
+    t.enviaEm = undefined
+    an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: `Mensagem nova durante a espera: confirmação ${an.conclusaoPendente.aprovadoEm ? 'aprovada por ' + an.conclusaoPendente.aprovadoPor + ' ' : ''}reagendada (5 h a partir da nova mensagem)`, em: new Date().toISOString(), evento: 'confirmacao_reagendada' })
   }
 
   // 3. escrever, conferir e agendar — a fase só muda quando o e-mail sair
@@ -1365,11 +1478,23 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   // canal simulado só nos testes (ATENDO_SIMULAR=1): 'ok' envia, 'falha' quebra
   const simulado = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_SMTP_FAKE : null
   let enviou = false
-  const mensagemId = `atendo-${crypto.randomUUID()}` // identificador da mensagem enviada (relatório/auditoria)
   const estado = workspaces.get(wsId)
-  if (simulado === 'ok') enviou = true
+  // Message-ID ESTÁVEL por confirmação: gerado uma única vez e preservado em toda nova
+  // tentativa, para reconciliar pela caixa de enviados se o servidor cair durante o envio
+  const confirmandoAceite = modoNovo && transicao && FASES[transicao.para]?.confirmacao && an?.conclusaoPendente
+  const cpEnvio = confirmandoAceite ? an.conclusaoPendente : null
+  if (cpEnvio && !cpEnvio.mensagemConfirmacaoId) cpEnvio.mensagemConfirmacaoId = `atendo-${cpEnvio.id}`
+  const mensagemId = cpEnvio?.mensagemConfirmacaoId ?? `atendo-${crypto.randomUUID()}`
+  if (cpEnvio && cpEnvio.status !== 'concluida') {
+    // janela crítica: grava "enviando" + o Message-ID ANTES de chamar o canal, e persiste de verdade
+    cpEnvio.status = 'enviando'; cpEnvio.envioIniciadoEm = new Date().toISOString()
+    await gravarAgora(wsId)
+  }
+  if (simulado === 'ok') { registrarEnvioSimulado(mensagemId); enviou = true }
   else if (simulado === 'falha') throw new Error('Envio simulado falhou')
   else if (canal) { await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto, messageId: mensagemId }); enviou = true }
+  // ponto de queda controlado (só em teste): o canal confirmou, o servidor morre antes de gravar
+  if (enviou && cpEnvio && process.env.ATENDO_TESTE_QUEDA === '1') { console.error('[teste] queda proposital depois do envio, antes da gravação'); process.exit(7) }
   // modo novo: a fase só muda depois de um canal real enviar com sucesso — sem
   // canal, nem envia (nada abaixo é executado, então nada muda no ticket)
   if (modoNovo && !enviou) {
@@ -1381,7 +1506,7 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
     an.proximoEnvioMinimo = undefined
     an.rascunhoGerado = undefined
     // confirmação enviada de verdade: conclusão fechada; no modo automático, linha única no relatório
-    if (FASES[transicao.para]?.confirmacao) concluirAposEnvio(estado, wsId, ticket, transicao.para, mensagemId)
+    if (FASES[transicao.para]?.confirmacao) { concluirAposEnvio(estado, wsId, ticket, transicao.para, mensagemId); await gravarAgora(wsId) }
   } else if (modoNovo && an) {
     // resposta humana sem transição (com produto informado): sai pela conta própria, sem inventar fase
     an.proximoEnvioMinimo = undefined
@@ -1464,7 +1589,8 @@ agendar(async () => {
         console.error(`[auto-envio ${wsId}] tentativa ${t.tentativasEnvio}/${MAX_TENTATIVAS} falhou para ${t.de}: ${err.message}`)
         // confirmação automática de um aceite: falha de entrega vai ao dono NA HORA, com o motivo exato (nada avança, nada é registrado)
         const cpF = t.atendimentoNovo?.conclusaoPendente
-        if (cpF && cpF.modo === 'automatico' && cpF.status === 'aguardando_cadencia' && FASES[t.atendimentoNovo?.transicaoPendente?.para]?.confirmacao) {
+        // 'enviando' = a falha aconteceu depois de gravarmos a intenção de enviar (janela crítica)
+        if (cpF && cpF.modo === 'automatico' && ['aguardando_cadencia', 'enviando'].includes(cpF.status) && FASES[t.atendimentoNovo?.transicaoPendente?.para]?.confirmacao) {
           cpF.status = 'falha'; cpF.falha = err.message
           t.status = 'humano'; t.enviaEm = undefined
           t.motivoEscalada = `Não foi possível enviar a confirmação automática: ${err.message} — confira e envie você`
@@ -2421,6 +2547,8 @@ app.post('/api/lojas', (req, res) => {
       if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'Ligar o envio automático precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
     }
     loja.novoEnvioAutomatico = novoEnvioAutomatico
+    // ação de segurança: sem envio automático não existe conclusão automática
+    if (!novoEnvioAutomatico) neutralizarConclusaoAutomatica(req.wsId, 'Conclusão automática interrompida porque o envio automático da loja foi desligado.', { por: req.usuario?.nome || req.usuario?.email || 'lojista', lojaId: loja.id })
   }
   // "Exigir minha aprovação após o aceite": padrão true; desligar exige piloto liberado, automação global e da loja,
   // caixa própria, prazo e cupons, e confirmação explícita. Nunca toca aceites já pendentes (o modo é fotografado no aceite).
@@ -3424,6 +3552,8 @@ app.post('/api/config', (req, res) => {
   for (const k of permitidos) {
     if (k in req.body) req.estado.config[k] = req.body[k]
   }
+  // desligar a automação global neutraliza a conclusão automática de TODAS as lojas deste workspace
+  if (req.estado.config.automacaoAtiva !== true) neutralizarConclusaoAutomatica(req.wsId, 'Conclusão automática interrompida porque a automação geral foi desligada.', { por: req.usuario?.nome || req.usuario?.email || 'lojista' })
   if (typeof req.body.nomeLoja === 'string' && req.body.nomeLoja.trim()) {
     req.estado.lojas[0].nome = req.body.nomeLoja.trim()
   }
@@ -3461,6 +3591,8 @@ async function iniciar() {
   await carregarWorkspaces()
   fixarMotorDasConversas()
   neutralizarAutoEnvioNoPiloto()
+  for (const wsId of workspaces.keys()) neutralizarConclusaoAutomatica(wsId, 'Conclusão automática interrompida porque a loja não tem mais todos os pré-requisitos (envio automático, automação geral, piloto ou caixa própria).', { por: 'sistema (arranque)' })
+  for (const wsId of workspaces.keys()) await reconciliarEnviosInterrompidos(wsId)
   migrarCasosSemProduto()
 
   servidorHttp = app.listen(PORT, async () => {

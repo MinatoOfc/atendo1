@@ -377,7 +377,32 @@ export function criarConta(id, cfg, sufixo = '') {
     return true
   }
 
-  async function enviar({ para, assunto, corpo }) {
+  /**
+   * A mensagem com este Message-ID está na caixa de ENVIADOS?
+   *   true  = está (o envio chegou a acontecer)
+   *   false = não está
+   *   null  = não deu para conferir (sem IMAP, pasta inacessível, erro) — quem chama decide
+   */
+  async function procurarEnviado(messageId) {
+    if (!configurado || !messageId) return null
+    let cliente = null
+    try {
+      cliente = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: true, auth: { user: cfg.user, pass: cfg.pass }, logger: false })
+      await cliente.connect()
+      for (const pasta of ['Sent', 'INBOX.Sent', '[Gmail]/Sent Mail', 'Gesendet', 'Enviados']) {
+        try {
+          const lock = await cliente.getMailboxLock(pasta)
+          try {
+            const achados = await cliente.search({ header: { 'message-id': `<${messageId}@atendo>` } })
+            if (achados && achados.length) return true
+          } finally { lock.release() }
+        } catch { /* pasta não existe neste provedor: tenta a próxima */ }
+      }
+      return false
+    } catch { return null } finally { try { await cliente?.logout() } catch {} }
+  }
+
+  async function enviar({ para, assunto, corpo, messageId = null }) {
     const podeApi = envioPorApi && (cfg.from || cfg.user)
     if (!configurado && !podeApi) return false
     const titulo = assunto.startsWith('Re:') ? assunto : `Re: ${assunto}`
@@ -386,7 +411,10 @@ export function criarConta(id, cfg, sufixo = '') {
       to: para,
       subject: titulo,
       text: corpo,
-      headers: { 'X-Atendo-Auto': '1' },
+      // Message-ID ESTÁVEL: gerado antes do envio e reusado em qualquer nova tentativa,
+      // para reconciliar pela caixa de enviados se o servidor cair no meio do envio
+      ...(messageId ? { messageId: `<${messageId}@atendo>` } : {}),
+      headers: { 'X-Atendo-Auto': '1', ...(messageId ? { 'X-Atendo-Id': messageId } : {}) },
     }
 
     // 1º SMTP direto (testando 465/587 sozinho); Resend só como reserva
@@ -420,6 +448,7 @@ export function criarConta(id, cfg, sufixo = '') {
     buscarNovos,
     buscarTodos,
     enviar,
+    procurarEnviado,
   }
 }
 

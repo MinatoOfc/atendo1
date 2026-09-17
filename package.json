@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "start": "node server/index.js",
-    "test": "node --test test/motor.test.mjs test/central.test.mjs test/mapa.test.mjs test/pipeline.test.mjs test/piloto.test.mjs test/saida.test.mjs",
+    "test": "node --test test/motor.test.mjs test/central.test.mjs test/mapa.test.mjs test/pipeline.test.mjs test/piloto.test.mjs test/queda.test.mjs test/saida.test.mjs",
     "test:visual": "playwright test",
     "test:visual:atualizar": "playwright test --update-snapshots"
   },
