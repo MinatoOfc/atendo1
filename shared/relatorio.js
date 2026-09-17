@@ -82,6 +82,22 @@ export function numerosDePedidoNoTexto(txt) {
       guardar(ligado[1])
     }
   }
+  // "PEDIU DUAS VEZES SEM QUERER 3085 E 3086": contexto claro de dois pedidos.
+  // Só vale com a frase de duplicidade E dois números ligados por "e" — nunca um
+  // número solto, e nunca percentual, dinheiro, data, CEP, telefone ou tamanho.
+  const duplicidade = /\b(?:pediu|pedi|comprou|comprei|fez|realizou|feito|fizeram)\s+(?:duas|dois|2)\s+(?:vezes|pedidos)\b|\bem\s+duplicidade\b|\bpedido\s+duplicado\b/i
+  const dupe = s.match(duplicidade)
+  if (dupe) {
+    const resto = s.slice(dupe.index + dupe[0].length)
+    const par = resto.match(/(?:^|[^\d])#?\s?(\d{3,8})\s*(?:e|und|and|et|&|\+|,|\/)\s*#?\s*(\d{3,8})\b/i)
+    if (par) {
+      const fim = par.index + par[0].length
+      const limpo = numeroLimpo(resto.slice(fim))
+      // o primeiro número não pode ser percentual/dinheiro: confere o que vem logo depois dele
+      const depoisDoPrimeiro = resto.slice(resto.indexOf(par[1], par.index) + par[1].length)
+      if (limpo && numeroLimpo(depoisDoPrimeiro)) { guardar(par[1]); guardar(par[2]) }
+    }
+  }
   // "#2614" solto: o # já é marca de pedido
   for (const h of s.matchAll(/(?:^|[^\w#])#\s?(\d{3,8})\b/g)) {
     if (numeroLimpo(s.slice(h.index + h[0].length))) guardar(h[1])
@@ -189,13 +205,10 @@ export function acharPedidos(t, pedidos = []) {
   const email = norm(t.de).trim()
   if (email) {
     const porEmail = daLoja.filter(p => norm(p.email).trim() === email)
-    const um = p => resultado([{ numero: soDigitos(p.numero), pedido: p }], 'email')
-    if (porEmail.length === 1) return um(porEmail[0])
-    if (porEmail.length > 1) {
-      // vários pedidos do mesmo cliente: só o mais recente, e só se as datas desempatarem
-      const ordenados = [...porEmail].sort((a, b) => String(b.criadoEm ?? '').localeCompare(String(a.criadoEm ?? '')))
-      if (String(ordenados[0].criadoEm ?? '') !== String(ordenados[1].criadoEm ?? '')) return um(ordenados[0])
-    }
+    // só quando não há dúvida: UM pedido com aquele e-mail nesta loja. Com dois ou
+    // mais, o caso fica "Sem pedido informado" e o dono vincula à mão — associar o
+    // mais recente erraria o relatório antigo.
+    if (porEmail.length === 1) return resultado([{ numero: soDigitos(porEmail[0].numero), pedido: porEmail[0] }], 'email')
   }
   return vazio
 }
@@ -393,6 +406,20 @@ export function normalizarCaso(t, { pedidos = [], lojas = [], produtos = [], fas
     faseAceita: texto(auto?.faseAceita) ?? null,
     faseTitulo: auto?.faseAceita ? (texto(fases[auto.faseAceita]?.titulo) ?? auto.faseAceita) : null,
   }
+}
+
+/** Precisa de vínculo manual? Nenhum pedido localizado — com ou sem número escrito. */
+export function precisaVinculo(caso) {
+  return !caso?.pedidoLocalizado
+}
+
+/**
+ * O que já vai escrito na busca do vínculo manual: o número citado quando
+ * existe; senão o e-mail do cliente; senão o nome. Nunca inventa nada.
+ */
+export function buscaInicialVinculo(caso) {
+  const numero = caso?.pedidosSemDados?.[0] ?? caso?.pedidoNumeros?.[0] ?? null
+  return texto(numero) ?? texto(caso?.clienteEmail) ?? texto(caso?.clienteNome) ?? ''
 }
 
 /** Filtros da página externa (validados; o resto cai no padrão). */

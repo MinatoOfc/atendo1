@@ -71,4 +71,6 @@ export declare function acharPedidos(t: Ticket, pedidos?: Pedido[]): {
   numeros: string[]
 }
 export declare function acharPedido(t: Ticket, pedidos?: Pedido[]): Pedido | null
+export declare function precisaVinculo(caso: CasoRelatorio): boolean
+export declare function buscaInicialVinculo(caso: CasoRelatorio): string
 export declare function normalizarCaso(t: Ticket, opcoes?: OpcoesNormalizacao): CasoRelatorio

@@ -24,6 +24,8 @@ const { novoEstado } = await import('../server/db.js')
 const IMG = 'data:image/gif;base64,R0lGODlhAQABAAAAACw='
 const estado = novoEstado()
 estado.config.automacaoAtiva = false
+estado.tokenRelatorio = 'abcdef0123456789'.repeat(2)
+estado.linkMostraHoje = true
 estado.lojas = [
   { id: 'loja1', nome: 'Loja Nova', ativa: true, moeda: 'EUR', idioma: 'de', modoAtendimento: 'novo', novoAtivadoEm: '2026-07-01T00:00:00.000Z', prazoEntrega: { min: 5, max: 12, processamento: 3 } },
   { id: 'loja2', nome: 'Loja Clássica', ativa: true, moeda: 'GBP', idioma: 'auto' },
@@ -50,6 +52,8 @@ estado.tickets = [
   base_ticket('t-antigo', { relatorioDia: '2026-09-09', relatorioTexto: 'REEMBOLSO 60%', relatorioProcessado: '2026-09-09T20:00:00.000Z' }),
   // relatório antigo com o número escrito na linha, mas sem esse pedido na Shopify
   base_ticket('t-vincular', { de: 'ninguem@web.de', assunto: 'Umtausch', corpo: 'Sem numero aqui.', relatorioDia: '2026-09-09', relatorioTexto: 'PEDIDO 7777 - TROCAR AS 2XL POR 4XL' }),
+  // ana@web.de tem DOIS pedidos na loja1 (p1 e p3): nada pode ser escolhido sozinho
+  base_ticket('t-ambiguo', { assunto: 'Frage', corpo: 'Sem numero.', relatorioDia: '2026-09-09', relatorioTexto: 'CANCELAMENTO' }),
 ]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
@@ -232,4 +236,56 @@ test('vincular dois pedidos da mesma loja: os dois números aparecem e nada é s
   const caso = normalizarCaso(t, { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos })
   assert.equal(caso.pedidoTitulo, 'Pedidos #1001 e #1002')
   assert.deepEqual(caso.produtos.map(p => p.titulo), ['Polo Premium', 'Hemd Classic'])
+})
+test('trocar o vínculo por outro pedido recalcula tudo a partir do novo', async () => {
+  const r = await api('/api/tickets/t-vincular/relatorio/vincular', { pedidoIds: ['p3'] })
+  assert.equal(r.status, 200)
+  const d = (await ticket('t-vincular')).relatorioDetalhes
+  assert.deepEqual(d.pedidoIds, ['p3'])
+  assert.deepEqual(d.pedidoNumeros, ['1002'])
+  assert.equal(d.valorPedido, 50, 'o valor passa a ser o do pedido novo')
+  assert.equal(d.produtos[0].titulo, 'Hemd Classic')
+})
+
+test('remover o vínculo volta para a associação automática, sem inventar pedido', async () => {
+  const r = await api('/api/tickets/t-vincular/relatorio/vincular', { pedidoIds: [] })
+  assert.equal(r.status, 200)
+  const t = await ticket('t-vincular')
+  assert.deepEqual(t.relatorioDetalhes.pedidoIds, [])
+  const { normalizarCaso, precisaVinculo } = await import('../shared/relatorio.js')
+  const caso = normalizarCaso(t, { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos })
+  // o texto continua citando o 7777, que não existe na Shopify
+  assert.deepEqual(caso.pedidoNumeros, ['7777'])
+  assert.equal(caso.pedidoLocalizado, false)
+  assert.equal(caso.valorPedido, null)
+  assert.equal(precisaVinculo(caso), true, 'o botão "Vincular pedido" volta a aparecer')
+})
+
+test('caso SEM número nenhum também oferece vínculo manual, e o e-mail ambíguo não escolhe sozinho', async () => {
+  const { normalizarCaso, precisaVinculo, buscaInicialVinculo } = await import('../shared/relatorio.js')
+  const t = await ticket('t-ambiguo')
+  const caso = normalizarCaso(t, { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos })
+  // ana@web.de tem DOIS pedidos na loja1: nada é associado automaticamente
+  assert.deepEqual(caso.pedidoNumeros, [])
+  assert.equal(caso.rotuloPedido, 'Sem pedido informado')
+  assert.equal(precisaVinculo(caso), true)
+  assert.equal(buscaInicialVinculo(caso), 'ana@web.de', 'o modal já abre procurando pelo e-mail')
+  // e o vínculo manual resolve
+  assert.equal((await api('/api/tickets/t-ambiguo/relatorio/vincular', { pedidoIds: ['p1'] })).status, 200)
+  const d = (await ticket('t-ambiguo')).relatorioDetalhes
+  assert.deepEqual(d.pedidoNumeros, ['1001'])
+  assert.equal(d.valorPedido, 100)
+})
+
+test('o link externo do relatório continua só de leitura: nada de vincular por lá', async () => {
+  const html = await (await fetch(`${url}/r/teste/${estado.tokenRelatorio}`)).text()
+  // o id do caso de teste contém 'vincular': o que não pode existir é a AÇÃO
+  assert.ok(!/vincular pedido/i.test(html), 'a página externa não oferece vínculo de pedido')
+  assert.ok(!/corrigir o pedido/i.test(html), 'nem correção de pedido')
+  assert.ok(!/<form/i.test(html), 'a página externa não tem formulário')
+  // e a rota de vínculo exige sessão (o token do link não serve)
+  const semSessao = await fetch(`${url}/api/tickets/t-ambiguo/relatorio/vincular`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pedidoIds: ['p3'] }),
+  })
+  assert.equal(semSessao.status, 401)
 })

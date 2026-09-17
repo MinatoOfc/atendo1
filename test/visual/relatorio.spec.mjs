@@ -232,4 +232,30 @@ test.describe('Relatório diário externo', () => {
     const caixaCaso = await dois.boundingBox()
     expect(Math.round(caixaCaso.width)).toBeLessThanOrEqual(390)
   })
+
+  test('"PEDIU DUAS VEZES ... 3085 E 3086" vira "Pedidos #3085 e #3086" no desktop e no celular', async ({ page }) => {
+    await abrir(page, RELATORIO)
+    const angela = page.locator('.caso[data-caso="r3085"]')
+    await expect(angela.locator('.pedido strong')).toHaveText('Pedidos #3085 e #3086')
+    await expect(angela.locator('.pedido .aviso')).toHaveCount(0)
+    await expect(angela.locator('.cliente strong')).toHaveText('Angela Ruiz')
+    // os produtos dos dois pedidos, com miniatura, e nenhuma soma de valores
+    await expect(angela.locator('.pedido .mini').last()).toContainText('+1')
+    await expect(angela.locator('.valores .mini')).toHaveText('valor do pedido desconhecido')
+    await angela.locator('.abrir').click()
+    const detalhes = await angela.locator('.detalhes').innerText()
+    expect(detalhes).toContain('Polo Premium')
+    expect(detalhes).toContain('Chino Slim')
+    expect(detalhes).toContain('#3085')
+    expect(detalhes).toContain('#3086')
+    // a página externa continua só de leitura: nenhuma ação de vínculo por lá
+    const html = await page.content()
+    expect(html).not.toMatch(/vincular pedido/i)
+    expect(html).not.toContain('<form')
+    // celular: mesmo texto, sem rolagem horizontal
+    await abrir(page, RELATORIO, CELULAR)
+    await page.locator('.caso[data-caso="r3085"]').scrollIntoViewIfNeeded()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'sem rolagem horizontal').toBe(true)
+    await expect(page.locator('.caso[data-caso="r3085"] .pedido strong')).toHaveText('Pedidos #3085 e #3086')
+  })
 })

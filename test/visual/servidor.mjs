@@ -166,6 +166,9 @@ estado.pedidos.push(
   { ...pedido(3009, 'loja1', 120), email: 'c3009@web.de', cliente: 'Cliente 3009', itens: [itemRel('Polo Premium', 'Schwarz / 2XL', 'prod-polo', 'var-polo-l', 120)] },
   { ...pedido(3010, 'loja1', 80), email: 'c3010@web.de', cliente: 'Cliente 3010', itens: [itemRel('Polo Premium', 'Schwarz / 2XL', 'prod-polo', null, 80)] },
   { ...pedido(3011, 'loja1', 60), email: 'c3011@web.de', cliente: 'Cliente 3011', itens: [itemRel('Hemd Classic', 'Weiß / 2XL', 'prod-hemd', null, 60)] },
+  // Angela pediu duas vezes sem querer: DOIS pedidos, mesmo e-mail, mesma loja
+  { ...pedido(3085, 'loja1', 90), email: 'angela@web.de', cliente: 'Angela Ruiz', itens: [itemRel('Polo Premium', 'Schwarz / L', 'prod-polo', 'var-polo-l', 90)] },
+  { ...pedido(3086, 'loja1', 90), email: 'angela@web.de', cliente: 'Angela Ruiz', itens: [itemRel('Chino Slim', 'Beige / 32', 'prod-chino', null, 90)] },
 )
 estado.tickets.push(
   // 11) um pedido, achado pela LINHA final editada pelo dono
@@ -174,6 +177,8 @@ estado.tickets.push(
   doRelatorio(3010, 'loja1', ONTEM, { categoria: 'troca', relatorioTexto: 'PEDIDO 3010 E 3011 - TROCAR POR 4XL' }),
   // 13) número escrito, mas o pedido não está sincronizado na Shopify
   doRelatorio(3012, 'loja1', ONTEM, { categoria: 'troca', relatorioTexto: 'PEDIDO 8888 - TROCAR AS 2XL POR 4XL' }),
+  // 14) duplicidade escrita à mão: dois números ligados por "e", sem a palavra "pedido"
+  doRelatorio(3085, 'loja1', ONTEM, { nome: 'Angela Ruiz', de: 'angela@web.de', categoria: 'reembolso', relatorioTexto: 'PEDIU DUAS VEZES SEM QUERER 3085 E 3086, ELE QUER CANCELAR UM' }),
 )
 
 // o caso 1015 (cancelamento) está com o dono: fase pendente de decisão

@@ -7,6 +7,7 @@ import {
   acharPedido, clienteDoCaso, imagemDoItem, produtosDoCaso, percentualDoTexto, tipoDoTexto,
   normalizarCaso, filtrarCasos, filtrosDoRelatorio, indicadoresDoRelatorio, agruparPorDia,
   acharPedidos, numerosDePedidoNoTexto,
+  precisaVinculo, buscaInicialVinculo,
   dadosDoRelatorio, dinheiro, textoParaCopiar,
 } from '../shared/relatorio.js'
 
@@ -31,15 +32,15 @@ const tk = (id, extra = {}) => ({
 })
 const opcoes = { pedidos, lojas, produtos, fases: { reemb_40: { titulo: 'Reembolso de 40% sem devolução' } } }
 
-test('pedido: relatorioAuto, número citado, e-mail da mesma loja, mais recente sem ambiguidade — e NUNCA outra loja', () => {
+test('pedido: relatorioAuto, número citado, e-mail da mesma loja com um único pedido — e NUNCA outra loja', () => {
   // 1) o que a conclusão automática gravou
   assert.equal(acharPedido(tk('a', { relatorioAuto: { pedido: '#1002' } }), pedidos).id, 'p2')
   // 2) número citado na conversa
   assert.equal(acharPedido(tk('b', { corpo: 'Meine Bestellung 1001 ist kaputt' }), pedidos).id, 'p1')
   // 3) e-mail na mesma loja
   assert.equal(acharPedido(tk('c', { de: 'bruno@web.de' }), pedidos).id, 'p2')
-  // vários pedidos do mesmo e-mail: o mais recente (datas desempatam)
-  assert.equal(acharPedido(tk('d', { de: 'ana@web.de' }), pedidos).id, 'p4')
+  // vários pedidos do mesmo e-mail: NÃO escolhe o mais recente — fica sem pedido e o dono vincula à mão
+  assert.equal(acharPedido(tk('d', { de: 'ana@web.de' }), pedidos), null)
   // pedido de OUTRA loja nunca é associado (nem pelo número, nem pelo e-mail)
   assert.equal(acharPedido(tk('e', { corpo: 'pedido 2001' }), pedidos), null)
   assert.equal(acharPedido(tk('f', { de: 'carla@uk.co' }), pedidos), null)
@@ -378,4 +379,76 @@ test('caso #2026 (já estruturado) continua idêntico: foto, cliente, 100% e €
   assert.equal(c.valor, 103.5)
   assert.equal(dinheiro(c.valor, c.moeda), '€ 103,50')
   assert.equal(c.produtos[0].imagem, IMG_VAR, 'a foto da variante continua vindo do catálogo')
+})
+/* ====================================================================
+   "PEDIU DUAS VEZES": duplicidade escrita à mão, e-mail ambíguo e o que
+   o vínculo manual precisa mostrar.
+   ==================================================================== */
+
+const pedidosDuplos = [
+  ...pedidosAntigos,
+  { id: 'a3085', numero: '#3085', cliente: 'Angela Ruiz', email: 'angela@web.de', valor: 90, lojaId: 'l1', criadoEm: '2026-08-10', itens: [itemSemId('Polo Premium')] },
+  { id: 'a3086', numero: '#3086', cliente: 'Angela Ruiz', email: 'angela@web.de', valor: 90, lojaId: 'l1', criadoEm: '2026-08-10', itens: [itemSemId('Camisa Dupla')] },
+]
+const LINHA_ANGELA = 'PEDIU DUAS VEZES SEM QUERER 3085 E 3086, ELE QUER CANCELAR UM'
+
+test('"PEDIU DUAS VEZES SEM QUERER 3085 E 3086" localiza os DOIS pedidos', () => {
+  const c = normalizarCaso(antigo('d1', { de: 'angela@web.de', relatorioTexto: LINHA_ANGELA }), { ...opcoesAntigas, pedidos: pedidosDuplos })
+  assert.deepEqual(c.pedidoNumeros, ['3085', '3086'])
+  assert.equal(c.pedidoTitulo, 'Pedidos #3085 e #3086')
+  assert.equal(c.rotuloPedido, 'Pedidos #3085 e #3086')
+  assert.equal(c.pedidoLocalizado, true)
+  assert.deepEqual(c.pedidos.map(p => p.id), ['a3085', 'a3086'])
+  assert.equal(c.clienteNome, 'Angela Ruiz')
+  assert.equal(c.valorPedido, null, 'dois pedidos nunca somam')
+})
+
+test('a mesma frase preserva os números quando os pedidos não estão sincronizados', () => {
+  const c = normalizarCaso(antigo('d2', { relatorioTexto: LINHA_ANGELA }), opcoesAntigas)
+  assert.deepEqual(c.pedidoNumeros, ['3085', '3086'])
+  assert.equal(c.pedidoLocalizado, false)
+  assert.deepEqual(c.pedidosSemDados, ['3085', '3086'])
+  assert.equal(c.rotuloPedido, 'Pedidos #3085 e #3086 citados — dados não encontrados na Shopify')
+  assert.equal(c.valor, null)
+})
+
+test('a construção de duplicidade NÃO vira porta aberta para qualquer número', () => {
+  assert.deepEqual(numerosDePedidoNoTexto(LINHA_ANGELA), ['3085', '3086'])
+  assert.deepEqual(numerosDePedidoNoTexto('COMPROU 2 VEZES 3085 E 3086'), ['3085', '3086'])
+  // sem a frase de duplicidade, número solto continua fora
+  assert.deepEqual(numerosDePedidoNoTexto('SEM QUERER 3085 E 3086'), [])
+  // um número só não basta: a construção é de DOIS pedidos
+  assert.deepEqual(numerosDePedidoNoTexto('PEDIU DUAS VEZES 3085'), [])
+  // percentual, dinheiro, data, CEP e telefone continuam de fora
+  assert.deepEqual(numerosDePedidoNoTexto('pediu reembolso de 100%'), [])
+  assert.deepEqual(numerosDePedidoNoTexto('PEDIU DUAS VEZES 100% E 50%'), [])
+  assert.deepEqual(numerosDePedidoNoTexto('PEDIU DUAS VEZES EM 12/09/2026 E 13/09/2026'), [])
+  assert.deepEqual(numerosDePedidoNoTexto('PEDIU DUAS VEZES, VALOR 103,50 E 210,00'), [])
+  assert.deepEqual(numerosDePedidoNoTexto('PEDIU DUAS VEZES, CEP 01310-100 E TEL 99999-9999'), [])
+})
+
+test('dois pedidos do mesmo e-mail NUNCA são associados sozinhos; um só continua sendo', () => {
+  // Angela tem dois pedidos na loja: sem número escrito, o caso fica sem pedido
+  const ambiguo = normalizarCaso(antigo('d3', { de: 'angela@web.de', relatorioTexto: 'CANCELAMENTO' }), { ...opcoesAntigas, pedidos: pedidosDuplos })
+  assert.equal(ambiguo.pedidoLocalizado, false)
+  assert.deepEqual(ambiguo.pedidoNumeros, [])
+  assert.equal(ambiguo.rotuloPedido, 'Sem pedido informado')
+  assert.equal(precisaVinculo(ambiguo), true, 'o dono vincula à mão')
+  // Marta tem um só: continua associada automaticamente
+  const unico = normalizarCaso(antigo('d4', { de: 'marta@web.de', relatorioTexto: 'REEMBOLSO 50%' }), { ...opcoesAntigas, pedidos: pedidosDuplos })
+  assert.equal(unico.pedidoId, 'a2614')
+  assert.equal(precisaVinculo(unico), false)
+  assert.equal(acharPedidos(antigo('d5', { de: 'marta@web.de' }), pedidosDuplos).origem, 'email')
+})
+
+test('o vínculo manual já abre pesquisando pelo número, pelo e-mail ou pelo nome', () => {
+  const citado = normalizarCaso(antigo('d6', { relatorioTexto: LINHA_ANGELA }), opcoesAntigas)
+  assert.equal(buscaInicialVinculo(citado), '3085', 'com número citado, procura pelo número')
+  const semNumero = normalizarCaso(antigo('d7', { de: 'angela@web.de', relatorioTexto: 'CANCELAMENTO' }), { ...opcoesAntigas, pedidos: pedidosDuplos })
+  assert.equal(buscaInicialVinculo(semNumero), 'angela@web.de', 'sem número, procura pelo e-mail')
+  const semEmail = normalizarCaso({ ...antigo('d8', { relatorioTexto: 'CANCELAMENTO' }), de: '', nome: 'Angela Ruiz' }, opcoesAntigas)
+  assert.equal(buscaInicialVinculo(semEmail), 'Angela Ruiz', 'sem e-mail, procura pelo nome')
+  // caso já resolvido não precisa de vínculo
+  const comPedido = normalizarCaso(antigo('d9', { relatorioLinha: 'PEDIDO 2614 - TROCA' }), opcoesAntigas)
+  assert.equal(precisaVinculo(comPedido), false)
 })

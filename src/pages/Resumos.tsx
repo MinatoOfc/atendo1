@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil, CornerUpLeft, Wallet } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
-import { normalizarCaso, ROTULO_TIPO } from '../../shared/relatorio.js'
+import { normalizarCaso, ROTULO_TIPO, precisaVinculo, buscaInicialVinculo } from '../../shared/relatorio.js'
 import type { CasoRelatorio } from '../../shared/relatorio.js'
 import type { ResumoDiario, Ticket, RelatorioReembolsos } from '../store'
 import { EmptyState, Modal } from '../components/Shared'
@@ -46,17 +46,28 @@ function dadosCompactos(caso: CasoRelatorio) {
 function ModalVincular({ t, caso, onClose }: { t: Ticket; caso: CasoRelatorio; onClose: () => void }) {
   const s = useStore()
   const daLoja = s.todosPedidos.filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
-  const [busca, setBusca] = useState(caso.pedidosSemDados[0] ?? '')
-  const [marcados, setMarcados] = useState<string[]>(caso.pedidos.filter(p => p.id).map(p => p.id as string))
+  // já vem escrito: o número citado; sem número, o e-mail; sem e-mail, o nome
+  const [busca, setBusca] = useState(buscaInicialVinculo(caso))
+  const jaVinculado = caso.pedidos.filter(p => p.id).map(p => p.id as string)
+  const [marcados, setMarcados] = useState<string[]>(jaVinculado)
   const alvo = busca.trim().toLowerCase()
   const lista = daLoja
     .filter(p => !alvo || `${p.numero} ${p.cliente ?? ''} ${p.email ?? ''}`.toLowerCase().includes(alvo))
     .slice(0, 40)
   return (
-    <Modal title="Vincular pedido a este caso" onClose={onClose}>
+    <Modal title={jaVinculado.length ? 'Corrigir o pedido deste caso' : 'Vincular pedido a este caso'} onClose={onClose}>
       <p className="muted-sm" style={{ marginBottom: 12, lineHeight: 1.5 }}>
-        O número <b>{caso.pedidosSemDados.map(n => `#${n}`).join(', ') || '—'}</b> está escrito no relatório, mas não bate
-        com nenhum pedido sincronizado desta loja. Escolha o pedido certo — isso muda <b>só o relatório</b>.
+        {caso.pedidosSemDados.length > 0 ? (
+          <>
+            O número <b>{caso.pedidosSemDados.map(n => `#${n}`).join(', ')}</b> está escrito no relatório, mas não bate
+            com nenhum pedido sincronizado desta loja.
+          </>
+        ) : jaVinculado.length ? (
+          <>Este caso está em <b>{caso.pedidoTitulo}</b>. Dá para trocar por outro pedido ou tirar o vínculo.</>
+        ) : (
+          <>Nenhum pedido foi localizado para este caso. Escolha o pedido certo desta loja.</>
+        )}
+        {' '}Escolher aqui muda <b>só o relatório</b> — nada do atendimento, do motor, da fase ou da oferta.
       </p>
       <div className="field">
         <label>Buscar pedido desta loja</label>
@@ -80,12 +91,23 @@ function ModalVincular({ t, caso, onClose }: { t: Ticket; caso: CasoRelatorio; o
           )
         })}
       </div>
-      <div className="row spread" style={{ marginTop: 14, flexWrap: 'wrap', gap: 8 }}>
+      <p className="muted-sm" style={{ marginTop: 10 }}>
+        Só aparecem pedidos desta loja. Com mais de um pedido os valores não são somados.
+      </p>
+      <div className="row spread" style={{ marginTop: 8, flexWrap: 'wrap', gap: 8 }}>
         <span className="muted-sm">{marcados.length} pedido(s) selecionado(s)</span>
-        <button className="btn btn-primary" disabled={!marcados.length}
-          onClick={() => { s.vincularPedidosRelatorio(t.id, marcados); onClose() }}>
-          <Check size={13} /> Vincular
-        </button>
+        <div className="row gap-8">
+          {jaVinculado.length > 0 && (
+            <button className="btn btn-danger btn-sm" title="Tira o vínculo escolhido à mão e volta para a associação automática"
+              onClick={() => { s.vincularPedidosRelatorio(t.id, []); onClose() }}>
+              <X size={13} /> Remover vínculo
+            </button>
+          )}
+          <button className="btn btn-primary" disabled={!marcados.length}
+            onClick={() => { s.vincularPedidosRelatorio(t.id, marcados); onClose() }}>
+            <Check size={13} /> {jaVinculado.length ? 'Salvar pedidos' : 'Vincular'}
+          </button>
+        </div>
       </div>
     </Modal>
   )
@@ -273,10 +295,14 @@ export default function Resumos() {
                         return <span className="muted-sm" style={{ display: 'block', marginTop: 1 }}>{partes.join(' · ')}</span>
                       })()}
                     </span>
-                    {casoDe(t).pedidosSemDados.length > 0 && (
-                      <button className="btn btn-sm" title="O número está escrito, mas o pedido não foi encontrado na Shopify — escolha o pedido certo desta loja"
-                        onClick={() => setVinculando(t.id)}><Link2 size={13} /> Vincular pedido</button>
-                    )}
+                    {precisaVinculo(casoDe(t))
+                      ? (
+                        <button className="btn btn-sm" title="Nenhum pedido localizado para este caso — escolha o pedido certo desta loja"
+                          onClick={() => setVinculando(t.id)}><Link2 size={13} /> Vincular pedido</button>
+                      ) : (
+                        <button className="btn-ghost btn-sm" title="Trocar ou tirar o pedido vinculado a este caso"
+                          onClick={() => setVinculando(t.id)}><Link2 size={13} /></button>
+                      )}
                     {t.relatorioProcessado && (
                       <span className="tag tag-green" title={'Processado pelo dono em ' + new Date(t.relatorioProcessado).toLocaleString('pt-BR')}>✓ processado</span>
                     )}
