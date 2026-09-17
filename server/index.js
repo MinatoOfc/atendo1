@@ -18,6 +18,8 @@ import {
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { produtoFoiInformado } from '../shared/produto.js'
+import { dadosDoRelatorio, filtrosDoRelatorio, normalizarCaso, acharPedido, clienteDoCaso, produtosDoCaso, percentualDoTexto, tipoDoTexto } from '../shared/relatorio.js'
+import { paginaRelatorio } from './relatorio-externo.js'
 import { paginaPipeline, dadosPipeline, filtrosDaConsulta } from './pipeline-externo.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
@@ -460,6 +462,7 @@ function concluirAposEnvio(estado, wsId, t, faseConfirmada, mensagemId) {
   if (!t.relatorioDia) t.relatorioDia = diaLocal(Date.now())
   t.relatorioTexto = `${partes.join(' — ')} — motor novo, conclusão automática`
   t.relatorioLinha = undefined
+  t.relatorioDetalhes = montarDetalhesRelatorio(estado, t)
 }
 
 /**
@@ -1907,6 +1910,58 @@ const escaparHtml = s => String(s ?? '').replace(/[&<>"']/g, c => (
 
 const categoriaRelatorio = { reembolso: 'Reembolso', troca: 'Troca', rastreio: 'Rastreio', entrega: 'Entrega', produto: 'Produto', outro: 'Atendido' }
 
+/**
+ * Monta relatorioDetalhes (versão 1) no SERVIDOR: nada do que o navegador manda
+ * vira valor sem conferência. No motor novo a solução aceita manda — o dono não
+ * pode trocar a ação nem o percentual. Sem prova de valor, fica null (a página
+ * mostra "Valor não registrado"), nunca zero.
+ */
+function montarDetalhesRelatorio(estado, t, enviado = {}) {
+  const pedidos = estado.pedidos ?? []
+  // o caso é lido SEM os detalhes já gravados: o que valia antes não pode
+  // sobreviver escondido a uma correção do dono (percentual tirado, tipo trocado)
+  const caso = normalizarCaso({ ...t, relatorioDetalhes: undefined }, { pedidos, lojas: estado.lojas ?? [], produtos: estado.produtos ?? [], fases: catalogoFases() })
+  const pedido = acharPedido(t, pedidos)
+  const an = t.atendimentoNovo
+  const cp = an?.conclusaoPendente
+  const automatico = !!t.relatorioAuto
+  const travado = automatico || !!(cp && ['concluida', 'aguardando_aprovacao', 'aguardando_cadencia', 'interrompida'].includes(cp.status))
+  const num = v => (Number.isFinite(Number(v)) ? Number(v) : null)
+  const arred = v => (v == null ? null : Math.round(Number(v) * 100) / 100)
+
+  // tipo e percentual: travados no motor novo; no clássico o dono pode corrigir
+  const tipo = travado ? caso.tipo : (TIPOS_RELATORIO_VALIDOS.includes(enviado?.tipo) ? enviado.tipo : caso.tipo)
+  let percentual = travado ? caso.percentual : (num(enviado?.percentual) ?? caso.percentual)
+  if (percentual != null && (percentual < 1 || percentual > 100)) percentual = null
+  const moeda = caso.moeda
+  const valorPedido = pedido?.valor != null ? num(pedido.valor) : caso.valorPedido
+  // valor: SEMPRE recalculado aqui (nunca o número que veio do navegador)
+  let valor = null
+  if (tipo !== 'cupom') {
+    if (automatico && num(t.relatorioAuto.valor) != null) valor = arred(t.relatorioAuto.valor)
+    else if (percentual != null && valorPedido != null) valor = arred(valorPedido * percentual / 100)
+    else if (caso.valor != null) valor = caso.valor
+  }
+  // produtos: só os itens REAIS do pedido escolhidos pelo dono (ou os do caso)
+  const escolhidos = Array.isArray(enviado?.produtos) ? enviado.produtos : null
+  const produtos = (escolhidos?.length && !automatico)
+    ? produtosDoCaso({ ...t, relatorioDetalhes: { versao: 1, produtos: escolhidos } }, pedido, estado.produtos ?? [])
+    : caso.produtos
+  const antes = t.relatorioDetalhes?.versao === 1 ? t.relatorioDetalhes : null
+  const agoraIso = new Date().toISOString()
+  return {
+    versao: 1, tipo, percentual, valor, moeda, valorPedido,
+    pedidoId: pedido?.id ?? null, pedidoNumero: caso.pedidoNumero,
+    clienteNome: caso.clienteNome, clienteEmail: caso.clienteEmail,
+    produtos,
+    origem: automatico ? 'motor_novo_automatico' : 'manual',
+    observacao: String(enviado?.observacao ?? '').trim().slice(0, 300) || null,
+    criadoEm: antes?.criadoEm ?? agoraIso,
+    atualizadoEm: agoraIso,
+  }
+}
+const TIPOS_RELATORIO_VALIDOS = ['reembolso', 'troca', 'reenvio', 'cancelamento', 'cupom', 'outro']
+
 // mesmo critério do painel do ticket: remetente + e-mails/números citados na conversa
 function numeroDoTicketRelatorio(estado, t) {
   const texto = [t.assunto, t.corpo, t.resposta, ...(t.historico ?? []).map(m => m.corpo)].join('\n')
@@ -1939,90 +1994,19 @@ app.get('/r/:wsId/:token', async (req, res) => {
     return res.status(404).send('Link inválido ou revogado.')
   }
 
-  const porDia = new Map()
-  for (const t of estado.tickets) {
-    if (!t.relatorioDia) continue
-    if (!porDia.has(t.relatorioDia)) porDia.set(t.relatorioDia, [])
-    porDia.get(t.relatorioDia).push(t)
-  }
-  // com "mostrar hoje" desligado, o dia atual só entra no link depois da
-  // meia-noite — dá tempo de o lojista revisar as linhas antes do chefe ver
-  const hoje = diaLocal(Date.now())
-  const dias = [...porDia.keys()].filter(d => estado.linkMostraHoje !== false || d !== hoje)
-    .sort().reverse().slice(0, 60)
-  const nomeLoja = id => estado.lojas.find(l => l.id === (id ?? 'loja1'))?.nome ?? 'Loja'
-
-  const blocos = dias.map(dia => {
-    const [ano, mes, d] = dia.split('-')
-    const porLoja = new Map()
-    for (const t of porDia.get(dia)) {
-      const nome = nomeLoja(t.lojaId)
-      if (!porLoja.has(nome)) porLoja.set(nome, [])
-      porLoja.get(nome).push(t)
-    }
-    const grupos = [...porLoja.entries()].map(([loja, ts]) => {
-      const linhas = ts.map(t => {
-        // linha editada à mão pelo lojista tem a palavra final
-        let texto = t.relatorioLinha
-        if (!texto) {
-          const numero = numeroDoTicketRelatorio(estado, t)
-          const quem = numero ? `PEDIDO ${numero}` : String(t.nome || '').toUpperCase()
-          const oque = t.relatorioTexto || t.resolucao || t.resumoSituacao || categoriaRelatorio[t.categoria] || 'atendido'
-          texto = `${quem} - ${oque}`
-        }
-        // checkbox de processado: o dono marca conforme executa cada caso
-        return `<label class="linha${t.relatorioProcessado ? ' feito' : ''}">`
-          + `<input type="checkbox" data-id="${escaparHtml(t.id)}"${t.relatorioProcessado ? ' checked' : ''}>`
-          + `<span>${escaparHtml(texto)}</span></label>`
-      }).join('')
-      return `<div class="loja">Loja: ${escaparHtml(loja)}</div>${linhas}`
-    }).join('')
-    return `<section class="dia"><h2>RELATÓRIO ${d}/${mes}/${ano}</h2>${grupos}</section>`
-  }).join('')
-
+  // tudo (pedido, cliente, produtos, valores) sai do normalizador único do relatório
+  const dados = dadosDoRelatorio({
+    tickets: estado.tickets, pedidos: estado.pedidos ?? [], lojas: estado.lojas ?? [], produtos: estado.produtos ?? [],
+    fases: catalogoFases(), filtros: filtrosDoRelatorio(req.query),
+    hoje: diaLocal(Date.now()), mostrarHoje: estado.linkMostraHoje !== false,
+  })
+  // este link MOSTRA dados pessoais: nada de cache, nada de referrer, nada de sniffing
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
-  res.send(`<!doctype html>
-<html lang="pt-BR"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>Relatórios diários</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #101010; color: #d7d7d7; font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; padding: 32px 18px 60px; }
-  main { max-width: 640px; margin: 0 auto; }
-  h1 { font-size: 19px; margin-bottom: 4px; }
-  .sub { color: #8a8a8a; font-size: 12.5px; margin-bottom: 26px; }
-  .dia { background: #191919; border: 1px solid #2a2a2a; border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
-  .dia h2 { font-size: 14.5px; margin-bottom: 10px; letter-spacing: 0.02em; }
-  .loja { color: #9b9b9b; font-size: 12.5px; margin: 10px 0 6px; }
-  .linha { font-size: 13.5px; line-height: 1.7; display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
-  .linha input { margin-top: 5px; accent-color: #58a6ff; cursor: pointer; }
-  .linha.feito span { opacity: 0.45; text-decoration: line-through; }
-  .vazio { color: #8a8a8a; font-size: 13.5px; }
-</style></head>
-<body><main>
-<h1>Relatórios diários</h1>
-<p class="sub">Atualizado automaticamente — recarregue a página para ver o dia atual. Marque a caixinha de cada caso conforme for processando: o andamento fica salvo e visível para a equipe.</p>
-${blocos || '<p class="vazio">Nenhum caso marcado ainda.</p>'}
-</main>
-<script>
-document.addEventListener('change', function (e) {
-  var cb = e.target
-  if (!cb.matches || !cb.matches('.linha input')) return
-  var linha = cb.closest('.linha')
-  cb.disabled = true
-  fetch(location.pathname + '/processar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ticketId: cb.getAttribute('data-id'), processado: cb.checked }),
-  }).then(function (r) {
-    if (!r.ok) throw new Error('falhou')
-    linha.classList.toggle('feito', cb.checked)
-  }).catch(function () { cb.checked = !cb.checked })
-    .finally(function () { cb.disabled = false })
-})
-</script>
-</body></html>`)
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow')
+  res.send(paginaRelatorio(dados))
   } catch (err) {
     console.error('[relatorio-link]', err)
     res.status(500).send('Erro ao montar a página. Tente de novo.')
@@ -2770,12 +2754,39 @@ app.post('/api/tickets/:id/relatorio', (req, res) => {
     const texto = String(req.body.texto || '').trim()
     t.relatorioTexto = texto || undefined
     t.relatorioLinha = undefined // texto novo invalida a linha editada à mão
+    t.relatorioDetalhes = montarDetalhesRelatorio(req.estado, t, req.body?.detalhes)
   } else {
     t.relatorioDia = undefined
     t.relatorioTexto = undefined
     t.relatorioLinha = undefined
+    t.relatorioDetalhes = undefined
   }
   salvar(req.wsId); ok(req, res)
+})
+
+// O que o modal precisa para montar a linha: pedido localizado, cliente, produtos
+// com miniatura e a sugestão de tipo/percentual/valor. Só leitura — nada muda no motor.
+app.get('/api/tickets/:id/relatorio/preparar', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  const caso = normalizarCaso(t, { pedidos: req.estado.pedidos ?? [], lojas: req.estado.lojas ?? [], produtos: req.estado.produtos ?? [], fases: catalogoFases() })
+  const pedido = acharPedido(t, req.estado.pedidos ?? [])
+  const an = t.atendimentoNovo
+  const cp = an?.conclusaoPendente
+  // no motor novo o dono NÃO pode escolher outra ação/percentual: vale a solução aceita
+  const travado = !!(t.relatorioAuto || (cp && ['concluida', 'aguardando_aprovacao', 'aguardando_cadencia', 'interrompida'].includes(cp.status)))
+  res.json({
+    ok: true,
+    travado,
+    motor: motorDaConversa(t),
+    pedido: pedido ? { id: pedido.id, numero: String(pedido.numero).replace(/\D/g, ''), valor: pedido.valor ?? null, moeda: caso.moeda } : null,
+    cliente: { nome: caso.clienteNome, email: caso.clienteEmail },
+    produtosDoPedido: produtosDoCaso({ ...t, relatorioDetalhes: undefined, relatorioAuto: undefined, atendimentoNovo: undefined }, pedido, req.estado.produtos ?? []),
+    sugestao: {
+      tipo: caso.tipo, percentual: caso.percentual, valor: caso.valor, moeda: caso.moeda,
+      produtos: caso.produtos, descricao: caso.descricao, acoes: caso.acoes,
+      solucaoAceita: cp ? (FASES[cp.faseAceita]?.titulo ?? cp.faseAceita) : (t.relatorioAuto?.solucao ?? null),
+    },
+  })
 })
 
 // Edição da linha final do relatório (o que o chefe vê), ex.: corrigir o nº do pedido

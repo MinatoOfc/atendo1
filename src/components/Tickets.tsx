@@ -4,7 +4,7 @@ import {
   Package, ExternalLink, PenSquare, ClipboardList, X, Plus, ChevronUp, ChevronDown, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useStore, nomeCategoria, nomeIdioma, tempoRelativo } from '../store'
-import type { Ticket, AnexoImagem } from '../store'
+import type { Ticket, AnexoImagem, PreparoRelatorio, ProdutoRelatorio } from '../store'
 import { MiniFoto, Modal } from './Shared'
 
 /* Instruções salvas do "Gerar com IA": 1 clique gera; dá para salvar a atual e remover as que não usa */
@@ -527,15 +527,158 @@ function PainelPedidos({ t }: { t: Ticket }) {
   )
 }
 
-/* Popup do "Adicionar ao relatório": o lojista escolhe (e configura) o texto
-   pré-definido que vira a linha do caso no relatório manual do dia */
+/* Popup do "Adicionar ao relatório": mostra o pedido localizado, o cliente, os
+   produtos do pedido e os números da linha. Tudo aqui mexe SÓ no relatório —
+   nunca na fase, no motor, na oferta ou no histórico da conversa. No motor novo
+   a ação e o percentual vêm da solução aceita e ficam travados. */
+const TIPOS_RELATORIO: { id: string; rotulo: string }[] = [
+  { id: 'reembolso', rotulo: 'Reembolso' }, { id: 'troca', rotulo: 'Troca' }, { id: 'reenvio', rotulo: 'Reenvio' },
+  { id: 'cancelamento', rotulo: 'Cancelamento' }, { id: 'cupom', rotulo: 'Cupom' }, { id: 'outro', rotulo: 'Outro' },
+]
+const SIMBOLO_MOEDA: Record<string, string> = { EUR: '€', BRL: 'R$', USD: 'US$', GBP: '£' }
+const dinheiroRel = (valor: number | null, moeda: string | null) =>
+  valor == null ? 'Valor não registrado' : `${SIMBOLO_MOEDA[moeda ?? ''] ?? moeda ?? ''} ${valor.toFixed(2).replace('.', ',')}`.trim()
+const chaveProduto = (p: ProdutoRelatorio) => `${p.varianteId ?? ''}|${p.titulo}`
+
 function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
-  const { opcoesRelatorio = [], alternarRelatorio, salvarOpcoesRelatorio, fasesNovo } = useStore()
+  const { opcoesRelatorio = [], alternarRelatorio, salvarOpcoesRelatorio, fasesNovo, prepararRelatorio } = useStore()
   const [novo, setNovo] = useState('')
-  const escolher = (texto?: string) => { alternarRelatorio(t.id, true, texto); onClose() }
+  const [dados, setDados] = useState<PreparoRelatorio | null>(null)
+  const [tipo, setTipo] = useState<string>('outro')
+  const [pct, setPct] = useState<string>('')
+  const [obs, setObs] = useState<string>(t.relatorioDetalhes?.observacao ?? '')
+  const [marcados, setMarcados] = useState<string[]>([])
   const sugestao = sugestaoRelatorio(t, fasesNovo)
+
+  useEffect(() => {
+    let vivo = true
+    prepararRelatorio(t.id).then(d => {
+      if (!vivo || !d) return
+      setDados(d)
+      setTipo(d.sugestao.tipo ?? 'outro')
+      setPct(d.sugestao.percentual == null ? '' : String(d.sugestao.percentual))
+      setMarcados((d.sugestao.produtos ?? []).map(chaveProduto))
+    })
+    return () => { vivo = false }
+  }, [t.id])
+
+  const travado = !!dados?.travado
+  const moeda = dados?.sugestao.moeda ?? dados?.pedido?.moeda ?? null
+  const valorPedido = dados?.pedido?.valor ?? null
+  const numeroPct = pct.trim() === '' ? null : Number(pct)
+  const pctValido = numeroPct != null && Number.isFinite(numeroPct) && numeroPct >= 1 && numeroPct <= 100
+  // prévia do valor — o número que vale é sempre o que o servidor recalcula ao salvar
+  const valor = tipo === 'cupom' ? null
+    : (travado && dados?.sugestao.valor != null) ? dados.sugestao.valor
+      : (pctValido && valorPedido != null) ? Math.round(valorPedido * (numeroPct as number)) / 100
+        : null
+
+  const alternarProduto = (p: ProdutoRelatorio) => {
+    const k = chaveProduto(p)
+    setMarcados(m => (m.includes(k) ? m.filter(x => x !== k) : [...m, k]))
+  }
+  const detalhes = () => ({
+    tipo, percentual: pctValido ? numeroPct : null, observacao: obs.trim() || undefined,
+    produtos: (dados?.produtosDoPedido ?? []).filter(p => marcados.includes(chaveProduto(p))),
+  })
+  const escolher = (texto?: string) => { alternarRelatorio(t.id, true, texto, detalhes()); onClose() }
+
   return (
     <Modal title="Adicionar ao relatório de hoje" onClose={onClose}>
+      {!dados && <p className="muted-sm" style={{ marginBottom: 12 }}>Carregando os dados do caso…</p>}
+
+      {dados && (
+        <div className="card" style={{ padding: 12, marginBottom: 14, display: 'grid', gap: 8 }}>
+          {dados.pedido
+            ? <div className="muted-sm">Pedido <b>#{dados.pedido.numero}</b>{valorPedido != null && <> · total do pedido <b>{dinheiroRel(valorPedido, moeda)}</b></>}</div>
+            : (
+              <div className="row gap-8" style={{ color: 'var(--amber)', alignItems: 'flex-start' }}>
+                <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+                <span className="muted-sm" style={{ color: 'inherit' }}>
+                  Nenhum pedido foi localizado com segurança para esta conversa. Dá para incluir no relatório assim mesmo:
+                  o caso aparece sem número de pedido e sem valor calculado.
+                </span>
+              </div>
+            )}
+          <div className="muted-sm">
+            Cliente: <b>{dados.cliente.nome ?? '—'}</b>{dados.cliente.email && <> · {dados.cliente.email}</>}
+          </div>
+          {dados.sugestao.solucaoAceita && (
+            <div className="muted-sm">Solução aceita: <b>{dados.sugestao.solucaoAceita}</b></div>
+          )}
+        </div>
+      )}
+
+      {dados && (
+        <>
+          <div className="field">
+            <label>Tipo de resolução</label>
+            <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+              {TIPOS_RELATORIO.map(x => (
+                <button key={x.id} className={'btn btn-sm' + (tipo === x.id ? ' btn-primary' : '')}
+                  disabled={travado && tipo !== x.id}
+                  title={travado ? 'Definido pela solução que o cliente aceitou no motor novo' : 'Só muda como o caso aparece no relatório'}
+                  onClick={() => !travado && setTipo(x.id)}>{x.rotulo}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="row gap-8" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div className="field" style={{ flex: '0 0 130px' }}>
+              <label>Percentual</label>
+              <input value={pct} disabled={travado} inputMode="numeric" placeholder="ex.: 35"
+                onChange={e => setPct(e.target.value.replace(/[^\d]/g, '').slice(0, 3))} />
+            </div>
+            <div className="field" style={{ flex: 1, minWidth: 150 }}>
+              <label>Valor {tipo === 'cupom' ? 'do cupom' : 'reembolsado'}</label>
+              <div className="card" style={{ padding: '8px 10px' }}>
+                <b>{tipo === 'cupom' ? '— cupom não é reembolso' : dinheiroRel(valor, moeda)}</b>
+              </div>
+            </div>
+            <div className="field" style={{ flex: '0 0 110px' }}>
+              <label>Moeda</label>
+              <div className="card" style={{ padding: '8px 10px' }}><b>{moeda ?? '—'}</b></div>
+            </div>
+          </div>
+          <p className="muted-sm" style={{ marginTop: -4, marginBottom: 12 }}>
+            {travado
+              ? 'Ação e percentual vêm da solução aceita no motor novo e não podem ser trocados aqui.'
+              : 'Sugestão do atendimento — dá para corrigir. O valor é recalculado e conferido no servidor.'}
+            {' '}Nada disso muda a fase, a oferta ou o histórico da conversa.
+          </p>
+
+          {!!dados.produtosDoPedido.length && (
+            <div className="field">
+              <label>Produtos do pedido</label>
+              <div style={{ display: 'grid', gap: 6 }}>
+                {dados.produtosDoPedido.map(p => (
+                  <label key={chaveProduto(p)} className="card row gap-8"
+                    style={{ padding: 8, alignItems: 'center', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={marcados.includes(chaveProduto(p))} onChange={() => alternarProduto(p)} />
+                    {p.imagem
+                      ? <img src={p.imagem} alt="" loading="lazy" referrerPolicy="no-referrer"
+                        style={{ width: 34, height: 34, borderRadius: 6, objectFit: 'cover', background: 'var(--bg-3)' }} />
+                      : <span className="row" style={{ width: 34, height: 34, borderRadius: 6, background: 'var(--bg-3)', justifyContent: 'center', color: 'var(--text-3)' }}><Package size={15} /></span>}
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <b style={{ fontSize: 13 }}>{p.titulo}</b>
+                      <span className="muted-sm" style={{ display: 'block' }}>
+                        {p.variante ?? 'sem variante'}{p.quantidade ? ` · ${p.quantidade} un.` : ''}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="field">
+            <label>Observação (só no relatório)</label>
+            <input value={obs} maxLength={300} placeholder="ex.: cliente pediu para reembolsar no cartão"
+              onChange={e => setObs(e.target.value)} />
+          </div>
+        </>
+      )}
+
       <p className="muted-sm" style={{ marginBottom: 12, lineHeight: 1.5 }}>
         Escolha como este caso aparece no relatório manual — a linha sai como <b>PEDIDO Nº - texto escolhido</b>.
       </p>

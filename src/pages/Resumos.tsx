@@ -13,6 +13,34 @@ const formatarDia = (dia: string) => {
 const diaAnterior = (dia: string) => new Date(new Date(dia + 'T12:00:00').getTime() - 86400_000).toISOString().slice(0, 10)
 const ddmm = (dia: string) => `${dia.slice(8, 10)}/${dia.slice(5, 7)}`
 
+/* Mesmos dados principais do link externo, só que compactos: ação, percentual,
+   valor, cliente e produtos. Tudo sai de relatorioDetalhes/relatorioAuto — o que
+   não estiver provado simplesmente não aparece (nunca vira zero). */
+const ROTULO_TIPO_REL: Record<string, string> = {
+  reembolso: 'Reembolso', troca: 'Troca', reenvio: 'Reenvio', cancelamento: 'Cancelamento', cupom: 'Cupom', outro: 'Atendido',
+}
+const SIMBOLO_REL: Record<string, string> = { EUR: '€', BRL: 'R$', USD: 'US$', GBP: '£' }
+const dinheiroRel = (valor: number | null | undefined, moeda: string | null | undefined) =>
+  valor == null ? null : `${SIMBOLO_REL[moeda ?? ''] ?? moeda ?? ''} ${valor.toFixed(2).replace('.', ',')}`.trim()
+
+function dadosCompactos(t: Ticket) {
+  const d = t.relatorioDetalhes?.versao === 1 ? t.relatorioDetalhes : null
+  const auto = t.relatorioAuto ?? null
+  const tipo = d?.tipo ?? (auto ? 'reembolso' : null)
+  const percentual = auto?.percentual ?? d?.percentual ?? null
+  const valor = tipo === 'cupom' ? null : (auto?.valor ?? d?.valor ?? null)
+  const moeda = auto?.moeda ?? d?.moeda ?? null
+  const acao = tipo ? `${ROTULO_TIPO_REL[tipo] ?? tipo}${percentual != null ? ` ${percentual}%` : ''}` : null
+  return {
+    cliente: d?.clienteNome ?? null,
+    email: d?.clienteEmail ?? null,
+    produtos: (d?.produtos ?? []).map(p => p.titulo + (p.variante ? ` (${p.variante})` : '')),
+    acao,
+    valorTexto: valor != null ? dinheiroRel(valor, moeda) : (tipo && tipo !== 'cupom' && tipo !== 'outro' ? 'Valor não registrado' : null),
+    cupom: auto?.cupom ?? null,
+  }
+}
+
 export default function Resumos() {
   const s = useStore()
   const multiLoja = s.lojasVisiveis.length > 1
@@ -79,7 +107,17 @@ export default function Resumos() {
     }
     for (const [lojaId, ts] of porLoja) {
       linhas.push('', `Loja: ${nomeLoja(lojaId) ?? lojaId}`)
-      for (const t of ts) linhas.push(linhaDoTicket(t))
+      for (const t of ts) {
+        linhas.push(linhaDoTicket(t))
+        // o chefe precisa ver pedido, cliente, produto, ação, percentual e valor
+        const c = dadosCompactos(t)
+        const extras = [
+          c.cliente ? `Cliente: ${c.cliente}${c.email ? ` <${c.email}>` : ''}` : null,
+          c.produtos.length ? `Produto: ${c.produtos.join(', ')}` : null,
+          c.acao, c.valorTexto, c.cupom ? `Cupom: ${c.cupom}` : null,
+        ].filter(Boolean)
+        if (extras.length) linhas.push('   ' + extras.join(' · '))
+      }
     }
     navigator.clipboard.writeText(linhas.join('\n'))
     setCopiado(`manual-${dia}`)
@@ -170,7 +208,15 @@ export default function Resumos() {
                   </>
                 ) : (
                   <>
-                    <span style={{ flex: 1 }}>{linhaDoTicket(t)}{t.relatorioLinha && <span className="muted-sm" style={{ marginLeft: 6 }}>(editada)</span>}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      {linhaDoTicket(t)}{t.relatorioLinha && <span className="muted-sm" style={{ marginLeft: 6 }}>(editada)</span>}
+                      {(() => {
+                        const c = dadosCompactos(t)
+                        const partes = [c.acao, c.valorTexto, c.cliente, c.produtos.join(', ') || null].filter(Boolean)
+                        if (!partes.length) return null
+                        return <span className="muted-sm" style={{ display: 'block', marginTop: 1 }}>{partes.join(' · ')}</span>
+                      })()}
+                    </span>
                     {t.relatorioProcessado && (
                       <span className="tag tag-green" title={'Processado pelo dono em ' + new Date(t.relatorioProcessado).toLocaleString('pt-BR')}>✓ processado</span>
                     )}

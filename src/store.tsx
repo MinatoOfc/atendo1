@@ -8,6 +8,52 @@ export type StatusTicket = 'inbox' | 'aprovacao' | 'humano' | 'enviado' | 'spam'
 
 export interface AnexoImagem { id: string; nome: string; tipo: string }
 
+/** produto de uma linha do relatório (sempre vindo de um item real do pedido) */
+export interface ProdutoRelatorio {
+  produtoId?: string | null
+  varianteId?: string | null
+  titulo: string
+  variante?: string | null
+  quantidade?: number | null
+  imagem?: string | null
+}
+/** campos estruturados da linha do relatório — montados e conferidos no servidor */
+export interface DetalhesRelatorio {
+  versao: 1
+  tipo: string
+  percentual: number | null
+  valor: number | null
+  moeda: string | null
+  valorPedido: number | null
+  pedidoId: string | null
+  pedidoNumero: string | null
+  clienteNome: string | null
+  clienteEmail: string | null
+  produtos: ProdutoRelatorio[]
+  origem: string
+  observacao: string | null
+  criadoEm: string
+  atualizadoEm: string
+}
+/** o que o popup "Adicionar ao relatório" recebe pronto do servidor */
+export interface PreparoRelatorio {
+  travado: boolean
+  motor: 'classico' | 'novo'
+  pedido: { id: string; numero: string; valor: number | null; moeda: string | null } | null
+  cliente: { nome: string | null; email: string | null }
+  produtosDoPedido: ProdutoRelatorio[]
+  sugestao: {
+    tipo: string
+    percentual: number | null
+    valor: number | null
+    moeda: string | null
+    produtos: ProdutoRelatorio[]
+    descricao: string
+    acoes: { tipo: string; rotulo: string }[]
+    solucaoAceita: string | null
+  }
+}
+
 export interface Ticket {
   id: string
   nome: string
@@ -46,6 +92,8 @@ export interface Ticket {
   relatorioLinha?: string
   /** quando o dono marcou este caso como processado no link do relatório (ISO) */
   relatorioProcessado?: string
+  /** campos estruturados da linha (pedido, cliente, produtos, percentual, valor) */
+  relatorioDetalhes?: DetalhesRelatorio
   /** marcado à mão como "já respondida" (resposta saiu por outro caminho) */
   marcadoRespondido?: boolean
   custoIA?: number
@@ -427,7 +475,9 @@ interface Store extends ServerState {
   enviarNovoEmail: (para: string, assunto: string, corpo: string, lojaId?: string) => void
   marcarLido: (id: string) => void
   marcarResolvido: (id: string) => void
-  alternarRelatorio: (id: string, adicionar: boolean, texto?: string) => void
+  alternarRelatorio: (id: string, adicionar: boolean, texto?: string, detalhes?: Partial<DetalhesRelatorio>) => void
+  /** dados prontos do caso para o popup do relatório (só leitura; nada muda no motor) */
+  prepararRelatorio: (id: string) => Promise<PreparoRelatorio | null>
   salvarOpcoesRelatorio: (opcoes: string[]) => void
   salvarOpcoesInstrucao: (opcoes: string[]) => void
   configurarRelatorioLink: (acao: 'criar' | 'revogar' | 'mostrar-hoje', valor?: boolean) => void
@@ -693,7 +743,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
 
     marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
-    alternarRelatorio: (id, adicionar, texto) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar, texto }).then(aplicar),
+    alternarRelatorio: (id, adicionar, texto, detalhes) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar, texto, detalhes }).then(aplicar),
+    prepararRelatorio: async id => {
+      try {
+        const r = await fetch(`/api/tickets/${id}/relatorio/preparar`)
+        const d = await r.json()
+        return d?.ok ? (d as PreparoRelatorio) : null
+      } catch { return null }
+    },
     salvarOpcoesRelatorio: opcoes => api('/relatorio-opcoes', 'POST', { opcoes }).then(aplicar),
     salvarOpcoesInstrucao: opcoes => api('/instrucao-opcoes', 'POST', { opcoes }).then(aplicar),
     configurarRelatorioLink: (acao, valor) => api('/relatorio-link', 'POST', { acao, valor }).then(aplicar),
