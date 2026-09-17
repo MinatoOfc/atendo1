@@ -548,6 +548,10 @@ function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
   const [pct, setPct] = useState<string>('')
   const [obs, setObs] = useState<string>(t.relatorioDetalhes?.observacao ?? '')
   const [marcados, setMarcados] = useState<string[]>([])
+  // confirmação dos pedidos envolvidos (um, vários ou nenhum) — só mexe no relatório
+  const [pedidosMarcados, setPedidosMarcados] = useState<string[]>([])
+  const [escolhendo, setEscolhendo] = useState(false)
+  const [buscaPedido, setBuscaPedido] = useState('')
   const sugestao = sugestaoRelatorio(t, fasesNovo)
 
   useEffect(() => {
@@ -558,6 +562,7 @@ function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
       setTipo(d.sugestao.tipo ?? 'outro')
       setPct(d.sugestao.percentual == null ? '' : String(d.sugestao.percentual))
       setMarcados((d.sugestao.produtos ?? []).map(chaveProduto))
+      setPedidosMarcados(d.pedidos.filter(p => p.id).map(p => p.id as string))
     })
     return () => { vivo = false }
   }, [t.id])
@@ -565,6 +570,8 @@ function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
   const travado = !!dados?.travado
   const moeda = dados?.sugestao.moeda ?? dados?.pedido?.moeda ?? null
   const valorPedido = dados?.pedido?.valor ?? null
+  // com mais de um pedido nada é somado: o servidor deixa o valor do pedido em branco
+  const variosPedidos = (dados?.pedidos.filter(p => p.localizado).length ?? 0) > 1
   const numeroPct = pct.trim() === '' ? null : Number(pct)
   const pctValido = numeroPct != null && Number.isFinite(numeroPct) && numeroPct >= 1 && numeroPct <= 100
   // prévia do valor — o número que vale é sempre o que o servidor recalcula ao salvar
@@ -580,6 +587,8 @@ function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
   const detalhes = () => ({
     tipo, percentual: pctValido ? numeroPct : null, observacao: obs.trim() || undefined,
     produtos: (dados?.produtosDoPedido ?? []).filter(p => marcados.includes(chaveProduto(p))),
+    // o servidor confere loja por loja e refaz produtos, cliente, imagens e valores
+    pedidoIds: pedidosMarcados,
   })
   const escolher = (texto?: string) => { alternarRelatorio(t.id, true, texto, detalhes()); onClose() }
 
@@ -589,17 +598,51 @@ function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
 
       {dados && (
         <div className="card" style={{ padding: 12, marginBottom: 14, display: 'grid', gap: 8 }}>
-          {dados.pedido
-            ? <div className="muted-sm">Pedido <b>#{dados.pedido.numero}</b>{valorPedido != null && <> · total do pedido <b>{dinheiroRel(valorPedido, moeda)}</b></>}</div>
-            : (
-              <div className="row gap-8" style={{ color: 'var(--amber)', alignItems: 'flex-start' }}>
-                <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
-                <span className="muted-sm" style={{ color: 'inherit' }}>
-                  Nenhum pedido foi localizado com segurança para esta conversa. Dá para incluir no relatório assim mesmo:
-                  o caso aparece sem número de pedido e sem valor calculado.
-                </span>
-              </div>
-            )}
+          <div className="row spread gap-8" style={{ flexWrap: 'wrap' }}>
+            <span className="muted-sm">
+              <b>{dados.rotuloPedido}</b>
+              {valorPedido != null && <> · total do pedido <b>{dinheiroRel(valorPedido, moeda)}</b></>}
+            </span>
+            <button className="btn btn-sm" title="Confirmar ou corrigir quais pedidos desta loja entram neste caso"
+              onClick={() => setEscolhendo(v => !v)}>
+              <Package size={13} /> {escolhendo ? 'Fechar' : 'Confirmar pedidos'}
+            </button>
+          </div>
+          {!!dados.pedidosSemDados.length && (
+            <div className="row gap-8" style={{ color: 'var(--amber)', alignItems: 'flex-start' }}>
+              <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+              <span className="muted-sm" style={{ color: 'inherit' }}>
+                {dados.pedidosSemDados.map(n => `#${n}`).join(', ')} está escrito no relatório, mas não foi encontrado na
+                Shopify. O número continua aparecendo; o valor só é calculado com o pedido sincronizado.
+              </span>
+            </div>
+          )}
+          {!dados.pedidos.length && (
+            <div className="row gap-8" style={{ color: 'var(--amber)', alignItems: 'flex-start' }}>
+              <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+              <span className="muted-sm" style={{ color: 'inherit' }}>
+                Nenhum pedido foi localizado com segurança para esta conversa. Dá para incluir no relatório assim mesmo:
+                o caso aparece sem número de pedido e sem valor calculado.
+              </span>
+            </div>
+          )}
+          {escolhendo && (
+            <div style={{ display: 'grid', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
+              <input value={buscaPedido} onChange={e => setBuscaPedido(e.target.value)}
+                placeholder="buscar por número, cliente ou e-mail" />
+              {dados.pedidosDaLoja
+                .filter(p => { const q = buscaPedido.trim().toLowerCase(); return !q || `${p.numero} ${p.cliente ?? ''} ${p.email ?? ''}`.toLowerCase().includes(q) })
+                .slice(0, 30)
+                .map(p => (
+                  <label key={p.id} className="row gap-8" style={{ alignItems: 'center', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={pedidosMarcados.includes(p.id)}
+                      onChange={() => setPedidosMarcados(m => (m.includes(p.id) ? m.filter(x => x !== p.id) : [...m, p.id]))} />
+                    <span className="muted-sm">#{p.numero} · {p.cliente ?? '—'}{p.email ? ` · ${p.email}` : ''}</span>
+                  </label>
+                ))}
+              <span className="muted-sm">Só aparecem pedidos desta loja. Isso muda apenas o relatório.</span>
+            </div>
+          )}
           <div className="muted-sm">
             Cliente: <b>{dados.cliente.nome ?? '—'}</b>{dados.cliente.email && <> · {dados.cliente.email}</>}
           </div>
@@ -644,6 +687,7 @@ function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
             {travado
               ? 'Ação e percentual vêm da solução aceita no motor novo e não podem ser trocados aqui.'
               : 'Sugestão do atendimento — dá para corrigir. O valor é recalculado e conferido no servidor.'}
+            {variosPedidos && ' Com mais de um pedido o valor não é calculado sozinho: os totais não são somados.'}
             {' '}Nada disso muda a fase, a oferta ou o histórico da conversa.
           </p>
 

@@ -31,10 +31,61 @@ const arredondar = v => (v == null ? null : Math.round(Number(v) * 100) / 100)
 const soDigitos = v => String(v ?? '').replace(/\D/g, '')
 const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
-/** Números de pedido citados no texto (3 a 8 dígitos, como no resto do sistema). */
+/**
+ * Números citados numa conversa (3 a 8 dígitos). Continua largo de propósito —
+ * o resultado só vale depois de bater com um pedido REAL da mesma loja —, mas
+ * nunca aceita percentual (100%), dinheiro (103,50) nem tamanho (4XL).
+ */
 export function numerosCitados(txt) {
+  const s = String(txt ?? '')
   const achados = new Set()
-  for (const m of String(txt ?? '').matchAll(/#?\b(\d{3,8})\b/g)) achados.add(m[1])
+  for (const m of s.matchAll(/#?\b(\d{3,8})\b/g)) {
+    if (numeroLimpo(s.slice(m.index + m[0].length))) achados.add(m[1])
+  }
+  return achados
+}
+
+// o que vem DEPOIS do número o desqualifica: "100%", "103,50", "4XL", "2.000"
+const PROIBIDO_DEPOIS = /^(?:\s*%|[.,]\d|[A-Za-zÀ-ÖØ-öø-ÿ])/
+const numeroLimpo = resto => !PROIBIDO_DEPOIS.test(String(resto ?? ''))
+
+/**
+ * Números de pedido ESCRITOS no texto do relatório. Só conta o que vem
+ * acompanhado de uma palavra de contexto (pedido, order, Bestellung,
+ * bestelling, commande, ordine) ou de "#" — e aceita vários no mesmo texto:
+ *   "PEDIDO 2614 - TROCAR AS 2XL POR 4XL"  → ['2614']
+ *   "PEDIDO 2673 E 2695 - TROCAR POR 4XL"  → ['2673', '2695']
+ *   "REEMBOLSO 100%" / "TROCAR POR 4XL"    → []
+ * CEP, telefone, data e dinheiro nunca entram: não têm palavra de contexto e
+ * são barrados por numeroLimpo.
+ */
+export function numerosDePedidoNoTexto(txt) {
+  const s = String(txt ?? '')
+  const achados = []
+  const guardar = n => { if (n && !achados.includes(n)) achados.push(n) }
+
+  const palavra = /\b(?:pedidos?|orders?|bestellung(?:en)?|bestelling(?:en)?|commandes?|ordini|ordine)\b/gi
+  let m
+  while ((m = palavra.exec(s)) !== null) {
+    const resto = s.slice(m.index + m[0].length)
+    const primeiro = resto.match(/^[\s:;.\-–—]*(?:n[.ºo°]?|nr\.?|no\.?)?[\s#]*(\d{3,8})\b/i)
+    if (!primeiro) continue
+    let pos = primeiro[0].length
+    if (!numeroLimpo(resto.slice(pos))) continue
+    guardar(primeiro[1])
+    // "2673 E 2695", "2673, 2695", "2673/2695" — só continua enquanto vier número
+    for (;;) {
+      const ligado = resto.slice(pos).match(/^\s*(?:e|und|and|en|et|ou|or|&|\+|,|;|\/)\s*#?\s*(\d{3,8})\b/i)
+      if (!ligado) break
+      pos += ligado[0].length
+      if (!numeroLimpo(resto.slice(pos))) break
+      guardar(ligado[1])
+    }
+  }
+  // "#2614" solto: o # já é marca de pedido
+  for (const h of s.matchAll(/(?:^|[^\w#])#\s?(\d{3,8})\b/g)) {
+    if (numeroLimpo(s.slice(h.index + h[0].length))) guardar(h[1])
+  }
   return achados
 }
 
@@ -45,46 +96,114 @@ export const imagemSegura = url => {
   return /^https:\/\//i.test(u) || /^data:image\//i.test(u) ? u : null
 }
 
+const juntarNumeros = nums => {
+  const arr = nums.map(n => '#' + n)
+  if (arr.length <= 1) return arr[0] ?? ''
+  return `${arr.slice(0, -1).join(', ')} e ${arr[arr.length - 1]}`
+}
+
+/** Título curto do pedido do caso: "Pedido #2614", "Pedidos #2673 e #2695" ou "Sem pedido informado". */
+export function tituloDoPedido(itens = []) {
+  if (!itens.length) return 'Sem pedido informado'
+  const nums = itens.map(i => i.numero)
+  return `${nums.length > 1 ? 'Pedidos' : 'Pedido'} ${juntarNumeros(nums)}`
+}
+
+/** Frase completa, com o aviso quando o número existe mas o pedido não está sincronizado. */
+export function rotuloDoPedido(itens = []) {
+  const titulo = tituloDoPedido(itens)
+  if (!itens.length || itens.some(i => i.pedido)) return titulo
+  return `${titulo} citado${itens.length > 1 ? 's' : ''} — dados não encontrados na Shopify`
+}
+
 /**
- * Pedido do caso, nesta ordem:
- *   1. relatorioAuto.pedido (a conclusão automática já gravou qual era)
- *   2. número citado explicitamente na conversa
- *   3. pedido da MESMA loja com o mesmo e-mail
- *   4. pedido mais recente da mesma loja, só quando não houver ambiguidade
- * Nunca associa pedido de outra loja.
+ * Pedidos do caso: zero, um ou vários, SEMPRE da mesma loja. Ordem de prioridade:
+ *   1. ids e números gravados em relatorioDetalhes (a escolha do dono manda)
+ *   2. relatorioAuto.pedido (a conclusão automática já gravou qual era)
+ *   3. números escritos na linha final editada pelo dono (relatorioLinha)
+ *   4. números escritos no texto do relatório (relatorioTexto)
+ *   5. números citados na conversa, quando batem com um único pedido
+ *   6. e-mail do cliente, só quando nada acima achou número
+ * Devolve { itens: [{ numero, pedido }], pedidos, numeros, origem }. Um número
+ * escrito pelo dono é preservado mesmo sem o pedido sincronizado.
+ * NUNCA associa pedido de outra loja.
  */
-export function acharPedido(t, pedidos = []) {
+export function acharPedidos(t, pedidos = []) {
   const lojaId = t.lojaId ?? 'loja1'
   const daLoja = pedidos.filter(p => (p.lojaId ?? 'loja1') === lojaId)
-  if (!daLoja.length) return null
-
-  // 1) o que a conclusão automática gravou
-  const doAuto = soDigitos(t.relatorioAuto?.pedido)
-  if (doAuto) {
-    const achado = daLoja.find(p => soDigitos(p.numero) === doAuto)
-    if (achado) return achado
+  const det = t.relatorioDetalhes?.versao === 1 ? t.relatorioDetalhes : null
+  const resultado = (itens, origem) => ({
+    itens, origem,
+    pedidos: itens.map(i => i.pedido).filter(Boolean),
+    numeros: itens.map(i => i.numero).filter(Boolean),
+  })
+  const vazio = resultado([], null)
+  // um número só vira pedido quando existe UM pedido com ele nesta loja
+  const porNumero = n => {
+    const achados = daLoja.filter(p => soDigitos(p.numero) === n)
+    return achados.length === 1 ? achados[0] : null
   }
-  // 2) número citado na conversa
+  const deNumeros = (nums, origem) => {
+    const itens = []
+    for (const bruto of nums) {
+      const n = soDigitos(bruto)
+      if (!n || n.length < 3 || itens.some(i => i.numero === n)) continue
+      itens.push({ numero: n, pedido: porNumero(n) })
+    }
+    return itens.length ? resultado(itens, origem) : null
+  }
+
+  // 1) o que ficou gravado nos detalhes: ids primeiro, depois os números
+  if (det) {
+    const ids = (Array.isArray(det.pedidoIds) ? det.pedidoIds : (det.pedidoId ? [det.pedidoId] : [])).filter(Boolean)
+    const nums = (Array.isArray(det.pedidoNumeros) ? det.pedidoNumeros : (det.pedidoNumero ? [det.pedidoNumero] : [])).map(soDigitos).filter(Boolean)
+    const itens = []
+    for (const id of ids) {
+      const p = daLoja.find(x => String(x.id) === String(id))
+      if (p) itens.push({ numero: soDigitos(p.numero), pedido: p })
+    }
+    for (const n of nums) {
+      if (itens.some(i => i.numero === n)) continue
+      itens.push({ numero: n, pedido: porNumero(n) })
+    }
+    if (itens.length) return resultado(itens, 'detalhes')
+  }
+  // 2) conclusão automática
+  const doAuto = deNumeros([t.relatorioAuto?.pedido].filter(Boolean), 'auto')
+  if (doAuto) return doAuto
+  // 3) linha final editada à mão — tem prioridade sobre o texto antigo
+  const daLinha = deNumeros(numerosDePedidoNoTexto(t.relatorioLinha), 'linha')
+  if (daLinha) return daLinha
+  // 4) texto escolhido no popup
+  const doTexto = deNumeros(numerosDePedidoNoTexto(t.relatorioTexto), 'texto')
+  if (doTexto) return doTexto
+  // 5) números citados na conversa (só quando um único pedido bate)
   const conversa = [t.assunto, t.corpo, t.resposta, ...(t.historico ?? []).map(m => m.corpo)].join('\n')
   const citados = numerosCitados(conversa)
   if (citados.size) {
     const achados = daLoja.filter(p => citados.has(soDigitos(p.numero)))
-    if (achados.length === 1) return achados[0]
-    if (achados.length > 1) return null // ambíguo: melhor não associar
+    if (achados.length === 1) return resultado([{ numero: soDigitos(achados[0].numero), pedido: achados[0] }], 'conversa')
+    if (achados.length > 1) return vazio // ambíguo: melhor não associar
   }
-  // 3) mesmo e-mail na mesma loja
+  // 6) mesmo e-mail na mesma loja
   const email = norm(t.de).trim()
   if (email) {
     const porEmail = daLoja.filter(p => norm(p.email).trim() === email)
-    if (porEmail.length === 1) return porEmail[0]
+    const um = p => resultado([{ numero: soDigitos(p.numero), pedido: p }], 'email')
+    if (porEmail.length === 1) return um(porEmail[0])
     if (porEmail.length > 1) {
       // vários pedidos do mesmo cliente: só o mais recente, e só se as datas desempatarem
       const ordenados = [...porEmail].sort((a, b) => String(b.criadoEm ?? '').localeCompare(String(a.criadoEm ?? '')))
-      if (String(ordenados[0].criadoEm ?? '') !== String(ordenados[1].criadoEm ?? '')) return ordenados[0]
-      return null
+      if (String(ordenados[0].criadoEm ?? '') !== String(ordenados[1].criadoEm ?? '')) return um(ordenados[0])
     }
   }
-  return null
+  return vazio
+}
+
+/** Compatibilidade: o pedido único do caso (null quando são vários ou nenhum). */
+export function acharPedido(t, pedidos = []) {
+  const achados = acharPedidos(t, pedidos).pedidos
+  return achados.length === 1 ? achados[0] : null
 }
 
 /** Cliente: prefere o do pedido; senão o do ticket. Nunca inventa. */
@@ -95,16 +214,32 @@ export function clienteDoCaso(t, pedido) {
   }
 }
 
-/** Imagem de um item do pedido, pelo catálogo da MESMA loja (variante → produto → nada). */
+/**
+ * Imagem de um item do pedido, sempre pelo catálogo da MESMA loja:
+ *   1. produtoId + varianteId
+ *   2. produtoId + imagem principal
+ *   3. pedido histórico sem produtoId: título EXATO e ÚNICO na loja
+ *   4. nada (a página mostra o ícone neutro)
+ * Não existe correspondência aproximada: título repetido na loja fica sem foto.
+ */
 export function imagemDoItem(item, lojaId, produtos = []) {
-  if (!item?.produtoId) return null
-  const p = produtos.find(x => String(x.id) === String(item.produtoId) && (x.lojaId ?? 'loja1') === (lojaId ?? 'loja1'))
-  if (!p) return null
-  if (item.varianteId && p.imagemPorVariante) {
-    const daVariante = imagemSegura(p.imagemPorVariante[String(item.varianteId)])
-    if (daVariante) return daVariante
+  const daLoja = produtos.filter(x => (x.lojaId ?? 'loja1') === (lojaId ?? 'loja1'))
+  if (item?.produtoId) {
+    const p = daLoja.find(x => String(x.id) === String(item.produtoId))
+    if (p) {
+      if (item.varianteId && p.imagemPorVariante) {
+        const daVariante = imagemSegura(p.imagemPorVariante[String(item.varianteId)])
+        if (daVariante) return daVariante
+      }
+      const doProduto = imagemSegura(p.imagem)
+      if (doProduto) return doProduto
+    }
   }
-  return imagemSegura(p.imagem)
+  // registro antigo: só casa quando o título bate exatamente e não se repete
+  const alvo = norm(item?.titulo)
+  if (!alvo) return null
+  const iguais = daLoja.filter(x => norm(x.titulo) === alvo)
+  return iguais.length === 1 ? imagemSegura(iguais[0].imagem) : null
 }
 
 /**
@@ -115,7 +250,9 @@ export function imagemDoItem(item, lojaId, produtos = []) {
  */
 export function produtosDoCaso(t, pedido, produtos = []) {
   const lojaId = t.lojaId ?? 'loja1'
-  const itens = pedido?.itens ?? []
+  // um pedido, vários pedidos ou nenhum: os itens de todos entram na mesma lista
+  const lista = Array.isArray(pedido) ? pedido.filter(Boolean) : (pedido ? [pedido] : [])
+  const itens = lista.flatMap(p => p?.itens ?? [])
   const comImagem = it => ({
     produtoId: it.produtoId ?? null, varianteId: it.varianteId ?? null,
     titulo: texto(it.titulo) ?? 'Produto', variante: texto(it.variante),
@@ -191,13 +328,15 @@ export function normalizarCaso(t, { pedidos = [], lojas = [], produtos = [], fas
   const det = t.relatorioDetalhes?.versao === 1 ? t.relatorioDetalhes : null
   const auto = t.relatorioAuto ?? null
 
-  // pedido: o dos detalhes salvos (quando ainda existe) tem prioridade sobre a busca
-  const pedido = (det?.pedidoId && pedidos.find(p => p.id === det.pedidoId && (p.lojaId ?? 'loja1') === lojaId))
-    || acharPedido(t, pedidos)
+  // pedidos do caso: zero, um ou vários, sempre da mesma loja (ver acharPedidos)
+  const encontro = acharPedidos(t, pedidos)
+  const localizados = encontro.pedidos
+  const pedido = localizados.length === 1 ? localizados[0] : null
+  const doCliente = localizados[0] ?? null
 
   const cliente = {
-    nome: texto(det?.clienteNome) ?? clienteDoCaso(t, pedido).nome,
-    email: texto(det?.clienteEmail) ?? clienteDoCaso(t, pedido).email,
+    nome: texto(det?.clienteNome) ?? clienteDoCaso(t, doCliente).nome,
+    email: texto(det?.clienteEmail) ?? clienteDoCaso(t, doCliente).email,
   }
   const linha = texto(t.relatorioLinha)
   const descricao = linha ?? texto(t.relatorioTexto) ?? texto(t.resolucao) ?? texto(t.resumoSituacao) ?? 'Atendido'
@@ -211,7 +350,8 @@ export function normalizarCaso(t, { pedidos = [], lojas = [], produtos = [], fas
 
   // moeda: da conclusão automática, dos detalhes, ou da loja
   const moeda = texto(auto?.moeda) ?? texto(det?.moeda) ?? texto(loja?.moeda) ?? null
-  const valorPedido = numero(pedido?.valor) ?? numero(det?.valorPedido) ?? null
+  // com mais de um pedido nada é somado: a base do cálculo deixa de ser inequívoca
+  const valorPedido = localizados.length > 1 ? null : (numero(pedido?.valor) ?? numero(det?.valorPedido) ?? null)
 
   // VALOR: só quando há prova. Automático usa o valor exato gravado; manual usa o
   // salvo; textual só calcula com pedido localizado E percentual explícito. Cupom nunca.
@@ -228,15 +368,22 @@ export function normalizarCaso(t, { pedidos = [], lojas = [], produtos = [], fas
     ticketId: t.id,
     dia: t.relatorioDia ?? null,
     lojaId, lojaNome: texto(loja?.nome) ?? lojaId,
-    pedidoId: pedido?.id ?? det?.pedidoId ?? null,
-    pedidoNumero: pedido ? soDigitos(pedido.numero) : (soDigitos(det?.pedidoNumero) || soDigitos(auto?.pedido) || null),
-    pedidoLocalizado: !!pedido,
+    pedidoId: pedido?.id ?? null,
+    pedidoNumero: encontro.itens.length === 1 ? encontro.itens[0].numero : null,
+    pedidoLocalizado: localizados.length > 0,
+    // zero, um ou vários: o número escrito pelo dono aparece mesmo sem o pedido sincronizado
+    pedidos: encontro.itens.map(i => ({ id: i.pedido?.id ?? null, numero: i.numero, valor: numero(i.pedido?.valor), moeda, localizado: !!i.pedido })),
+    pedidoNumeros: encontro.numeros,
+    pedidosSemDados: encontro.itens.filter(i => !i.pedido).map(i => i.numero),
+    pedidoTitulo: tituloDoPedido(encontro.itens),
+    rotuloPedido: rotuloDoPedido(encontro.itens),
+    origemPedido: encontro.origem,
     clienteNome: cliente.nome, clienteEmail: cliente.email,
     tipo, acoes: acoesDoCaso({ tipo, percentual: percentualFinal, tipoAuto }),
     descricao,
     percentual: percentualFinal, valor, moeda, valorPedido,
     cupom: texto(auto?.cupom) ?? null,
-    produtos: produtosDoCaso(t, pedido, produtos),
+    produtos: produtosDoCaso(t, localizados, produtos),
     origem: auto ? 'motor_novo_automatico' : (det?.origem ?? 'manual'),
     processado: !!t.relatorioProcessado,
     processadoEm: texto(t.relatorioProcessado),
@@ -259,7 +406,7 @@ export function filtrosDoRelatorio(q = {}) {
   }
 }
 
-const casaBusca = (c, q) => !q || norm([c.pedidoNumero, c.clienteNome, c.clienteEmail, c.lojaNome, c.descricao, ...c.produtos.map(p => `${p.titulo} ${p.variante ?? ''}`)].filter(Boolean).join(' ')).includes(norm(q))
+const casaBusca = (c, q) => !q || norm([c.pedidoNumero, ...(c.pedidoNumeros ?? []), c.clienteNome, c.clienteEmail, c.lojaNome, c.descricao, ...c.produtos.map(p => `${p.titulo} ${p.variante ?? ''}`)].filter(Boolean).join(' ')).includes(norm(q))
 
 /** Aplica os filtros a uma lista já normalizada. */
 export function filtrarCasos(casos, f) {
@@ -338,7 +485,7 @@ export function textoParaCopiar(dias) {
       `Loja: ${nome}`,
       ...casos.map(c => {
         const partes = [
-          c.pedidoNumero ? `PEDIDO ${c.pedidoNumero}` : (c.clienteNome ? c.clienteNome.toUpperCase() : 'SEM PEDIDO'),
+          c.pedidoNumeros?.length ? `PEDIDO${c.pedidoNumeros.length > 1 ? 'S' : ''} ${c.pedidoNumeros.join(' E ')}` : (c.clienteNome ? c.clienteNome.toUpperCase() : 'SEM PEDIDO'),
           c.descricao,
           c.clienteNome || c.clienteEmail ? `cliente: ${[c.clienteNome, c.clienteEmail].filter(Boolean).join(' / ')}` : null,
           c.produtos.length ? `produto: ${c.produtos.map(p => `${p.titulo}${p.variante ? ` (${p.variante})` : ''}${p.quantidade > 1 ? ` x${p.quantidade}` : ''}`).join('; ')}` : null,

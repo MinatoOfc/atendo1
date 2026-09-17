@@ -1914,14 +1914,35 @@ const categoriaRelatorio = { reembolso: 'Reembolso', troca: 'Troca', rastreio: '
  * Monta relatorioDetalhes (versão 1) no SERVIDOR: nada do que o navegador manda
  * vira valor sem conferência. No motor novo a solução aceita manda — o dono não
  * pode trocar a ação nem o percentual. Sem prova de valor, fica null (a página
- * mostra "Valor não registrado"), nunca zero.
+ * mostra "Valor não registrado"), nunca zero. O vínculo de pedido escolhido pelo
+ * dono é sempre conferido na MESMA loja, e produtos, cliente, imagens, valor do
+ * pedido e moeda são recalculados aqui a partir dele.
  */
 function montarDetalhesRelatorio(estado, t, enviado = {}) {
   const pedidos = estado.pedidos ?? []
-  // o caso é lido SEM os detalhes já gravados: o que valia antes não pode
-  // sobreviver escondido a uma correção do dono (percentual tirado, tipo trocado)
-  const caso = normalizarCaso({ ...t, relatorioDetalhes: undefined }, { pedidos, lojas: estado.lojas ?? [], produtos: estado.produtos ?? [], fases: catalogoFases() })
-  const pedido = acharPedido(t, pedidos)
+  const lojaId = t.lojaId ?? 'loja1'
+  const daLoja = pedidos.filter(p => (p.lojaId ?? 'loja1') === lojaId)
+  const antes = t.relatorioDetalhes?.versao === 1 ? t.relatorioDetalhes : null
+  const tem = k => enviado != null && Object.prototype.hasOwnProperty.call(enviado, k) && enviado[k] !== undefined
+
+  // vínculo de pedido: o que o dono mandou agora, senão o que já estava gravado.
+  // Só sobrevive o id que existe NESTA loja.
+  const idsBrutos = tem('pedidoIds')
+    ? (Array.isArray(enviado.pedidoIds) ? enviado.pedidoIds : [])
+    : (Array.isArray(antes?.pedidoIds) ? antes.pedidoIds : (antes?.pedidoId ? [antes.pedidoId] : []))
+  const idsVinculo = [...new Set(idsBrutos.map(String))].filter(id => daLoja.some(p => String(p.id) === id))
+  const numerosVinculo = tem('pedidoIds')
+    ? [] // vínculo novo: só os pedidos escolhidos agora
+    : (Array.isArray(antes?.pedidoNumeros) ? antes.pedidoNumeros : (antes?.pedidoNumero ? [antes.pedidoNumero] : []))
+  const vinculo = (idsVinculo.length || numerosVinculo.length)
+    ? { versao: 1, pedidoIds: idsVinculo, pedidoNumeros: numerosVinculo }
+    : undefined
+
+  // o caso é lido SEM os valores já gravados (só com o vínculo de pedido): o que
+  // valia antes não pode sobreviver escondido a uma correção do dono
+  const base = { ...t, relatorioDetalhes: vinculo }
+  const caso = normalizarCaso(base, { pedidos, lojas: estado.lojas ?? [], produtos: estado.produtos ?? [], fases: catalogoFases() })
+  const localizados = daLoja.filter(p => caso.pedidos.some(x => x.localizado && String(x.id) === String(p.id)))
   const an = t.atendimentoNovo
   const cp = an?.conclusaoPendente
   const automatico = !!t.relatorioAuto
@@ -1929,12 +1950,16 @@ function montarDetalhesRelatorio(estado, t, enviado = {}) {
   const num = v => (Number.isFinite(Number(v)) ? Number(v) : null)
   const arred = v => (v == null ? null : Math.round(Number(v) * 100) / 100)
 
-  // tipo e percentual: travados no motor novo; no clássico o dono pode corrigir
-  const tipo = travado ? caso.tipo : (TIPOS_RELATORIO_VALIDOS.includes(enviado?.tipo) ? enviado.tipo : caso.tipo)
-  let percentual = travado ? caso.percentual : (num(enviado?.percentual) ?? caso.percentual)
+  // tipo e percentual: travados no motor novo; no clássico o dono pode corrigir.
+  // Quando o navegador não manda o campo (vincular pedido), vale o que já estava.
+  const tipo = travado ? caso.tipo
+    : (tem('tipo') ? (TIPOS_RELATORIO_VALIDOS.includes(enviado.tipo) ? enviado.tipo : caso.tipo) : (antes?.tipo ?? caso.tipo))
+  let percentual = travado ? caso.percentual
+    : (tem('percentual') ? num(enviado.percentual) : (num(antes?.percentual) ?? caso.percentual))
   if (percentual != null && (percentual < 1 || percentual > 100)) percentual = null
   const moeda = caso.moeda
-  const valorPedido = pedido?.valor != null ? num(pedido.valor) : caso.valorPedido
+  // com mais de um pedido a base deixa de ser inequívoca: caso.valorPedido já vem null
+  const valorPedido = caso.valorPedido
   // valor: SEMPRE recalculado aqui (nunca o número que veio do navegador)
   let valor = null
   if (tipo !== 'cupom') {
@@ -1942,20 +1967,24 @@ function montarDetalhesRelatorio(estado, t, enviado = {}) {
     else if (percentual != null && valorPedido != null) valor = arred(valorPedido * percentual / 100)
     else if (caso.valor != null) valor = caso.valor
   }
-  // produtos: só os itens REAIS do pedido escolhidos pelo dono (ou os do caso)
-  const escolhidos = Array.isArray(enviado?.produtos) ? enviado.produtos : null
+  // produtos: só os itens REAIS dos pedidos localizados escolhidos pelo dono
+  const escolhidos = tem('produtos') && Array.isArray(enviado.produtos) ? enviado.produtos : null
   const produtos = (escolhidos?.length && !automatico)
-    ? produtosDoCaso({ ...t, relatorioDetalhes: { versao: 1, produtos: escolhidos } }, pedido, estado.produtos ?? [])
+    ? produtosDoCaso({ ...base, relatorioDetalhes: { ...(vinculo ?? { versao: 1 }), versao: 1, produtos: escolhidos } }, localizados, estado.produtos ?? [])
     : caso.produtos
-  const antes = t.relatorioDetalhes?.versao === 1 ? t.relatorioDetalhes : null
   const agoraIso = new Date().toISOString()
   return {
     versao: 1, tipo, percentual, valor, moeda, valorPedido,
-    pedidoId: pedido?.id ?? null, pedidoNumero: caso.pedidoNumero,
+    pedidoId: caso.pedidoId, pedidoNumero: caso.pedidoNumero,
+    // vários pedidos (ou número citado sem dados na Shopify) ficam gravados aqui
+    pedidoIds: caso.pedidos.filter(p => p.id).map(p => p.id),
+    pedidoNumeros: caso.pedidoNumeros,
     clienteNome: caso.clienteNome, clienteEmail: caso.clienteEmail,
     produtos,
     origem: automatico ? 'motor_novo_automatico' : 'manual',
-    observacao: String(enviado?.observacao ?? '').trim().slice(0, 300) || null,
+    observacao: tem('observacao')
+      ? (String(enviado.observacao ?? '').trim().slice(0, 300) || null)
+      : (antes?.observacao ?? null),
     criadoEm: antes?.criadoEm ?? agoraIso,
     atualizadoEm: agoraIso,
   }
@@ -2769,7 +2798,9 @@ app.post('/api/tickets/:id/relatorio', (req, res) => {
 app.get('/api/tickets/:id/relatorio/preparar', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   const caso = normalizarCaso(t, { pedidos: req.estado.pedidos ?? [], lojas: req.estado.lojas ?? [], produtos: req.estado.produtos ?? [], fases: catalogoFases() })
-  const pedido = acharPedido(t, req.estado.pedidos ?? [])
+  const daLoja = (req.estado.pedidos ?? []).filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
+  const localizados = daLoja.filter(p => caso.pedidos.some(x => x.localizado && String(x.id) === String(p.id)))
+  const pedido = localizados.length === 1 ? localizados[0] : null
   const an = t.atendimentoNovo
   const cp = an?.conclusaoPendente
   // no motor novo o dono NÃO pode escolher outra ação/percentual: vale a solução aceita
@@ -2779,14 +2810,38 @@ app.get('/api/tickets/:id/relatorio/preparar', (req, res) => {
     travado,
     motor: motorDaConversa(t),
     pedido: pedido ? { id: pedido.id, numero: String(pedido.numero).replace(/\D/g, ''), valor: pedido.valor ?? null, moeda: caso.moeda } : null,
+    // zero, um ou vários — com os números citados que não estão na Shopify
+    pedidos: caso.pedidos,
+    pedidoNumeros: caso.pedidoNumeros,
+    pedidosSemDados: caso.pedidosSemDados,
+    rotuloPedido: caso.rotuloPedido,
+    // só para escolher o vínculo à mão: sempre pedidos DESTA loja
+    pedidosDaLoja: daLoja.map(p => ({ id: p.id, numero: String(p.numero).replace(/\D/g, ''), cliente: p.cliente ?? null, email: p.email ?? null, valor: p.valor ?? null, criadoEm: p.criadoEm ?? null })),
     cliente: { nome: caso.clienteNome, email: caso.clienteEmail },
-    produtosDoPedido: produtosDoCaso({ ...t, relatorioDetalhes: undefined, relatorioAuto: undefined, atendimentoNovo: undefined }, pedido, req.estado.produtos ?? []),
+    produtosDoPedido: produtosDoCaso({ ...t, relatorioDetalhes: undefined, relatorioAuto: undefined, atendimentoNovo: undefined }, localizados, req.estado.produtos ?? []),
     sugestao: {
       tipo: caso.tipo, percentual: caso.percentual, valor: caso.valor, moeda: caso.moeda,
       produtos: caso.produtos, descricao: caso.descricao, acoes: caso.acoes,
       solucaoAceita: cp ? (FASES[cp.faseAceita]?.titulo ?? cp.faseAceita) : (t.relatorioAuto?.solucao ?? null),
     },
   })
+})
+
+// Vincular à mão o(s) pedido(s) de um caso do relatório: o dono escolhe entre os
+// pedidos da MESMA loja e o servidor refaz produtos, cliente, imagens, valor do
+// pedido e moeda. Não encosta em atendimento, motor, fase ou oferta — e o link
+// externo continua sem poder alterar o vínculo.
+app.post('/api/tickets/:id/relatorio/vincular', (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  if (!t.relatorioDia) return res.status(400).json({ erro: 'Este caso não está no relatório.' })
+  const daLoja = (req.estado.pedidos ?? []).filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
+  const pedidos = Array.isArray(req.body?.pedidoIds) ? req.body.pedidoIds.map(String) : []
+  const validos = [...new Set(pedidos)].filter(id => daLoja.some(p => String(p.id) === id))
+  if (pedidos.length && validos.length !== pedidos.length) {
+    return res.status(400).json({ erro: 'Só dá para vincular pedidos da mesma loja.' })
+  }
+  t.relatorioDetalhes = montarDetalhesRelatorio(req.estado, t, { pedidoIds: validos })
+  salvar(req.wsId); ok(req, res)
 })
 
 // Edição da linha final do relatório (o que o chefe vê), ex.: corrigir o nº do pedido

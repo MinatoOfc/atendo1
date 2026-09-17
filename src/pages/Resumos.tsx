@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { CalendarDays, Inbox as InboxIcon, Send, Shield, Package, Sparkles, Copy, Check, ClipboardList, X, Link2, Pencil, CornerUpLeft, Wallet } from 'lucide-react'
 import { useStore, nomeCategoria } from '../store'
+import { normalizarCaso, ROTULO_TIPO } from '../../shared/relatorio.js'
+import type { CasoRelatorio } from '../../shared/relatorio.js'
 import type { ResumoDiario, Ticket, RelatorioReembolsos } from '../store'
 import { EmptyState, Modal } from '../components/Shared'
 
@@ -13,32 +15,80 @@ const formatarDia = (dia: string) => {
 const diaAnterior = (dia: string) => new Date(new Date(dia + 'T12:00:00').getTime() - 86400_000).toISOString().slice(0, 10)
 const ddmm = (dia: string) => `${dia.slice(8, 10)}/${dia.slice(5, 7)}`
 
-/* Mesmos dados principais do link externo, só que compactos: ação, percentual,
-   valor, cliente e produtos. Tudo sai de relatorioDetalhes/relatorioAuto — o que
-   não estiver provado simplesmente não aparece (nunca vira zero). */
-const ROTULO_TIPO_REL: Record<string, string> = {
-  reembolso: 'Reembolso', troca: 'Troca', reenvio: 'Reenvio', cancelamento: 'Cancelamento', cupom: 'Cupom', outro: 'Atendido',
-}
+/* Mesmos dados principais do link externo, só que compactos: pedido(s), ação,
+   percentual, valor, cliente e produtos. A associação vem do MESMO normalizador
+   da página externa (shared/relatorio.js) — o que não estiver provado não
+   aparece (nunca vira zero). */
 const SIMBOLO_REL: Record<string, string> = { EUR: '€', BRL: 'R$', USD: 'US$', GBP: '£' }
 const dinheiroRel = (valor: number | null | undefined, moeda: string | null | undefined) =>
   valor == null ? null : `${SIMBOLO_REL[moeda ?? ''] ?? moeda ?? ''} ${valor.toFixed(2).replace('.', ',')}`.trim()
 
-function dadosCompactos(t: Ticket) {
-  const d = t.relatorioDetalhes?.versao === 1 ? t.relatorioDetalhes : null
-  const auto = t.relatorioAuto ?? null
-  const tipo = d?.tipo ?? (auto ? 'reembolso' : null)
-  const percentual = auto?.percentual ?? d?.percentual ?? null
-  const valor = tipo === 'cupom' ? null : (auto?.valor ?? d?.valor ?? null)
-  const moeda = auto?.moeda ?? d?.moeda ?? null
-  const acao = tipo ? `${ROTULO_TIPO_REL[tipo] ?? tipo}${percentual != null ? ` ${percentual}%` : ''}` : null
+function dadosCompactos(caso: CasoRelatorio) {
+  const acao = caso.acoes.length
+    ? caso.acoes.map(a => ROTULO_TIPO[a] ?? a).join(' + ') + (caso.percentual != null ? ` ${caso.percentual}%` : '')
+    : null
   return {
-    cliente: d?.clienteNome ?? null,
-    email: d?.clienteEmail ?? null,
-    produtos: (d?.produtos ?? []).map(p => p.titulo + (p.variante ? ` (${p.variante})` : '')),
+    pedido: caso.rotuloPedido,
+    cliente: caso.clienteNome,
+    email: caso.clienteEmail,
+    produtos: caso.produtos.map(p => p.titulo + (p.variante ? ` (${p.variante})` : '')),
     acao,
-    valorTexto: valor != null ? dinheiroRel(valor, moeda) : (tipo && tipo !== 'cupom' && tipo !== 'outro' ? 'Valor não registrado' : null),
-    cupom: auto?.cupom ?? null,
+    valorTexto: caso.valor != null
+      ? dinheiroRel(caso.valor, caso.moeda)
+      : (caso.acoes.includes('reembolso') ? 'Valor não registrado' : null),
+    cupom: caso.cupom,
   }
+}
+
+/* Vincular à mão o pedido de um caso cujo número foi escrito mas não foi
+   encontrado na Shopify. Só aparecem pedidos da MESMA loja; quem recalcula
+   produtos, cliente, imagens, valor e moeda é o servidor. */
+function ModalVincular({ t, caso, onClose }: { t: Ticket; caso: CasoRelatorio; onClose: () => void }) {
+  const s = useStore()
+  const daLoja = s.todosPedidos.filter(p => (p.lojaId ?? 'loja1') === (t.lojaId ?? 'loja1'))
+  const [busca, setBusca] = useState(caso.pedidosSemDados[0] ?? '')
+  const [marcados, setMarcados] = useState<string[]>(caso.pedidos.filter(p => p.id).map(p => p.id as string))
+  const alvo = busca.trim().toLowerCase()
+  const lista = daLoja
+    .filter(p => !alvo || `${p.numero} ${p.cliente ?? ''} ${p.email ?? ''}`.toLowerCase().includes(alvo))
+    .slice(0, 40)
+  return (
+    <Modal title="Vincular pedido a este caso" onClose={onClose}>
+      <p className="muted-sm" style={{ marginBottom: 12, lineHeight: 1.5 }}>
+        O número <b>{caso.pedidosSemDados.map(n => `#${n}`).join(', ') || '—'}</b> está escrito no relatório, mas não bate
+        com nenhum pedido sincronizado desta loja. Escolha o pedido certo — isso muda <b>só o relatório</b>.
+      </p>
+      <div className="field">
+        <label>Buscar pedido desta loja</label>
+        <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="número, cliente ou e-mail" />
+      </div>
+      <div style={{ display: 'grid', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
+        {lista.length === 0 && <span className="muted-sm">Nenhum pedido desta loja bate com a busca.</span>}
+        {lista.map(p => {
+          const id = String(p.id)
+          return (
+            <label key={id} className="card row gap-8" style={{ padding: 8, alignItems: 'center', cursor: 'pointer' }}>
+              <input type="checkbox" checked={marcados.includes(id)}
+                onChange={() => setMarcados(m => (m.includes(id) ? m.filter(x => x !== id) : [...m, id]))} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <b style={{ fontSize: 13 }}>#{String(p.numero).replace('#', '')}</b>
+                <span className="muted-sm" style={{ display: 'block' }}>
+                  {p.cliente ?? '—'}{p.email ? ` · ${p.email}` : ''}{p.criadoEm ? ` · ${p.criadoEm}` : ''}
+                </span>
+              </span>
+            </label>
+          )
+        })}
+      </div>
+      <div className="row spread" style={{ marginTop: 14, flexWrap: 'wrap', gap: 8 }}>
+        <span className="muted-sm">{marcados.length} pedido(s) selecionado(s)</span>
+        <button className="btn btn-primary" disabled={!marcados.length}
+          onClick={() => { s.vincularPedidosRelatorio(t.id, marcados); onClose() }}>
+          <Check size={13} /> Vincular
+        </button>
+      </div>
+    </Modal>
+  )
 }
 
 export default function Resumos() {
@@ -48,6 +98,8 @@ export default function Resumos() {
   const [copiado, setCopiado] = useState<string | null>(null)
   // edição inline da linha do relatório manual (o que o chefe vê no link)
   const [editando, setEditando] = useState<{ id: string; texto: string } | null>(null)
+  // caso do relatório a vincular a um pedido (número escrito, pedido não sincronizado)
+  const [vinculando, setVinculando] = useState<string | null>(null)
   // relatório de reembolsos (todas as lojas), gerado sob demanda
   const [reembolsos, setReembolsos] = useState<RelatorioReembolsos | null>(null)
   const [gerandoReembolsos, setGerandoReembolsos] = useState(false)
@@ -73,6 +125,9 @@ export default function Resumos() {
   const gastoHoje = s.hojeChave ? gastoDoDia(s.hojeChave) : 0
 
   /* ---- Relatório manual: só os casos que o lojista marcou nas conversas ---- */
+  // MESMA associação da página externa: pedido(s), cliente, produtos e imagens
+  const casoDe = (t: Ticket): CasoRelatorio =>
+    normalizarCaso(t, { pedidos: s.todosPedidos, lojas: s.lojas, produtos: s.produtos, fases: s.fasesNovo })
   const numeroDoTicket = (t: Ticket) => {
     // mesma busca do painel do ticket: remetente + e-mails e números citados na conversa
     const texto = [t.assunto, t.corpo, t.resposta, ...(t.historico?.map(m => m.corpo) ?? [])].join('\n').toLowerCase()
@@ -110,8 +165,9 @@ export default function Resumos() {
       for (const t of ts) {
         linhas.push(linhaDoTicket(t))
         // o chefe precisa ver pedido, cliente, produto, ação, percentual e valor
-        const c = dadosCompactos(t)
+        const c = dadosCompactos(casoDe(t))
         const extras = [
+          c.pedido,
           c.cliente ? `Cliente: ${c.cliente}${c.email ? ` <${c.email}>` : ''}` : null,
           c.produtos.length ? `Produto: ${c.produtos.join(', ')}` : null,
           c.acao, c.valorTexto, c.cupom ? `Cupom: ${c.cupom}` : null,
@@ -211,12 +267,16 @@ export default function Resumos() {
                     <span style={{ flex: 1, minWidth: 0 }}>
                       {linhaDoTicket(t)}{t.relatorioLinha && <span className="muted-sm" style={{ marginLeft: 6 }}>(editada)</span>}
                       {(() => {
-                        const c = dadosCompactos(t)
-                        const partes = [c.acao, c.valorTexto, c.cliente, c.produtos.join(', ') || null].filter(Boolean)
+                        const c = dadosCompactos(casoDe(t))
+                        const partes = [c.pedido, c.acao, c.valorTexto, c.cliente, c.produtos.join(', ') || null].filter(Boolean)
                         if (!partes.length) return null
                         return <span className="muted-sm" style={{ display: 'block', marginTop: 1 }}>{partes.join(' · ')}</span>
                       })()}
                     </span>
+                    {casoDe(t).pedidosSemDados.length > 0 && (
+                      <button className="btn btn-sm" title="O número está escrito, mas o pedido não foi encontrado na Shopify — escolha o pedido certo desta loja"
+                        onClick={() => setVinculando(t.id)}><Link2 size={13} /> Vincular pedido</button>
+                    )}
                     {t.relatorioProcessado && (
                       <span className="tag tag-green" title={'Processado pelo dono em ' + new Date(t.relatorioProcessado).toLocaleString('pt-BR')}>✓ processado</span>
                     )}
@@ -498,6 +558,10 @@ export default function Resumos() {
           )}
         </Modal>
       )}
+      {vinculando && (() => {
+        const t = s.tickets.find(x => x.id === vinculando)
+        return t ? <ModalVincular t={t} caso={casoDe(t)} onClose={() => setVinculando(null)} /> : null
+      })()}
     </div>
   )
 }

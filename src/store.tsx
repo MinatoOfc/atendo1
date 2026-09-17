@@ -40,6 +40,13 @@ export interface PreparoRelatorio {
   travado: boolean
   motor: 'classico' | 'novo'
   pedido: { id: string; numero: string; valor: number | null; moeda: string | null } | null
+  /** zero, um ou vários pedidos do caso (localizado=false: número citado sem dados na Shopify) */
+  pedidos: { id: string | null; numero: string; valor: number | null; moeda: string | null; localizado: boolean }[]
+  pedidoNumeros: string[]
+  pedidosSemDados: string[]
+  rotuloPedido: string
+  /** pedidos DESTA loja, para o dono confirmar/corrigir o vínculo */
+  pedidosDaLoja: { id: string; numero: string; cliente: string | null; email: string | null; valor: number | null; criadoEm: string | null }[]
   cliente: { nome: string | null; email: string | null }
   produtosDoPedido: ProdutoRelatorio[]
   sugestao: {
@@ -478,6 +485,8 @@ interface Store extends ServerState {
   alternarRelatorio: (id: string, adicionar: boolean, texto?: string, detalhes?: Partial<DetalhesRelatorio>) => void
   /** dados prontos do caso para o popup do relatório (só leitura; nada muda no motor) */
   prepararRelatorio: (id: string) => Promise<PreparoRelatorio | null>
+  /** vincula à mão o(s) pedido(s) de um caso do relatório (só pedidos da mesma loja) */
+  vincularPedidosRelatorio: (id: string, pedidoIds: string[]) => void
   salvarOpcoesRelatorio: (opcoes: string[]) => void
   salvarOpcoesInstrucao: (opcoes: string[]) => void
   configurarRelatorioLink: (acao: 'criar' | 'revogar' | 'mostrar-hoje', valor?: boolean) => void
@@ -744,6 +753,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
     alternarRelatorio: (id, adicionar, texto, detalhes) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar, texto, detalhes }).then(aplicar),
+    vincularPedidosRelatorio: (id, pedidoIds) => api(`/tickets/${id}/relatorio/vincular`, 'POST', { pedidoIds }).then(aplicar),
     prepararRelatorio: async id => {
       try {
         const r = await fetch(`/api/tickets/${id}/relatorio/preparar`)

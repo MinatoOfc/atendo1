@@ -32,6 +32,7 @@ estado.produtos = [{ id: 'prodA', lojaId: 'loja1', imagem: IMG, imagemPorVariant
 estado.pedidos = [
   { id: 'p1', numero: '#1001', cliente: 'Ana Souza', email: 'ana@web.de', pais: 'Germany', valor: 100, status: 'entregue', criadoEm: '2026-09-01', lojaId: 'loja1', itens: [{ titulo: 'Polo Premium', variante: 'Preto / L', quantidade: 1, preco: 100, produtoId: 'prodA', varianteId: 'varA' }] },
   { id: 'p2', numero: '#2001', cliente: 'Carla UK', email: 'carla@uk.co', pais: 'UK', valor: 40, status: 'entregue', criadoEm: '2026-09-02', lojaId: 'loja2', itens: [{ titulo: 'Shirt', variante: null, quantidade: 1, preco: 40 }] },
+  { id: 'p3', numero: '#1002', cliente: 'Ana Souza', email: 'ana@web.de', pais: 'Germany', valor: 50, status: 'entregue', criadoEm: '2026-09-03', lojaId: 'loja1', itens: [{ titulo: 'Hemd Classic', variante: 'Weiß / M', quantidade: 1, preco: 50 }] },
 ]
 const base_ticket = (id, extra) => ({
   id, nome: 'Cliente', de: 'ana@web.de', assunto: 'Bestellung #1001', corpo: 'Hallo', data: '2026-09-10T10:00:00.000Z',
@@ -47,6 +48,8 @@ estado.tickets = [
   }),
   // relatório antigo, só texto: nada de estruturado, e continua aparecendo
   base_ticket('t-antigo', { relatorioDia: '2026-09-09', relatorioTexto: 'REEMBOLSO 60%', relatorioProcessado: '2026-09-09T20:00:00.000Z' }),
+  // relatório antigo com o número escrito na linha, mas sem esse pedido na Shopify
+  base_ticket('t-vincular', { de: 'ninguem@web.de', assunto: 'Umtausch', corpo: 'Sem numero aqui.', relatorioDia: '2026-09-09', relatorioTexto: 'PEDIDO 7777 - TROCAR AS 2XL POR 4XL' }),
 ]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
@@ -177,4 +180,56 @@ test('tirar do relatório limpa também os campos estruturados', async () => {
   assert.equal(t.relatorioTexto, undefined)
   assert.equal(t.relatorioLinha, undefined)
   assert.equal(t.relatorioDetalhes, undefined)
+})
+test('caso antigo com número citado sem dados: o popup mostra o aviso e a lista de pedidos da loja', async () => {
+  const r = await api('/api/tickets/t-vincular/relatorio/preparar', null, 'GET')
+  assert.equal(r.status, 200)
+  assert.deepEqual(r.pedidoNumeros, ['7777'])
+  assert.deepEqual(r.pedidosSemDados, ['7777'])
+  assert.equal(r.rotuloPedido, 'Pedido #7777 citado — dados não encontrados na Shopify')
+  assert.equal(r.pedido, null)
+  // só pedidos DESTA loja podem ser escolhidos
+  assert.deepEqual(r.pedidosDaLoja.map(p => p.numero).sort(), ['1001', '1002'])
+})
+
+test('vincular pedido à mão: o servidor refaz cliente, produtos, imagem, valor do pedido e moeda', async () => {
+  const r = await api('/api/tickets/t-vincular/relatorio/vincular', { pedidoIds: ['p1'] })
+  assert.equal(r.status, 200)
+  const d = (await ticket('t-vincular')).relatorioDetalhes
+  assert.deepEqual(d.pedidoIds, ['p1'])
+  assert.deepEqual(d.pedidoNumeros, ['1001'])
+  assert.equal(d.pedidoNumero, '1001')
+  assert.equal(d.clienteNome, 'Ana Souza', 'o cliente passa a ser o do pedido vinculado')
+  assert.equal(d.clienteEmail, 'ana@web.de')
+  assert.equal(d.valorPedido, 100)
+  assert.equal(d.moeda, 'EUR')
+  assert.equal(d.produtos[0].titulo, 'Polo Premium')
+  assert.equal(d.produtos[0].imagem, IMG, 'a foto vem do catálogo, pela variante')
+  assert.equal(d.valor, null, 'sem percentual escrito, o valor continua não registrado')
+  // e a página externa passa a mostrar o pedido localizado
+  const { normalizarCaso } = await import('../shared/relatorio.js')
+  const caso = normalizarCaso(await ticket('t-vincular'), { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos })
+  assert.equal(caso.pedidoTitulo, 'Pedido #1001')
+  assert.equal(caso.pedidoLocalizado, true)
+})
+
+test('vincular NUNCA aceita pedido de outra loja', async () => {
+  const r = await api('/api/tickets/t-vincular/relatorio/vincular', { pedidoIds: ['p2'] })
+  assert.equal(r.status, 400)
+  assert.match(r.erro, /mesma loja/i)
+  const d = (await ticket('t-vincular')).relatorioDetalhes
+  assert.deepEqual(d.pedidoIds, ['p1'], 'o vínculo anterior continua de pé')
+})
+
+test('vincular dois pedidos da mesma loja: os dois números aparecem e nada é somado', async () => {
+  const r = await api('/api/tickets/t-vincular/relatorio/vincular', { pedidoIds: ['p1', 'p3'] })
+  assert.equal(r.status, 200)
+  const t = await ticket('t-vincular')
+  assert.deepEqual(t.relatorioDetalhes.pedidoNumeros, ['1001', '1002'])
+  assert.equal(t.relatorioDetalhes.valorPedido, null, 'totais de pedidos diferentes nunca se somam')
+  assert.equal(t.relatorioDetalhes.valor, null)
+  const { normalizarCaso } = await import('../shared/relatorio.js')
+  const caso = normalizarCaso(t, { pedidos: estado.pedidos, lojas: estado.lojas, produtos: estado.produtos })
+  assert.equal(caso.pedidoTitulo, 'Pedidos #1001 e #1002')
+  assert.deepEqual(caso.produtos.map(p => p.titulo), ['Polo Premium', 'Hemd Classic'])
 })

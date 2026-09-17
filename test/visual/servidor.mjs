@@ -159,6 +159,23 @@ estado.tickets.push(
   doRelatorio(3008, 'loja1', ONTEM, { nome: '<script>window.__invadido=1</script>', relatorioTexto: '<img src=x onerror="window.__invadido=1">REEMBOLSO 10%' }),
 )
 
+/* ---------- relatórios ANTIGOS: o número do pedido está escrito na linha/no texto ----------
+   Reproduz a produção: um pedido, dois pedidos e um número citado que não existe
+   na Shopify. Nenhum deles tem relatorioDetalhes — a associação é só de leitura. */
+estado.pedidos.push(
+  { ...pedido(3009, 'loja1', 120), email: 'c3009@web.de', cliente: 'Cliente 3009', itens: [itemRel('Polo Premium', 'Schwarz / 2XL', 'prod-polo', 'var-polo-l', 120)] },
+  { ...pedido(3010, 'loja1', 80), email: 'c3010@web.de', cliente: 'Cliente 3010', itens: [itemRel('Polo Premium', 'Schwarz / 2XL', 'prod-polo', null, 80)] },
+  { ...pedido(3011, 'loja1', 60), email: 'c3011@web.de', cliente: 'Cliente 3011', itens: [itemRel('Hemd Classic', 'Weiß / 2XL', 'prod-hemd', null, 60)] },
+)
+estado.tickets.push(
+  // 11) um pedido, achado pela LINHA final editada pelo dono
+  doRelatorio(3009, 'loja1', ONTEM, { categoria: 'troca', relatorioTexto: 'TROCA DE TAMANHO', relatorioLinha: 'PEDIDO 3009 - TROCAR AS 2XL POR 4XL' }),
+  // 12) DOIS pedidos no mesmo caso: os dois números e os produtos dos dois
+  doRelatorio(3010, 'loja1', ONTEM, { categoria: 'troca', relatorioTexto: 'PEDIDO 3010 E 3011 - TROCAR POR 4XL' }),
+  // 13) número escrito, mas o pedido não está sincronizado na Shopify
+  doRelatorio(3012, 'loja1', ONTEM, { categoria: 'troca', relatorioTexto: 'PEDIDO 8888 - TROCAR AS 2XL POR 4XL' }),
+)
+
 // o caso 1015 (cancelamento) está com o dono: fase pendente de decisão
 estado.tickets[14].atendimentoNovo.acaoAceita = 'cancel_nao_processado'
 estado.tickets[14].motivoEscalada = 'Cancelamento de pedido não processado — decisão sua'

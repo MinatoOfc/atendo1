@@ -29,6 +29,14 @@ const etiquetaTipo = tipo => `<span class="tag tipo-${escapar(tipo)}">${escapar(
 function cartaoCaso(c) {
   const principal = c.produtos[0]
   const extras = c.produtos.length - 1
+  const semDados = c.pedidosSemDados ?? []
+  // "Pedido #2614", "Pedidos #2673 e #2695" ou "Sem pedido informado"; quando o
+  // número foi escrito mas o pedido não está sincronizado, o aviso vem embaixo
+  const tituloPedido = c.pedidoTitulo ?? (c.pedidoNumero ? `Pedido #${c.pedidoNumero}` : 'Sem pedido informado')
+  const avisoPedido = !semDados.length ? ''
+    : semDados.length === (c.pedidos?.length ?? 0)
+      ? `citado${semDados.length > 1 ? 's' : ''} — dados não encontrados na Shopify`
+      : `${semDados.map(n => '#' + n).join(', ')} — dados não encontrados na Shopify`
   const valorTexto = c.valor != null ? dinheiro(c.valor, c.moeda) : (c.acoes.includes('reembolso') ? 'Valor não registrado' : '—')
   const acoes = c.acoes.map(etiquetaTipo).join('')
   return `<article class="caso${c.processado ? ' processado' : ''}" data-caso="${escapar(c.ticketId)}">
@@ -37,7 +45,8 @@ function cartaoCaso(c) {
     </span>
     <div class="foto-caixa">${principal ? foto(principal) : ICONE_PRODUTO}</div>
     <div class="pedido">
-      <strong>${c.pedidoNumero ? `Pedido #${escapar(c.pedidoNumero)}` : 'Sem pedido localizado'}</strong>
+      <strong>${escapar(tituloPedido)}</strong>
+      ${avisoPedido ? `<span class="mini aviso">${escapar(avisoPedido)}</span>` : ''}
       <span class="mini">${principal ? `${escapar(principal.titulo)}${principal.variante ? ` · ${escapar(principal.variante)}` : ''}${principal.quantidade > 1 ? ` · ${principal.quantidade}x` : ''}` : 'Produto não identificado'}${extras > 0 ? ` <em>+${extras}</em>` : ''}</span>
       <span class="tag loja">${escapar(c.lojaNome)}</span>
     </div>
@@ -65,6 +74,7 @@ function cartaoCaso(c) {
         ${c.produtos.length ? c.produtos.map(p => `<div class="prod"><div class="foto-caixa pequena">${foto(p)}</div><div><strong>${escapar(p.titulo)}</strong><span class="mini">${p.variante ? escapar(p.variante) + ' · ' : ''}${p.quantidade}x</span></div></div>`).join('') : '<span class="mini">Nenhum produto identificado para este caso.</span>'}
       </div>
       <dl>
+        ${(c.pedidos?.length ?? 0) > 1 ? `<div><dt>Pedidos</dt><dd>${c.pedidos.map(p => `#${escapar(p.numero)}${p.localizado ? (p.valor != null ? ` (${escapar(dinheiro(p.valor, p.moeda))})` : '') : ' (sem dados)'}`).join(' · ')}</dd></div>` : ''}
         <div><dt>Valor do pedido</dt><dd>${c.valorPedido != null ? escapar(dinheiro(c.valorPedido, c.moeda)) : 'não registrado'}</dd></div>
         <div><dt>Percentual</dt><dd>${c.percentual != null ? c.percentual + '%' : '—'}</dd></div>
         <div><dt>Valor reembolsado</dt><dd>${escapar(valorTexto)}</dd></div>
@@ -157,6 +167,7 @@ export function paginaRelatorio(dados) {
   .grupo-loja{padding:12px 14px}
   .grupo-loja h3{margin:6px 0 10px 4px;color:var(--text-2);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;font-weight:800}
   .mini{color:var(--text-2);font-size:.73rem;display:block}
+  .mini.aviso{color:var(--amber)}
   .caso{display:grid;grid-template-columns:34px 48px minmax(0,1.4fr) minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,1fr) 110px auto;gap:12px;align-items:center;padding:11px 12px;margin-bottom:9px;border:1px solid var(--border);border-radius:14px;background:var(--panel-soft)}
   .caso.processado{opacity:.78}
   .caso strong{display:block;font-size:.86rem;overflow:hidden;text-overflow:ellipsis}
