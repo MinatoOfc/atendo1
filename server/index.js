@@ -15,7 +15,7 @@ import {
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase, valoresMonetarios,
 } from './atendimento.js'
-import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, checklistDaTentativa, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual, origemDoEnvio } from '../shared/auditoria.js'
+import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, checklistDaTentativa, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual, origemDoEnvio, cicloAtual, eventosDoCiclo } from '../shared/auditoria.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { produtoFoiInformado } from '../shared/produto.js'
@@ -502,6 +502,18 @@ function invalidarVerificacaoCupons(loja, motivo) {
 /* ---------------- Auditoria da IA (observa, nunca controla) ---------------- */
 
 /**
+ * Abre um CICLO de auditoria: um por mensagem nova do cliente. Tudo o que
+ * acontecer por causa dela — classificação, decisão, aceite, recusa, escalada,
+ * rascunho, validação, bloqueio, agendamento, envio e encerramento — carrega
+ * este id. Assim uma mensagem nova nunca herda o selo verde da anterior.
+ */
+function abrirCicloAuditoria(t) {
+  t.cicloAuditoria = `ciclo-${t.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  if (t.atendimentoNovo) t.atendimentoNovo.tentativaAtual = undefined
+  return t.cicloAuditoria
+}
+
+/**
  * Grava um evento no histórico append-only do ticket. NUNCA lança: a auditoria
  * não pode derrubar nem alterar o atendimento. Nada de prompt, raciocínio,
  * token, chave ou segredo entra aqui — só classificação estruturada e o
@@ -515,7 +527,9 @@ function auditar(t, tipo, { resumo = '', situacao = 'informativo', dados = {}, f
       tipo, ticketId: t.id, lojaId: t.lojaId ?? 'loja1',
       fase: fase ?? an?.transicaoPendente?.para ?? an?.etapa ?? null,
       jornada: an?.fluxo ?? null,
-      resumo, situacao, dados, em, chave,
+      // CICLO atual em TODO evento: é por ele que a auditoria sabe o que
+      // pertence à mensagem mais recente do cliente
+      resumo, situacao, dados: { ...dados, cicloId: dados.cicloId ?? t.cicloAuditoria ?? null }, em, chave,
     })
     // RETENÇÃO honesta (função pura): o que sai do teto fica contado e datado
     const r = aplicarRetencao(registrarEvento(t.auditoriaIA, evento), { anterior: t.auditoriaRetencao ?? null })
@@ -1354,7 +1368,13 @@ const decisaoDaOferta = o => !o ? undefined
 
 const somarCusto = (t, custo) => { if (custo) t.custoIA = Math.round(((t.custoIA || 0) + custo) * 1e6) / 1e6 }
 
-function mandarParaHumanoNovo(t, motivo) {
+/**
+ * O caso volta para o dono. 'origem' diz POR QUE, e é o que separa um erro da
+ * IA (classificação que falhou → Revisar) de uma espera legítima por você
+ * (IA pausada, decisão do motor, aceite aguardando aprovação).
+ * 'rascunho' = o chamador já registrou rascunho_bloqueado, não duplica evento.
+ */
+function mandarParaHumanoNovo(t, motivo, origem = 'motor') {
   const an = t.atendimentoNovo
   t.status = 'humano'
   t.motivoEscalada = motivo
@@ -1366,6 +1386,13 @@ function mandarParaHumanoNovo(t, motivo) {
   // sem produto informado, a escalada NÃO abre uma saída manual irrestrita: o motivo fica
   // preservado como pendência e a única resposta permitida é a coleta do produto (escrita à mão)
   if (an && !produtoFoiInformado(an)) exigirColetaManualDeProduto(t, motivo)
+  if (origem === 'rascunho') return
+  auditar(t, 'caso_para_humano', {
+    resumo: motivo || 'Caso foi para você',
+    situacao: origem === 'classificacao' ? 'bloqueado' : 'atencao',
+    chave: `caso_para_humano:${t.id}:${origem}:${Date.now()}`,
+    dados: { motivo: motivo || null, origem },
+  })
 }
 
 /**
@@ -1427,7 +1454,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
       chave: `rascunho_bloqueado:${t.id}:${faseId}:${Date.now()}`,
       dados: { tentativaId: t.atendimentoNovo?.tentativaAtual ?? null, motivo, fase: faseId, enviado: false, checklist: { geral: 'bloqueado', enviado: false, itens: [] } },
     })
-    if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo)
+    if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo, 'rascunho')
     return { ok: false, motivo }
   }
 
@@ -1536,7 +1563,7 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   // 1. classificar (a IA não vê a escada, só o que foi oferecido por último)
   const p1 = promptClassificar({ loja, an, pedido, ticket: t })
   const c = await classificarNovo(p1.system, p1.user)
-  if (c.erro) { mandarParaHumanoNovo(t, `A IA não conseguiu classificar a mensagem (${c.erro})`); return { spam: false } }
+  if (c.erro) { mandarParaHumanoNovo(t, `A IA não conseguiu classificar a mensagem (${c.erro})`, 'classificacao'); return { spam: false } }
   somarCusto(t, c.custo); registrarGasto(estado, t.lojaId, c.custo)
   const cls = c.r
   if (cls.spam && !identificado) return { spam: true }
@@ -1716,6 +1743,7 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
   base.motor = base.motorAtendimento
   // loja no modo novo: o motor de etapas cuida de tudo (classificar, decidir, escrever)
   if (base.motorAtendimento === 'novo') {
+    abrirCicloAuditoria(base)
     auditar(base, 'cliente_recebido', {
       resumo: `Primeira mensagem do cliente (${String(corpo ?? '').trim().slice(0, 80)})`,
       situacao: 'informativo',
@@ -1891,7 +1919,9 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, ago
   t.tentativasEnvio = undefined
   t.traducao = undefined
 
-  // AUDITORIA: chegou mensagem do cliente (texto escapado só na exibição; aqui é dado)
+  // AUDITORIA: mensagem nova do cliente = CICLO NOVO. A partir daqui nada mais
+  // pertence ao ciclo anterior, mesmo que a classificação falhe logo em seguida.
+  abrirCicloAuditoria(t)
   auditar(t, 'cliente_recebido', {
     resumo: `Mensagem do cliente (${String(corpo ?? '').trim().slice(0, 80)})`,
     situacao: 'informativo',
@@ -1907,6 +1937,11 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, ago
     t.status = 'humano'
     t.motivoEscalada = 'IA pausada nesta conversa — responda manualmente ou retome a IA'
     t.motivoTraducao = undefined
+    auditar(t, 'caso_para_humano', {
+      resumo: t.motivoEscalada, situacao: 'atencao',
+      chave: `caso_para_humano:${t.id}:ia_pausada:${t.data}`,
+      dados: { motivo: t.motivoEscalada, origem: 'ia_pausada' },
+    })
   } else if (motorDaConversa(t) === 'novo') {
     // a conversa segue no motor em que começou, mesmo que a loja tenha trocado de modo
     // mensagem nova reinicia a cadência e recalcula o rascunho (regra 8)
@@ -2004,7 +2039,22 @@ async function sincronizar(wsId) {
 
 /* ---------------- Envio ---------------- */
 
-async function enviarResposta(wsId, ticket, texto, origem = 'manual', { automatico = false } = {}) {
+/**
+ * Autorização HUMANA persistida da solução que está saindo agora: o dono aprovou
+ * o aceite/confirmação, mesmo que o agendador só envie horas depois, respeitando
+ * a cadência. Conclusão já encerrada, cancelada ou recusada não autoriza nada.
+ */
+function autorizacaoDoDono(ticket, conclusaoDoEnvio = null) {
+  const cps = [conclusaoDoEnvio, ticket.atendimentoNovo?.conclusaoPendente ?? null]
+  for (const cp of cps) {
+    if (cp?.aprovadoEm && !['concluida', 'cancelada', 'recusada'].includes(cp.status)) {
+      return { aprovadoEm: cp.aprovadoEm, aprovadoPor: cp.aprovadoPor ?? null, aceiteId: cp.id ?? null }
+    }
+  }
+  return null
+}
+
+async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo = 'dono' } = {}) {
   const lojaId = ticket.lojaId ?? 'loja1'
   const contas = contasDe(wsId)
   const an = ticket.atendimentoNovo
@@ -2098,6 +2148,12 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { automati
   if (enviou) {
     // AUDITORIA: e-mail REALMENTE enviado, com o checklist final e os horários
     const estadoA = workspaces.get(wsId)
+    // 1) texto do dono → manual; 2) solução aprovada por ele → aprovado_pelo_dono;
+    // 3) só sem nenhuma autorização humana e enviado pelo agendador → automatico
+    const autorizacao = autorizacaoDoDono(ticket, cpEnvio)
+    const origemEnvio = origem === 'manual'
+      ? 'manual'
+      : (disparo !== 'agendador' || autorizacao ? 'aprovado_pelo_dono' : 'automatico')
     const checklist = estadoA
       ? checklistDoTicket(estadoA, wsId, ticket, { faseId: transicao?.para ?? an?.etapa ?? null, texto, enviado: true, origem })
       : null
@@ -2111,8 +2167,10 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { automati
         // o canal confirmou a saída: só aqui, depois de enviar de verdade
         canalConfirmou: enviou === true,
         // EVIDÊNCIA de como esta mensagem saiu, gravada no próprio evento: mudar
-        // a configuração da loja depois não reescreve o passado
-        origemEnvio: automatico ? 'automatico' : (origem === 'manual' ? 'manual' : 'aprovado_pelo_dono'),
+        // a configuração da loja depois não reescreve o passado. A origem vem da
+        // AUTORIZAÇÃO, não de quem apertou o relógio: uma confirmação aprovada
+        // pelo dono e enviada pelo agendador 5 h depois NÃO é automática.
+        origemEnvio, autorizacao,
       },
     })
     if (origem === 'manual') {
@@ -2216,7 +2274,12 @@ agendar(async () => {
           if (cupL.precisa && !cupL.ok) {
             t.enviaEm = undefined
             anL.envioBloqueado = motivoCupom(anL.transicaoPendente.para, cupL)
-            mandarParaHumanoNovo(t, motivoCupom(anL.transicaoPendente.para, cupL))
+            auditar(t, 'rascunho_bloqueado', {
+              resumo: motivoCupom(anL.transicaoPendente.para, cupL), situacao: 'bloqueado', fase: anL.transicaoPendente.para,
+              chave: `rascunho_bloqueado:${t.id}:${anL.transicaoPendente.para}:${Date.now()}`,
+              dados: { tentativaId: anL.tentativaAtual ?? null, motivo: motivoCupom(anL.transicaoPendente.para, cupL), fase: anL.transicaoPendente.para, enviado: false, checklist: { geral: 'bloqueado', enviado: false, itens: [] } },
+            })
+            mandarParaHumanoNovo(t, motivoCupom(anL.transicaoPendente.para, cupL), 'rascunho')
             salvar(wsId)
             continue
           }
@@ -2245,7 +2308,7 @@ agendar(async () => {
             continue
           }
         }
-        await enviarResposta(wsId, t, t.rascunho || '', 'ia', { automatico: true })
+        await enviarResposta(wsId, t, t.rascunho || '', 'ia', { disparo: 'agendador' })
         t.erroEnvio = undefined
         t.tentativasEnvio = undefined
       } catch (err) {
@@ -3494,8 +3557,12 @@ function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
   const motor = motorDaConversa(t)
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1')) ?? null
   const pedido = pedidoDoTicket(estado, t)
-  const classificou = [...eventos].reverse().find(e => e.tipo === 'ia_classificou') ?? null
-  const decidiu = [...eventos].reverse().find(e => e.tipo === 'motor_decidiu') ?? null
+  // classificação e decisão SÓ do ciclo atual: se o ciclo novo parou antes da
+  // classificação, a interpretação da mensagem anterior não aparece como se
+  // fosse da nova
+  const doCiclo = eventosDoCiclo(eventos)
+  const classificou = [...doCiclo].reverse().find(e => e.tipo === 'ia_classificou') ?? null
+  const decidiu = [...doCiclo].reverse().find(e => e.tipo === 'motor_decidiu') ?? null
   // checklist SOMENTE da tentativa atual — um checklist verde antigo nunca
   // aparece por cima de uma tentativa que foi bloqueada antes de concluí-lo
   const daTentativa = checklistDaTentativa(eventos)
@@ -3535,6 +3602,7 @@ function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
     passos: passosCompactos(eventos),
     eventos: eventos.map(e => ({ ...e, dados: e.dados ?? {} })),
     tentativaAtual: tentativaAtual(eventos),
+    cicloAtual: cicloAtual(eventos),
     historicoCompleto: !t.auditoriaRetencao?.omitidos,
     classificacao: classificou ? { ...classificou.dados, em: classificou.em } : null,
     decisao: decidiu ? { ...decidiu.dados, em: decidiu.em } : null,

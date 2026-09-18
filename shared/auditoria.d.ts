@@ -1,7 +1,7 @@
 export type SituacaoAuditoria = 'ok' | 'atencao' | 'bloqueado' | 'informativo'
 export type EstadoItem = 'verde' | 'amarelo' | 'vermelho' | 'cinza'
 export type GeralChecklist = 'tudo_certo' | 'revisar' | 'bloqueado'
-export type SeloConversa = GeralChecklist | 'aguardando' | 'agendada' | 'sem_dados'
+export type SeloConversa = GeralChecklist | 'aguardando' | 'agendada' | 'aguardando_voce' | 'encerrado' | 'sem_dados'
 /** Como a mensagem saiu, gravado no próprio evento de envio (campo fechado). */
 export type OrigemEnvio = 'automatico' | 'aprovado_pelo_dono' | 'manual'
 
@@ -88,6 +88,7 @@ export interface ConversaAuditoria extends ResumoConversaAuditoria {
   cupom: string | null
   cadencia: { minimo: string | null; agendado: string | null; primeiraResposta: boolean }
   tentativaAtual: string | null
+  cicloAtual: string | null
   historicoCompleto: boolean
 }
 
@@ -101,6 +102,8 @@ export declare const ROTULO_SELO_CURTO: Record<string, string>
 export declare const ROTULO_ORIGEM_ENVIO: Record<OrigemEnvio, string>
 export declare const LIMITE_AUDITORIA: number
 export declare function tentativaAtual(eventos?: EventoAuditoria[]): string | null
+export declare function cicloAtual(eventos?: EventoAuditoria[]): string | null
+export declare function eventosDoCiclo(eventos?: EventoAuditoria[], cicloId?: string | null): EventoAuditoria[]
 export declare function eventosDaTentativa(eventos?: EventoAuditoria[], tentativaId?: string | null): EventoAuditoria[]
 export declare function novoEvento(dados: Partial<EventoAuditoria> & { tipo: string }): EventoAuditoria
 export declare function registrarEvento(lista: EventoAuditoria[] | null, evento: EventoAuditoria): EventoAuditoria[]

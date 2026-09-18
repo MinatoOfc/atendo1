@@ -96,8 +96,43 @@ test.describe('Auditoria da IA', () => {
     // "somente enviados automaticamente" olha a EVIDÊNCIA gravada no envio: a
     // conversa aprovada pelo dono NÃO entra, mesmo com a loja em modo automático
     await page.getByText('Somente enviados automaticamente').click()
+    const auto = page.locator('.item-auditoria')
+    await expect(auto).toHaveCount(2)
+    await expect(auto.filter({ hasText: 'Ana Correta' })).toHaveCount(1)
+    await expect(auto.filter({ hasText: 'Hugo Aguardando Vo' })).toHaveCount(1)
+    // as aprovadas pelo dono e as manuais ficam de fora, mesmo enviadas
+    await expect(auto.filter({ hasText: 'Diego Corrigido' })).toHaveCount(0)
+    await expect(auto.filter({ hasText: 'Iris Encerrada' })).toHaveCount(0)
+  })
+
+  test('ciclo novo: mensagem nova não herda o verde do ciclo anterior', async ({ page }) => {
+    await entrar(page)
+    // ciclo anterior enviado e confirmado; mensagem nova devolvida para você
+    await page.locator('.item-auditoria').filter({ hasText: 'Hugo Aguardando Você' }).click()
+    await expect(page.locator('[data-coluna="conversa"]')).toContainText('Aguardando você')
+    await expect(page.locator('[data-coluna="conversa"]')).not.toContainText('Tudo certo')
+    const painel = page.locator('[data-coluna="painel"]')
+    await expect(painel).toContainText('Checklist não concluído nesta tentativa')
+    await expect(painel).toContainText('Fora do mapa do atendimento novo')
+    // o envio do ciclo anterior continua na linha do tempo
+    await expect(page.locator('.msg-auditoria.sit-enviada')).toHaveCount(1)
+    await expect(page).toHaveScreenshot('auditoria-ciclo-humano-1280.png', { mask: [page.locator('.muted-sm').filter({ hasText: 'Atualizado' })] })
+
+    // cliente agradeceu: o ciclo fecha sem precisar responder
+    await page.locator('.item-auditoria').filter({ hasText: 'Iris Encerrada' }).click()
+    await expect(page.locator('[data-coluna="conversa"]')).toContainText('Encerrado — sem resposta necessária')
+    await expect(page.locator('[data-coluna="conversa"]')).not.toContainText('Tudo certo')
+  })
+
+  test('filtros dos estados do ciclo: aguardando você e encerrado', async ({ page }) => {
+    await entrar(page)
+    const situacao = page.locator('select').nth(5)
+    await situacao.selectOption('aguardando_voce')
     await expect(page.locator('.item-auditoria')).toHaveCount(1)
-    await expect(page.locator('.item-auditoria')).toContainText('Ana Correta')
+    await expect(page.locator('.item-auditoria')).toContainText('Hugo Aguardando Você')
+    await situacao.selectOption('encerrado')
+    await expect(page.locator('.item-auditoria')).toHaveCount(1)
+    await expect(page.locator('.item-auditoria')).toContainText('Iris Encerrada')
   })
 
   test('tentativa atual bloqueada antes do checklist não mostra o checklist antigo', async ({ page }) => {

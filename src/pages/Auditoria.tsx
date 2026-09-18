@@ -13,7 +13,8 @@ import { useStore } from '../store'
 const CORES_SELO: Record<string, string> = {
   tudo_certo: 'var(--green, #3fb950)', revisar: 'var(--amber, #d29922)',
   aguardando: 'var(--amber, #d29922)', agendada: 'var(--blue, #388bfd)',
-  bloqueado: 'var(--red, #f85149)', sem_dados: 'var(--text-3)',
+  bloqueado: 'var(--red, #f85149)', aguardando_voce: 'var(--amber, #d29922)',
+  encerrado: 'var(--text-2)', sem_dados: 'var(--text-3)',
 }
 const CORES_ITEM: Record<string, string> = {
   verde: 'var(--green, #3fb950)', amarelo: 'var(--amber, #d29922)',
@@ -170,6 +171,8 @@ export default function Auditoria() {
               <option value="revisar">Revisar</option>
               <option value="aguardando">Aguardando aprovação</option>
               <option value="agendada">Agendada — ainda não enviada</option>
+              <option value="aguardando_voce">Aguardando você</option>
+              <option value="encerrado">Encerrado — sem resposta necessária</option>
               <option value="bloqueado">Bloqueado</option>
             </select>
           ))}

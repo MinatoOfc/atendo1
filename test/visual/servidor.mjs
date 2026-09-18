@@ -361,6 +361,55 @@ estado.tickets.push(
       eventoAud('rascunho_bloqueado', 8, { ticketId: 'aud-duas', fase: 'reemb_25', tentativa: 'tent-g-3', situacao: 'bloqueado', resumo: 'A etapa "Reembolso de 25%" usa cupom e o cupom de 35% ainda não foi conferido na Shopify', dados: { enviado: false, checklist: { geral: 'bloqueado', enviado: false, itens: [] } } }),
     ],
   }),
+  // 4b) CICLO NOVO que voltou para você: o ciclo anterior saiu verde, mas a
+  //     mensagem nova ainda não tem resposta — o selo é o do ciclo ATUAL
+  ticketAud('aud-ciclo-humano', {
+    nome: 'Hugo Aguardando Você', status: 'humano',
+    motivoEscalada: 'Fora do mapa do atendimento novo — responda você',
+    corpo: 'Und was ist mit meiner anderen Bestellung?',
+    historico: [
+      { autor: 'cliente', corpo: 'Die Qualität ist schlecht.', data: emAud(0) },
+      { autor: 'atendo', corpo: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 bis 11 Tage.', data: emAud(5), origem: 'ia', mensagemId: 'atendo-h-1', fase: 'qual_troca', idioma: 'de', tentativaId: 'tent-h-1' },
+    ],
+    atendimentoNovo: {
+      versao: 1, fluxo: 'qualidade', etapa: 'qual_troca', produtosAfetados: ['Polo Premium (Schwarz / L)'],
+      produtosInformados: true, motivo: 'qualidade', historicoEtapas: [{ de: null, para: 'qual_troca', em: emAud(5) }],
+      transicaoPendente: null, aguardando: 'humano', acaoAceita: null, idioma: 'de', rascunhoIdioma: 'de',
+    },
+    auditoriaIA: [
+      eventoAud('cliente_recebido', 0, { ticketId: 'aud-ciclo-humano', dados: { cicloId: 'ciclo-h-1' } }),
+      eventoAud('ia_classificou', 1, { ticketId: 'aud-ciclo-humano', dados: { cicloId: 'ciclo-h-1', intencao: 'reclamacao', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], idioma: 'de', confianca: 0.9, somenteDado: false, resumo: 'quer solução', mensagemEm: emAud(0), ciclo: 0 } }),
+      eventoAud('motor_decidiu', 1, { ticketId: 'aud-ciclo-humano', fase: 'qual_troca', situacao: 'ok', dados: { cicloId: 'ciclo-h-1', jornada: 'qualidade', faseAnterior: null, faseUnicaPermitida: 'qual_troca', acaoPermitida: 'troca', faltando: [], explicacao: 'Próxima fase permitida pelo mapa: Troca + cupom de 15%.', mensagemEm: emAud(0), ciclo: 0 } }),
+      eventoAud('rascunho_gerado', 2, { ticketId: 'aud-ciclo-humano', fase: 'qual_troca', tentativa: 'tent-h-1', dados: { cicloId: 'ciclo-h-1' } }),
+      eventoAud('email_enviado', 5, { ticketId: 'aud-ciclo-humano', fase: 'qual_troca', tentativa: 'tent-h-1', situacao: 'ok', resumo: 'E-mail enviado ao cliente pelo canal da loja', dados: { cicloId: 'ciclo-h-1', mensagemId: 'atendo-h-1', canalConfirmou: true, origemEnvio: 'automatico', minimoEnvio: emAud(3), enviado: true, fase: 'qual_troca', checklist: checklistCheio({ enviado: true }) } }),
+      // CICLO NOVO: mensagem nova do cliente que o motor devolveu para você
+      eventoAud('cliente_recebido', 30, { ticketId: 'aud-ciclo-humano', resumo: 'Mensagem do cliente', dados: { cicloId: 'ciclo-h-2' } }),
+      eventoAud('caso_para_humano', 30, { ticketId: 'aud-ciclo-humano', situacao: 'atencao', resumo: 'Fora do mapa do atendimento novo — responda você', dados: { cicloId: 'ciclo-h-2', motivo: 'Fora do mapa do atendimento novo — responda você', origem: 'motor' } }),
+    ],
+  }),
+  // 4c) CICLO NOVO encerrado sem precisar responder (o cliente agradeceu)
+  ticketAud('aud-ciclo-encerrado', {
+    nome: 'Iris Encerrada', status: 'enviado',
+    corpo: 'Vielen Dank, alles gut!',
+    historico: [
+      { autor: 'cliente', corpo: 'Die Qualität ist schlecht.', data: emAud(0) },
+      { autor: 'atendo', corpo: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 bis 11 Tage.', data: emAud(5), origem: 'ia', mensagemId: 'atendo-i-1', fase: 'qual_troca', idioma: 'de', tentativaId: 'tent-i-1' },
+    ],
+    resolucao: 'Encerrada — cliente confirmou que está tudo certo',
+    atendimentoNovo: {
+      versao: 1, fluxo: 'qualidade', etapa: 'qual_troca', produtosAfetados: ['Polo Premium (Schwarz / L)'],
+      produtosInformados: true, motivo: 'qualidade', historicoEtapas: [{ de: null, para: 'qual_troca', em: emAud(5) }],
+      transicaoPendente: null, aguardando: null, acaoAceita: null, idioma: 'de', rascunhoIdioma: 'de',
+    },
+    auditoriaIA: [
+      eventoAud('cliente_recebido', 0, { ticketId: 'aud-ciclo-encerrado', dados: { cicloId: 'ciclo-i-1' } }),
+      eventoAud('rascunho_gerado', 2, { ticketId: 'aud-ciclo-encerrado', fase: 'qual_troca', tentativa: 'tent-i-1', dados: { cicloId: 'ciclo-i-1' } }),
+      eventoAud('email_enviado', 5, { ticketId: 'aud-ciclo-encerrado', fase: 'qual_troca', tentativa: 'tent-i-1', situacao: 'ok', resumo: 'E-mail enviado ao cliente pelo canal da loja', dados: { cicloId: 'ciclo-i-1', mensagemId: 'atendo-i-1', canalConfirmou: true, origemEnvio: 'aprovado_pelo_dono', minimoEnvio: emAud(3), enviado: true, fase: 'qual_troca', checklist: checklistCheio({ enviado: true }) } }),
+      eventoAud('cliente_recebido', 30, { ticketId: 'aud-ciclo-encerrado', resumo: 'Mensagem do cliente', dados: { cicloId: 'ciclo-i-2' } }),
+      eventoAud('ia_classificou', 30, { ticketId: 'aud-ciclo-encerrado', dados: { cicloId: 'ciclo-i-2', intencao: 'agradece', motivo: null, produtos: [], idioma: 'de', confianca: 0.97, somenteDado: false, resumo: 'agradeceu', mensagemEm: emAud(30), ciclo: 2 } }),
+      eventoAud('caso_encerrado', 30, { ticketId: 'aud-ciclo-encerrado', situacao: 'ok', resumo: 'Encerrada — cliente confirmou que está tudo certo', dados: { cicloId: 'ciclo-i-2', motivo: 'cliente confirmou que está tudo certo' } }),
+    ],
+  }),
   // 5) agendada: validada e com horário marcado — ainda NÃO saiu
   ticketAud('aud-agendada', {
     nome: 'Elena Agendada', status: 'aprovacao',

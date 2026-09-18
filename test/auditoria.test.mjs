@@ -7,20 +7,24 @@ import {
   TIPOS_AUDITORIA, novoEvento, registrarEvento, checklistDaResposta, ITENS_CHECKLIST,
   linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, ROTULO_GERAL,
   ROTULO_SELO, tentativaAtual, eventosDaTentativa, checklistDaTentativa, origemDoEnvio,
+  cicloAtual, eventosDoCiclo,
 } from '../shared/auditoria.js'
 
 const EM = '2026-09-18T12:00:00.000Z'
 const ev = (tipo, extra = {}) => novoEvento({ tipo, ticketId: 't1', lojaId: 'loja1', em: EM, ...extra })
 
-test('os 18 tipos obrigatórios existem e um tipo desconhecido é recusado', () => {
+test('os 18 tipos obrigatórios existem, mais "caso_para_humano", e um tipo desconhecido é recusado', () => {
   const esperados = [
     'cliente_recebido', 'ia_classificou', 'motor_decidiu', 'rascunho_gerado', 'rascunho_validado',
     'rascunho_bloqueado', 'envio_agendado', 'envio_reagendado', 'envio_iniciado', 'email_enviado',
     'envio_falhou', 'cliente_aceitou', 'cliente_recusou', 'aguardando_aprovacao', 'aprovado_pelo_dono',
     'respondido_manualmente', 'fase_confirmada', 'caso_encerrado',
+    // o caso voltou para você: classificação que falhou, IA pausada ou decisão do motor
+    'caso_para_humano',
   ]
   assert.deepEqual(TIPOS_AUDITORIA, esperados)
-  assert.equal(TIPOS_AUDITORIA.length, 18)
+  assert.equal(TIPOS_AUDITORIA.length, 19)
+  for (const t of esperados.slice(0, 18)) assert.ok(TIPOS_AUDITORIA.includes(t), 'os 18 originais continuam: ' + t)
   assert.throws(() => novoEvento({ tipo: 'inventado' }), /tipo de auditoria desconhecido/)
 })
 
@@ -284,6 +288,120 @@ test('checklist mostrado é o da tentativa atual — nunca o verde de uma tentat
   assert.equal(r2.concluido, true)
   assert.equal(r2.checklist.geral, 'revisar')
   assert.equal(r2.tentativaId, 'tent-2')
+})
+
+/* ---------------- ciclo de auditoria (uma mensagem do cliente = um ciclo) ---------------- */
+
+const evC = (tipo, ciclo, dados = {}, extra = {}) => novoEvento({
+  tipo, ticketId: 't1', lojaId: 'loja1', em: EM, resumo: extra.resumo ?? tipo,
+  situacao: extra.situacao ?? 'informativo', dados: { cicloId: ciclo, ...dados },
+})
+const checklistVerde = () => ({ itens: [{ id: 'idioma', rotulo: 'Idioma', estado: 'verde', detalhe: null }], geral: 'tudo_certo', enviado: true })
+// ciclo 1 inteiro: chegou, classificou, decidiu, validou e ENVIOU com prova
+const cicloVerde = () => [
+  evC('cliente_recebido', 'c1'),
+  evC('ia_classificou', 'c1', { intencao: 'reclamacao' }),
+  evC('motor_decidiu', 'c1', { faseUnicaPermitida: 'qual_troca' }),
+  evC('rascunho_gerado', 'c1', { tentativaId: 'c1-t1' }),
+  evC('rascunho_validado', 'c1', { tentativaId: 'c1-t1', checklist: checklistVerde() }),
+  evC('email_enviado', 'c1', { tentativaId: 'c1-t1', mensagemId: 'm1', enviado: true, canalConfirmou: true, checklist: checklistVerde() }),
+]
+
+test('mensagem nova abre um ciclo: a conversa verde não continua verde quando a classificação falha', () => {
+  const verde = cicloVerde()
+  assert.equal(seloDaConversa(verde), 'tudo_certo')
+  const eventos = [
+    ...verde,
+    evC('cliente_recebido', 'c2'),
+    evC('caso_para_humano', 'c2', { motivo: 'A IA não conseguiu classificar a mensagem (limite da API)', origem: 'classificacao' }, { resumo: 'A IA não conseguiu classificar a mensagem (limite da API)', situacao: 'bloqueado' }),
+  ]
+  assert.equal(cicloAtual(eventos), 'c2')
+  assert.equal(seloDaConversa(eventos), 'revisar', 'classificação que falhou é erro da IA: Revisar')
+  const r = checklistDaTentativa(eventos)
+  assert.equal(r.checklist, null, 'não reaproveita o checklist verde do ciclo anterior')
+  assert.equal(r.concluido, false)
+  assert.match(r.motivo, /não conseguiu classificar/)
+})
+
+test('mensagem nova com IA pausada ou decisão do motor: "Aguardando você"', () => {
+  const pausada = [...cicloVerde(), evC('cliente_recebido', 'c2'), evC('caso_para_humano', 'c2', { motivo: 'IA pausada nesta conversa', origem: 'ia_pausada' }, { situacao: 'atencao' })]
+  assert.equal(seloDaConversa(pausada), 'aguardando_voce')
+  const doMotor = [...cicloVerde(), evC('cliente_recebido', 'c2'), evC('ia_classificou', 'c2', {}), evC('motor_decidiu', 'c2', {}), evC('caso_para_humano', 'c2', { motivo: 'Fora do mapa do atendimento novo — responda você', origem: 'motor' }, { situacao: 'atencao' })]
+  assert.equal(seloDaConversa(doMotor), 'aguardando_voce')
+  assert.equal(ROTULO_SELO.aguardando_voce, 'Aguardando você')
+})
+
+test('cliente agradeceu e o motor encerrou sem precisar responder: estado próprio', () => {
+  const eventos = [
+    ...cicloVerde(),
+    evC('cliente_recebido', 'c2'),
+    evC('ia_classificou', 'c2', { intencao: 'agradece' }),
+    evC('motor_decidiu', 'c2', {}),
+    evC('caso_encerrado', 'c2', { motivo: 'cliente confirmou que está tudo certo' }, { situacao: 'ok' }),
+  ]
+  assert.equal(seloDaConversa(eventos), 'encerrado')
+  assert.equal(ROTULO_SELO.encerrado, 'Encerrado — sem resposta necessária')
+  // a confirmação ENVIADA também encerra o caso: aí quem manda é o envio provado
+  const comEnvio = [
+    evC('cliente_recebido', 'c3'),
+    evC('rascunho_gerado', 'c3', { tentativaId: 'c3-t1' }),
+    evC('email_enviado', 'c3', { tentativaId: 'c3-t1', mensagemId: 'm3', enviado: true, canalConfirmou: true, checklist: checklistVerde() }),
+    evC('caso_encerrado', 'c3', { faseConfirmada: 'conf_reembolso' }, { situacao: 'ok' }),
+  ]
+  assert.equal(seloDaConversa(comEnvio), 'tudo_certo', 'encerramento depois do envio não apaga o envio')
+})
+
+test('bloqueio e regeneração ficam no MESMO ciclo, com tentativas diferentes', () => {
+  const eventos = [
+    evC('cliente_recebido', 'c1'),
+    evC('ia_classificou', 'c1', {}),
+    evC('motor_decidiu', 'c1', {}),
+    evC('rascunho_gerado', 'c1', { tentativaId: 'c1-t1' }),
+    evC('rascunho_bloqueado', 'c1', { tentativaId: 'c1-t1' }, { situacao: 'bloqueado', resumo: 'cupom não conferido' }),
+    evC('rascunho_gerado', 'c1', { tentativaId: 'c1-t2' }),
+    evC('rascunho_validado', 'c1', { tentativaId: 'c1-t2', checklist: checklistVerde() }),
+    evC('email_enviado', 'c1', { tentativaId: 'c1-t2', mensagemId: 'm2', enviado: true, canalConfirmou: true, checklist: checklistVerde() }),
+  ]
+  assert.equal(cicloAtual(eventos), 'c1', 'regenerar não abre ciclo novo')
+  assert.equal(eventosDoCiclo(eventos).length, 8, 'o ciclo guarda as duas tentativas')
+  assert.equal(tentativaAtual(eventos), 'c1-t2')
+  assert.deepEqual([...new Set(eventosDoCiclo(eventos).map(e => e.dados.tentativaId).filter(Boolean))], ['c1-t1', 'c1-t2'])
+  assert.equal(seloDaConversa(eventos), 'tudo_certo')
+})
+
+test('checklist, classificação, decisão, passos e selo vêm do ciclo atual — e o histórico anterior continua inteiro', () => {
+  const verde = cicloVerde()
+  const eventos = [
+    ...verde,
+    evC('cliente_recebido', 'c2'),
+    evC('caso_para_humano', 'c2', { motivo: 'Fora do mapa do atendimento novo — responda você', origem: 'motor' }, { situacao: 'atencao' }),
+  ]
+  // ciclo atual: nada do ciclo 1 entra
+  const doCiclo = eventosDoCiclo(eventos)
+  assert.equal(doCiclo.length, 2)
+  assert.ok(!doCiclo.some(e => e.tipo === 'ia_classificou'), 'a interpretação da mensagem anterior não vale pela nova')
+  assert.ok(!doCiclo.some(e => e.tipo === 'email_enviado'))
+  assert.equal(seloDaConversa(eventos), 'aguardando_voce')
+  assert.equal(checklistDaTentativa(eventos).checklist, null)
+  const passos = passosCompactos(eventos)
+  assert.ok(!passos.includes('enviada'), 'os passos são do ciclo atual: ' + passos)
+  assert.match(passos, /aguardando você/)
+  // histórico: os eventos do ciclo anterior continuam guardados e consultáveis
+  assert.equal(eventos.length, 8)
+  assert.equal(eventosDoCiclo(eventos, 'c1').length, 6)
+  assert.ok(eventosDoCiclo(eventos, 'c1').some(e => e.tipo === 'email_enviado'))
+  assert.equal(seloDaConversa(eventosDoCiclo(eventos, 'c1')), 'tudo_certo', 'o ciclo antigo continua verde quando consultado')
+})
+
+test('registro antigo sem cicloId continua valendo como um ciclo só', () => {
+  const antigos = [
+    novoEvento({ tipo: 'cliente_recebido', ticketId: 't9', em: EM, resumo: 'x' }),
+    novoEvento({ tipo: 'rascunho_gerado', ticketId: 't9', em: EM, resumo: 'x', dados: { tentativaId: 'v1' } }),
+    novoEvento({ tipo: 'email_enviado', ticketId: 't9', em: EM, resumo: 'x', dados: { tentativaId: 'v1', mensagemId: 'm', enviado: true, canalConfirmou: true, checklist: checklistVerde() } }),
+  ]
+  assert.equal(cicloAtual(antigos), null)
+  assert.equal(eventosDoCiclo(antigos).length, 3)
+  assert.equal(seloDaConversa(antigos), 'tudo_certo')
 })
 
 test('conversa sem auditoria detalhada não ganha classificação inventada', () => {

@@ -17,7 +17,7 @@ process.env.NODE_ENV = 'test'
 process.env.ATENDO_SMTP_FAKE = 'ok'
 process.env.ATENDO_LIBERAR_AUTOENVIO = '1'
 delete process.env.DATABASE_URL
-for (const [suf, nome] of [['', 'loja1'], ['2', 'loja2']]) {
+for (const [suf, nome] of [['', 'loja1'], ['2', 'loja2'], ['3', 'loja3']]) {
   process.env[`EMAIL${suf}_USER`] = `${nome}@teste.local`; process.env[`EMAIL${suf}_PASS`] = 'senha-falsa'
   process.env[`EMAIL${suf}_IMAP_HOST`] = 'imap.invalido.test'; process.env[`EMAIL${suf}_SMTP_HOST`] = 'smtp.invalido.test'
 }
@@ -40,6 +40,9 @@ const loja = extra => ({
 estado.lojas = [
   loja({ id: 'loja1', nome: 'Loja Nova', verificacaoCupons: conferencia('loja1') }),
   { id: 'loja2', nome: 'Loja Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' },
+  // loja3 é a ÚNICA com envio automático: serve para provar que um envio sem
+  // nenhuma autorização humana continua entrando no filtro "automáticos"
+  loja({ id: 'loja3', nome: 'Loja Automática', verificacaoCupons: conferencia('loja3'), novoEnvioAutomatico: true, exigirAprovacaoAceiteNovo: false }),
 ]
 const diasAtras = d => new Date(Date.now() - d * 86400_000).toISOString().slice(0, 10)
 estado.pedidos = [1, 2, 3, 4, 5, 6, 9, 10].map(n => ({
@@ -47,6 +50,22 @@ estado.pedidos = [1, 2, 3, 4, 5, 6, 9, 10].map(n => ({
   status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: n === 6 ? 'loja2' : 'loja1',
   itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
 }))
+// pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
+for (const n of [61, 62, 63, 64, 65]) {
+  estado.pedidos.push({
+    id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
+    status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
+    itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
+  })
+}
+// pedidos da loja automática (loja3)
+for (const n of [50, 51]) {
+  estado.pedidos.push({
+    id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
+    status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja3',
+    itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
+  })
+}
 // pedido 11: despachado ontem, ainda em trânsito — é o que permite a fase "dentro do prazo"
 estado.pedidos.push({
   id: 'p11', numero: '#11', cliente: 'Cliente 11', email: 'c11@web.de', pais: 'Germany', valor: 100,
@@ -84,7 +103,10 @@ globalThis.fetch = async (u, o) => {
   }), { status: 200, headers: { 'Content-Type': 'application/json' } })
 
   if (!sys.includes('acao_proposta')) {
-    return responder(fila.shift() ?? {
+    const proximo = fila.shift()
+    // 'erro' = a classificação falha de verdade (400 não é reenviado pelo SDK)
+    if (proximo === 'erro') return new Response(JSON.stringify({ error: { message: 'falha simulada da classificação' } }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+    return responder(proximo ?? {
       intencao: 'reclamacao', motivo: 'tamanho', produtos: ['Polo Premium (Schwarz / L)'],
       ajustes: [{ produto: 'Polo Premium (Schwarz / L)', ajuste: 'pequeno' }], situacaoEntrega: 'nenhuma',
       endereco: '', resumo: 'produto ficou pequeno', idioma: 'de', idiomaConfiavel: true, spam: false,
@@ -574,6 +596,165 @@ test('ponta a ponta: duas respostas em menos de dois minutos, a primeira arquiva
   assert.equal(c.checklistConcluido, true, 'o checklist da tentativa atual está completo')
   assert.equal(c.checklistTentativa, eventos[1].dados.tentativaId, 'o checklist exibido é o da tentativa atual')
   assert.equal(c.origemEnvio, 'aprovado_pelo_dono')
+})
+
+/* ---------------- ciclo de auditoria no pipeline REAL ---------------- */
+
+const CLS = extra => ({
+  intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+  situacaoEntrega: 'nenhuma', endereco: '', resumo: 'quer solução', idioma: 'de', idiomaConfiavel: true, spam: false, ...extra,
+})
+// conversa que termina VERDE: rascunho gerado e enviado pelo canal simulado
+async function conversaVerde(de, assunto) {
+  fila.push(CLS({}))
+  // 10 min atrás: o mínimo de cadência (3 min da primeira resposta) já venceu,
+  // então o envio sai com o checklist inteiro verde
+  const r0 = await simular({ de, nome: de, assunto, agora: new Date(Date.now() - 10 * 60_000).toISOString() })
+  const t = await ticket(r0.ticket.id)
+  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env.status, 200, 'a conversa precisa ficar verde antes do ciclo novo: ' + (env.erro ?? ''))
+  const c = await auditoria(t.id)
+  assert.equal(c.selo, 'tudo_certo', 'ponto de partida verde')
+  return { id: t.id, ciclo: c.cicloAtual }
+}
+
+test('primeiro e-mail de uma conversa nova já nasce com cicloId, e todo evento dele carrega o mesmo', async () => {
+  fila.push(CLS({}))
+  const r0 = await simular({ de: 'c60@web.de', nome: 'C60', assunto: 'Bestellung #1' })
+  const c = await auditoria(r0.ticket.id)
+  assert.ok(c.cicloAtual, 'a primeira mensagem abriu um ciclo')
+  assert.ok(c.eventos.length >= 4)
+  for (const e of c.eventos) assert.equal(e.dados.cicloId, c.cicloAtual, 'evento fora do ciclo: ' + e.tipo)
+  assert.ok(c.eventos.some(e => e.tipo === 'cliente_recebido'))
+  assert.ok(c.eventos.some(e => e.tipo === 'ia_classificou'))
+  assert.ok(c.eventos.some(e => e.tipo === 'rascunho_validado'))
+})
+
+test('ciclo novo: conversa verde + mensagem nova cuja classificação FALHA não continua verde', async () => {
+  const v = await conversaVerde('c61@web.de', 'Bestellung #61')
+  fila.push('erro') // a classificação falha de verdade
+  await simular({ ticketId: v.id, corpo: 'Und jetzt?' })
+  const c = await auditoria(v.id)
+  assert.notEqual(c.cicloAtual, v.ciclo, 'a mensagem nova abriu outro ciclo')
+  assert.equal(c.selo, 'revisar', 'classificação que falhou é erro da IA')
+  assert.equal(c.checklistConcluido, false, 'não reaproveita o checklist verde do ciclo anterior')
+  assert.equal(c.checklist, null)
+  assert.match(c.motivoChecklist, /não conseguiu classificar/)
+  assert.equal(c.classificacao, null, 'a interpretação da mensagem anterior não vale pela nova')
+  assert.equal(c.decisao, null)
+  // o histórico do ciclo anterior continua inteiro
+  assert.ok(c.eventos.some(e => e.tipo === 'email_enviado' && e.dados.cicloId === v.ciclo))
+  assert.ok(c.eventos.some(e => e.tipo === 'caso_para_humano' && e.dados.origem === 'classificacao'))
+})
+
+test('ciclo novo com IA pausada: "Aguardando você"', async () => {
+  const v = await conversaVerde('c62@web.de', 'Bestellung #62')
+  const p = await api(`/api/tickets/${v.id}/pausar-ia`, { pausar: true })
+  assert.equal(p.status, 200, 'pausar a IA nesta conversa: ' + (p.erro ?? ''))
+  await simular({ ticketId: v.id, corpo: 'Noch eine Frage.' })
+  const c = await auditoria(v.id)
+  assert.notEqual(c.cicloAtual, v.ciclo)
+  assert.equal(c.selo, 'aguardando_voce')
+  assert.equal(c.checklistConcluido, false)
+  assert.match(c.motivoChecklist, /IA pausada/)
+  await api(`/api/tickets/${v.id}/pausar-ia`, { pausar: false })
+})
+
+test('ciclo novo que o motor manda direto ao humano: "Aguardando você"', async () => {
+  const v = await conversaVerde('c63@web.de', 'Bestellung #63')
+  // depois de uma oferta, uma mensagem que não é aceite nem recusa vai ao dono
+  fila.push(CLS({ intencao: 'reclamacao', resumo: 'reclama de novo, sem aceitar nem recusar' }))
+  await simular({ ticketId: v.id, corpo: 'Das ist alles schlecht.' })
+  const c = await auditoria(v.id)
+  assert.notEqual(c.cicloAtual, v.ciclo)
+  assert.equal(c.selo, 'aguardando_voce', 'selo: ' + c.selo + ' — ' + c.passos)
+  const evento = c.eventos.filter(e => e.tipo === 'caso_para_humano').at(-1)
+  assert.equal(evento.dados.origem, 'motor')
+  assert.equal(evento.dados.cicloId, c.cicloAtual)
+  // classificação e decisão exibidas são as do ciclo ATUAL
+  assert.equal(c.classificacao.mensagemEm, (await ticket(v.id)).data)
+})
+
+test('cliente agradece e o caso encerra: "Encerrado — sem resposta necessária"', async () => {
+  const v = await conversaVerde('c64@web.de', 'Bestellung #64')
+  fila.push(CLS({ intencao: 'agradece', resumo: 'obrigado, tudo certo' }))
+  await simular({ ticketId: v.id, corpo: 'Vielen Dank!' })
+  const c = await auditoria(v.id)
+  assert.notEqual(c.cicloAtual, v.ciclo)
+  assert.equal(c.selo, 'encerrado', 'selo: ' + c.selo)
+  assert.ok(c.eventos.some(e => e.tipo === 'caso_encerrado' && e.dados.cicloId === c.cicloAtual))
+  const tv = await ticket(v.id)
+  assert.ok(!c.mensagens.some(m => m.situacao === 'enviada' && Date.parse(m.em) > Date.parse(tv.data)), 'nada novo saiu depois do agradecimento')
+})
+
+test('confirmação APROVADA pelo dono e enviada pelo agendador continua "aprovado_pelo_dono"', async () => {
+  const H5 = 5 * 3600_000
+  const iso = ms => new Date(ms).toISOString()
+  // negociação até uma fase de reembolso, com o relógio 5 h atrás para a cadência já ter vencido
+  fila.push(CLS({ intencao: 'pede_reembolso', resumo: 'quero reembolso' }))
+  const r0 = await simular({ de: 'c65@web.de', nome: 'C65', assunto: 'Bestellung #65', corpo: 'Schlecht. Geld zurück.', agora: iso(Date.now() - H5 - 20 * 60_000) })
+  let t = await ticket(r0.ticket.id)
+  for (let i = 0; i < 4 && !/^reemb_/.test(t.atendimentoNovo.etapa ?? ''); i++) {
+    const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+    assert.equal(env.status, 200, 'envio da escada: ' + (env.erro ?? ''))
+    t = await ticket(t.id)
+    if (/^reemb_/.test(t.atendimentoNovo.etapa ?? '')) break
+    fila.push(CLS({ intencao: 'recusa', resumo: 'nein' }))
+    await simular({ ticketId: t.id, corpo: 'Nein.', agora: iso(Date.now() - H5 - 15 * 60_000) })
+    t = await ticket(t.id)
+  }
+  assert.match(t.atendimentoNovo.etapa ?? '', /^reemb_/, 'chegou ao reembolso: ' + t.atendimentoNovo.etapa)
+
+  // cliente ACEITA (há mais de 5 h): o modo da loja1 exige aprovação, então vai ao dono
+  fila.push(CLS({ intencao: 'aceita', resumo: 'ok, aceito' }))
+  await simular({ ticketId: t.id, corpo: 'Ok, einverstanden.', agora: iso(Date.now() - H5 - 5000) })
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoNovo.aguardando, 'humano', 'o aceite espera a aprovação do dono')
+  const cAceite = await auditoria(t.id)
+  assert.equal(cAceite.selo, 'aguardando_voce', 'enquanto espera o dono: Aguardando você')
+
+  // o DONO aprova; a confirmação fica agendada e quem envia é o AGENDADOR
+  const conf = await api(`/api/tickets/${t.id}/novo/confirmar`)
+  assert.equal(conf.status, 200, 'o dono aprovou: ' + (conf.erro ?? ''))
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoNovo.conclusaoPendente.aprovadoEm ? true : false, true, 'a autorização ficou persistida')
+  assert.equal(t.atendimentoNovo.transicaoPendente.para, 'conf_reembolso')
+  assert.ok(t.enviaEm && t.enviaEm <= Date.now() + 1000, 'a cadência de 5 h já venceu: o agendador envia')
+  for (let i = 0; i < 40 && (await ticket(t.id)).status !== 'enviado'; i++) await esperar(500)
+  t = await ticket(t.id)
+  assert.equal(t.status, 'enviado', 'o agendador enviou a confirmação')
+
+  const c = await auditoria(t.id)
+  const enviado = c.eventos.filter(e => e.tipo === 'email_enviado').at(-1)
+  assert.equal(enviado.dados.origemEnvio, 'aprovado_pelo_dono', 'quem autorizou foi o dono, mesmo com o agendador enviando')
+  assert.ok(enviado.dados.autorizacao?.aprovadoEm, 'a prova da autorização ficou no evento')
+  assert.equal(c.origemEnvio, 'aprovado_pelo_dono')
+
+  // um caso REALMENTE automático (loja3, sem aprovação nenhuma) continua automático
+  fila.push(CLS({}))
+  const rA = await simular({ de: 'c50@web.de', nome: 'C50', assunto: 'Bestellung #50', lojaId: 'loja3', agora: iso(Date.now() - 10 * 60_000) })
+  for (let i = 0; i < 40 && (await ticket(rA.ticket.id)).status !== 'enviado'; i++) await esperar(500)
+  const cA = await auditoria(rA.ticket.id)
+  const enviadoA = cA.eventos.filter(e => e.tipo === 'email_enviado').at(-1)
+  assert.ok(enviadoA, 'a loja automática enviou sozinha')
+  assert.equal(enviadoA.dados.origemEnvio, 'automatico')
+  assert.equal(enviadoA.dados.autorizacao ?? null, null, 'não houve autorização humana nenhuma')
+
+  // o filtro separa os dois pela EVIDÊNCIA
+  const lista = await api('/api/auditoria?dias=90&soAutomaticos=true&porPagina=100', null, 'GET')
+  const ids = lista.conversas.map(x => x.ticketId)
+  assert.ok(ids.includes(rA.ticket.id), 'o caso realmente automático entra no filtro')
+  assert.ok(!ids.includes(t.id), 'a confirmação aprovada pelo dono NÃO entra no filtro')
+
+  // desligar a automação depois não reescreve nenhuma das duas origens
+  const off = await api('/api/lojas', { id: 'loja3', novoEnvioAutomatico: false })
+  assert.equal(off.status, 200, 'desligar o envio automático: ' + (off.erro ?? ''))
+  const depoisA = await auditoria(rA.ticket.id)
+  const depoisD = await auditoria(t.id)
+  assert.equal(depoisA.origemEnvio, 'automatico', 'o passado não muda')
+  assert.equal(depoisD.origemEnvio, 'aprovado_pelo_dono', 'o passado não muda')
+  const lista2 = await api('/api/auditoria?dias=90&soAutomaticos=true&porPagina=100', null, 'GET')
+  assert.ok(lista2.conversas.map(x => x.ticketId).includes(rA.ticket.id), 'o filtro continua achando pelo que foi gravado')
 })
 
 test('retenção real: mais de 400 eventos pelo caminho do servidor — corta, conta e data', async () => {

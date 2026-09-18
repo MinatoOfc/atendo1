@@ -14,7 +14,7 @@ export const TIPOS_AUDITORIA = [
   'cliente_recebido', 'ia_classificou', 'motor_decidiu', 'rascunho_gerado', 'rascunho_validado',
   'rascunho_bloqueado', 'envio_agendado', 'envio_reagendado', 'envio_iniciado', 'email_enviado',
   'envio_falhou', 'cliente_aceitou', 'cliente_recusou', 'aguardando_aprovacao', 'aprovado_pelo_dono',
-  'respondido_manualmente', 'fase_confirmada', 'caso_encerrado',
+  'respondido_manualmente', 'fase_confirmada', 'caso_encerrado', 'caso_para_humano',
 ]
 
 export const ROTULO_TIPO_AUDITORIA = {
@@ -36,6 +36,7 @@ export const ROTULO_TIPO_AUDITORIA = {
   respondido_manualmente: 'Respondido por você',
   fase_confirmada: 'Fase confirmada',
   caso_encerrado: 'Caso encerrado',
+  caso_para_humano: 'Caso foi para você',
 }
 
 export const SITUACOES_AUDITORIA = ['ok', 'atencao', 'bloqueado', 'informativo']
@@ -286,68 +287,122 @@ const TIPOS_DA_TENTATIVA = [
 ]
 
 /**
- * Id da tentativa MAIS RECENTE. Um bloqueio antigo não pode marcar a conversa
- * para sempre: o que vale é o ciclo atual (rascunho → validação → envio).
+ * Id do CICLO mais recente. Um ciclo nasce a cada mensagem nova do cliente e
+ * cobre tudo o que aconteceu por causa dela: classificação, decisão, aceite,
+ * recusa, escalada, rascunho, validação, bloqueio, agendamento, envio e
+ * encerramento. Registro antigo sem cicloId devolve null (e aí a conversa
+ * inteira conta como um ciclo só).
  */
-export function tentativaAtual(eventos = []) {
+export function cicloAtual(eventos = []) {
   for (let i = eventos.length - 1; i >= 0; i--) {
-    const id = eventos[i]?.dados?.tentativaId
+    const id = eventos[i]?.dados?.cicloId
     if (id) return id
   }
   return null
 }
 
-/** Eventos da tentativa atual (ou os sem tentativa, quando não há nenhuma). */
-export function eventosDaTentativa(eventos = [], tentativaId = null) {
-  const alvo = tentativaId ?? tentativaAtual(eventos)
-  if (!alvo) return eventos.filter(e => TIPOS_DA_TENTATIVA.includes(e.tipo))
-  return eventos.filter(e => e?.dados?.tentativaId === alvo)
+/** Eventos do ciclo atual (ou todos, quando nenhum evento tem ciclo). */
+export function eventosDoCiclo(eventos = [], cicloId = null) {
+  const alvo = cicloId ?? cicloAtual(eventos)
+  if (!alvo) return [...eventos]
+  return eventos.filter(e => (e?.dados?.cicloId ?? null) === alvo)
 }
 
 /**
- * Situação da conversa pela tentativa ATUAL. "Tudo certo" exige prova completa:
- * e-mail enviado nesta tentativa, confirmação explícita do canal, Message-ID,
- * checklist final da mensagem enviada sem pendência e nenhum bloqueio ou falha
- * DEPOIS disso — comparando a POSIÇÃO append-only, não o relógio (dois eventos
- * podem cair no mesmo milissegundo).
+ * Id da tentativa MAIS RECENTE, sempre DENTRO do ciclo atual. Um bloqueio antigo
+ * não pode marcar a conversa para sempre, e uma tentativa verde de um ciclo
+ * anterior não pode responder por uma mensagem nova ainda sem resposta.
+ */
+export function tentativaAtual(eventos = []) {
+  const doCiclo = eventosDoCiclo(eventos)
+  for (let i = doCiclo.length - 1; i >= 0; i--) {
+    const id = doCiclo[i]?.dados?.tentativaId
+    if (id) return id
+  }
+  return null
+}
+
+/** Eventos da tentativa atual, dentro do ciclo atual. */
+export function eventosDaTentativa(eventos = [], tentativaId = null) {
+  const doCiclo = eventosDoCiclo(eventos)
+  const alvo = tentativaId ?? tentativaAtual(eventos)
+  if (!alvo) return doCiclo.filter(e => TIPOS_DA_TENTATIVA.includes(e.tipo))
+  return doCiclo.filter(e => e?.dados?.tentativaId === alvo)
+}
+
+/** Prova completa de que a mensagem saiu mesmo, gravada no próprio evento. */
+function envioProvado(evento) {
+  const d = evento?.dados ?? {}
+  return d.enviado === true && d.canalConfirmou === true && !!d.mensagemId && !!d.checklist
+}
+
+/**
+ * Situação da conversa pelo CICLO ATUAL — a mensagem mais recente do cliente.
+ * A decisão é tomada pela POSIÇÃO append-only (dois eventos podem cair no mesmo
+ * milissegundo): vale o último evento decisivo do ciclo. "Tudo certo" só sai de
+ * um email_enviado comprovado (enviado + canal confirmou + Message-ID +
+ * checklist final) da tentativa atual deste ciclo — nunca de um ciclo anterior.
  */
 export function seloDaConversa(eventos = []) {
   if (!eventos.length) return 'sem_dados'
+  const doCiclo = eventosDoCiclo(eventos)
+  if (!doCiclo.length) return 'sem_dados'
   const daVez = eventosDaTentativa(eventos)
-  if (!daVez.length) return 'sem_dados'
-  const ultimoIndice = tipo => daVez.map(e => e.tipo).lastIndexOf(tipo)
-  const iEnviado = ultimoIndice('email_enviado')
-  const iBloqueio = ultimoIndice('rascunho_bloqueado')
-  const iFalha = ultimoIndice('envio_falhou')
+  const naTentativa = new Set(daVez)
+  // o encerramento só decide quando NADA foi enviado no ciclo (a confirmação
+  // enviada também encerra o caso, e aí quem manda é o envio)
+  const enviouNoCiclo = doCiclo.some(e => e.tipo === 'email_enviado')
 
-  // bloqueio ou falha DEPOIS do último envio desta tentativa manda
-  if (Math.max(iBloqueio, iFalha) > iEnviado) return 'bloqueado'
-
-  if (iEnviado >= 0) {
-    const d = daVez[iEnviado].dados ?? {}
-    // prova completa: enviado + canal confirmou + Message-ID + checklist final
-    const provado = d.enviado === true && d.canalConfirmou === true && !!d.mensagemId && !!d.checklist
-    if (!provado) return 'revisar'
-    // a mensagem SAIU: checklist com item vermelho pede revisão, mas nunca pode
-    // virar "Bloqueada — não foi enviada", que seria mentira sobre o próprio envio
-    if (d.checklist.geral !== 'tudo_certo') return 'revisar'
-    return 'tudo_certo'
+  for (let i = doCiclo.length - 1; i >= 0; i--) {
+    const e = doCiclo[i]
+    switch (e.tipo) {
+      case 'email_enviado': {
+        if (!naTentativa.has(e)) break
+        if (!envioProvado(e)) return 'revisar'
+        // a mensagem SAIU: checklist com pendência pede revisão, mas nunca pode
+        // virar "Bloqueada — não foi enviada", que seria mentira sobre o envio
+        return e.dados.checklist.geral !== 'tudo_certo' ? 'revisar' : 'tudo_certo'
+      }
+      case 'envio_falhou':
+      case 'rascunho_bloqueado':
+        if (!naTentativa.has(e)) break
+        return 'bloqueado'
+      case 'caso_para_humano':
+        // classificação que falhou é erro da IA: vai para "Revisar", com o motivo.
+        // IA pausada ou decisão do motor é uma espera legítima por você.
+        return e.dados?.origem === 'classificacao' ? 'revisar' : 'aguardando_voce'
+      case 'caso_encerrado':
+        if (enviouNoCiclo) break
+        return 'encerrado'
+      case 'aguardando_aprovacao':
+      case 'envio_agendado': {
+        if (!naTentativa.has(e)) break
+        // um checklist com pendência não some porque o rascunho foi agendado ou
+        // mandado para aprovação: o que precisa de revisão continua em revisão
+        const validado = [...daVez].reverse().find(x => x.tipo === 'rascunho_validado')
+        const geralV = validado?.dados?.checklist?.geral ?? null
+        if (geralV === 'bloqueado') return 'bloqueado'
+        if (geralV === 'revisar') return 'revisar'
+        return e.tipo === 'envio_agendado' ? 'agendada' : 'aguardando'
+      }
+      case 'rascunho_validado': {
+        if (!naTentativa.has(e)) break
+        const geral = e.dados?.checklist?.geral ?? null
+        if (geral === 'bloqueado') return 'bloqueado'
+        if (geral === 'revisar') return 'revisar'
+        return 'aguardando'
+      }
+      default:
+        break
+    }
   }
-
-  const iValidado = ultimoIndice('rascunho_validado')
-  const geral = iValidado >= 0 ? (daVez[iValidado].dados?.checklist?.geral ?? null) : null
-  if (geral === 'bloqueado') return 'bloqueado'
-  if (geral === 'revisar') return 'revisar'
-  if (ultimoIndice('aguardando_aprovacao') >= 0) return 'aguardando'
-  if (ultimoIndice('envio_agendado') >= 0) return 'agendada'
-  if (iValidado >= 0) return 'aguardando'
   return 'sem_dados'
 }
 
 /**
- * Checklist da TENTATIVA ATUAL — nunca o de uma tentativa anterior. Quando a
- * tentativa atual foi bloqueada antes de gerar o checklist completo, devolve o
- * motivo e avisa que o checklist não foi concluído.
+ * Checklist da TENTATIVA ATUAL do CICLO ATUAL — nunca o de uma tentativa ou de
+ * um ciclo anterior. Quando a tentativa atual parou antes de gerar o checklist
+ * completo, devolve o motivo atual e avisa que o checklist não foi concluído.
  */
 export function checklistDaTentativa(eventos = []) {
   const daVez = eventosDaTentativa(eventos)
@@ -361,13 +416,14 @@ export function checklistDaTentativa(eventos = []) {
       em: comChecklist.em,
     }
   }
-  const bloqueio = [...daVez].reverse().find(e => e.tipo === 'rascunho_bloqueado' || e.tipo === 'envio_falhou')
+  const doCiclo = eventosDoCiclo(eventos)
+  const parou = [...doCiclo].reverse().find(e => ['rascunho_bloqueado', 'envio_falhou', 'caso_para_humano', 'caso_encerrado'].includes(e.tipo))
   return {
     checklist: null,
     concluido: false,
-    motivo: bloqueio ? bloqueio.resumo : null,
-    tentativaId: bloqueio?.dados?.tentativaId ?? tentativaAtual(eventos),
-    em: bloqueio?.em ?? null,
+    motivo: parou ? (parou.dados?.motivo ?? parou.resumo) : null,
+    tentativaId: parou?.dados?.tentativaId ?? tentativaAtual(eventos),
+    em: parou?.em ?? null,
   }
 }
 
@@ -377,19 +433,22 @@ export const ROTULO_SELO = {
   aguardando: 'Resposta validada — aguardando aprovação',
   agendada: 'Agendada — ainda não enviada',
   bloqueado: 'Bloqueada — não foi enviada',
+  aguardando_voce: 'Aguardando você',
+  encerrado: 'Encerrado — sem resposta necessária',
   sem_dados: 'Sem registro',
 }
 /** Rótulo curto para a lista lateral. */
 export const ROTULO_SELO_CURTO = {
   tudo_certo: 'Tudo certo', revisar: 'Revisar', aguardando: 'Aguardando',
-  agendada: 'Agendada', bloqueado: 'Bloqueado', sem_dados: 'Sem registro',
+  agendada: 'Agendada', bloqueado: 'Bloqueado', aguardando_voce: 'Aguardando você',
+  encerrado: 'Encerrado', sem_dados: 'Sem registro',
 }
 
 /** "IA classificou → servidor escolheu a fase → resposta validada → agendada → enviada." */
 export function passosCompactos(eventos = []) {
   const daVez = eventosDaTentativa(eventos)
-  // a classificação e a decisão são do ciclo, mesmo sem tentativaId
-  const antes = eventos.filter(e => ['ia_classificou', 'motor_decidiu'].includes(e.tipo))
+  // a classificação e a decisão são do CICLO atual, mesmo sem tentativaId
+  const antes = eventosDoCiclo(eventos).filter(e => ['ia_classificou', 'motor_decidiu'].includes(e.tipo))
   const lista = [...antes, ...daVez]
   const ordem = ['ia_classificou', 'motor_decidiu', 'rascunho_validado', 'envio_agendado', 'email_enviado']
   const nomes = {
@@ -400,6 +459,8 @@ export function passosCompactos(eventos = []) {
   const passos = houve.map(t2 => nomes[t2])
   const selo = seloDaConversa(eventos)
   if (selo === 'bloqueado') passos.push('bloqueada — não foi enviada')
+  else if (selo === 'aguardando_voce') passos.push('aguardando você')
+  else if (selo === 'encerrado') passos.push('encerrado — sem resposta necessária')
   else if (selo === 'aguardando' && !passos.includes('agendada')) passos.push('aguardando sua aprovação')
   return passos.join(' → ')
 }
@@ -432,7 +493,7 @@ export function filtrosDaAuditoria(q = {}) {
     jornada: String(q.jornada ?? 'todas'),
     fase: String(q.fase ?? 'todas'),
     idioma: String(q.idioma ?? 'todos'),
-    situacao: ['tudo_certo', 'revisar', 'aguardando', 'agendada', 'bloqueado'].includes(String(q.situacao)) ? String(q.situacao) : 'todas',
+    situacao: ['tudo_certo', 'revisar', 'aguardando', 'agendada', 'bloqueado', 'aguardando_voce', 'encerrado'].includes(String(q.situacao)) ? String(q.situacao) : 'todas',
     soErro: q.soErro === true || q.soErro === 'true' || q.soErro === '1',
     soAprovacao: q.soAprovacao === true || q.soAprovacao === 'true' || q.soAprovacao === '1',
     soAutomaticos: q.soAutomaticos === true || q.soAutomaticos === 'true' || q.soAutomaticos === '1',
