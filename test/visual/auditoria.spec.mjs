@@ -77,10 +77,40 @@ test.describe('Auditoria da IA', () => {
   test('filtros: somente com erro e somente aguardando aprovação', async ({ page }) => {
     await entrar(page)
     await page.getByText('Somente com erro').click()
-    await expect(page.locator('.item-auditoria')).toHaveCount(2) // bloqueado + revisar
+    await expect(page.locator('.item-auditoria')).toHaveCount(3) // dois bloqueados + revisar
     await page.getByText('Somente com erro').click()
     await page.getByText('Somente aguardando aprovação').click()
     await expect(page.locator('.item-auditoria').filter({ hasText: 'Ana Correta' })).toHaveCount(0)
+  })
+
+  test('filtros dos estados novos: aguardando, agendada e envio automático pela evidência', async ({ page }) => {
+    await entrar(page)
+    const situacao = page.locator('select').nth(5)
+    await situacao.selectOption('aguardando')
+    await expect(page.locator('.item-auditoria')).toHaveCount(1)
+    await expect(page.locator('.item-auditoria')).toContainText('Felipe Aguardando')
+    await situacao.selectOption('agendada')
+    await expect(page.locator('.item-auditoria')).toHaveCount(1)
+    await expect(page.locator('.item-auditoria')).toContainText('Elena Agendada')
+    await situacao.selectOption('todas')
+    // "somente enviados automaticamente" olha a EVIDÊNCIA gravada no envio: a
+    // conversa aprovada pelo dono NÃO entra, mesmo com a loja em modo automático
+    await page.getByText('Somente enviados automaticamente').click()
+    await expect(page.locator('.item-auditoria')).toHaveCount(1)
+    await expect(page.locator('.item-auditoria')).toContainText('Ana Correta')
+  })
+
+  test('tentativa atual bloqueada antes do checklist não mostra o checklist antigo', async ({ page }) => {
+    await entrar(page)
+    await page.locator('.item-auditoria').filter({ hasText: 'Gabi Duas Respostas' }).click()
+    const painel = page.locator('[data-coluna="painel"]')
+    await expect(painel).toContainText('Checklist não concluído nesta tentativa')
+    await expect(painel).toContainText('cupom de 35% ainda não foi conferido na Shopify')
+    await expect(painel).not.toContainText('Cadência respeitada')
+    // as duas respostas anteriores continuam na linha do tempo, cada uma no seu evento
+    await expect(page.locator('.msg-auditoria.sit-enviada')).toHaveCount(2)
+    await expect(painel).toContainText('enviada depois da sua aprovação')
+    await expect(page).toHaveScreenshot('auditoria-duas-respostas-1280.png', { mask: [page.locator('.muted-sm').filter({ hasText: 'Atualizado' })] })
   })
 
   test('celular: lista, conversa e painel viram abas, sem rolagem horizontal', async ({ page }) => {

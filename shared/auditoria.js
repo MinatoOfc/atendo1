@@ -184,7 +184,8 @@ export function linhaDoTempo(t, { eventos = null } = {}) {
       fase: m.fase ?? null,
       situacao: m.autor === 'cliente' ? 'recebida' : 'enviada',
       mensagemId: m.mensagemId ?? null,
-      minimoEnvio: null, envioReal: m.data ?? null, atrasoMs: null,
+      // "enviado" só vale para o que a loja mandou: mensagem do cliente foi recebida
+      minimoEnvio: null, envioReal: m.autor === 'cliente' ? null : (m.data ?? null), atrasoMs: null,
     })
   }
 
@@ -304,40 +305,70 @@ export function eventosDaTentativa(eventos = [], tentativaId = null) {
 }
 
 /**
- * Situação da conversa pela tentativa ATUAL. "Tudo certo" exige prova: e-mail
- * enviado nesta tentativa, confirmação do canal, Message-ID, checklist final da
- * mensagem enviada e nenhuma falha ou bloqueio depois disso.
+ * Situação da conversa pela tentativa ATUAL. "Tudo certo" exige prova completa:
+ * e-mail enviado nesta tentativa, confirmação explícita do canal, Message-ID,
+ * checklist final da mensagem enviada sem pendência e nenhum bloqueio ou falha
+ * DEPOIS disso — comparando a POSIÇÃO append-only, não o relógio (dois eventos
+ * podem cair no mesmo milissegundo).
  */
 export function seloDaConversa(eventos = []) {
   if (!eventos.length) return 'sem_dados'
   const daVez = eventosDaTentativa(eventos)
   if (!daVez.length) return 'sem_dados'
-  const ultimo = tipo => [...daVez].reverse().find(e => e.tipo === tipo) ?? null
-  const enviado = ultimo('email_enviado')
-  const bloqueio = ultimo('rascunho_bloqueado')
-  const falha = ultimo('envio_falhou')
-  const quando = e => (e ? Date.parse(e.em) : -1)
+  const ultimoIndice = tipo => daVez.map(e => e.tipo).lastIndexOf(tipo)
+  const iEnviado = ultimoIndice('email_enviado')
+  const iBloqueio = ultimoIndice('rascunho_bloqueado')
+  const iFalha = ultimoIndice('envio_falhou')
 
   // bloqueio ou falha DEPOIS do último envio desta tentativa manda
-  if (Math.max(quando(bloqueio), quando(falha)) > quando(enviado)) return 'bloqueado'
+  if (Math.max(iBloqueio, iFalha) > iEnviado) return 'bloqueado'
 
-  if (enviado) {
-    const d = enviado.dados ?? {}
-    const provado = d.enviado === true && !!d.mensagemId && !!d.checklist
-    if (!provado) return 'revisar' // enviou, mas sem a prova completa: o dono olha
-    if (d.checklist.geral === 'bloqueado') return 'bloqueado'
-    if (d.checklist.geral === 'revisar') return 'revisar'
+  if (iEnviado >= 0) {
+    const d = daVez[iEnviado].dados ?? {}
+    // prova completa: enviado + canal confirmou + Message-ID + checklist final
+    const provado = d.enviado === true && d.canalConfirmou === true && !!d.mensagemId && !!d.checklist
+    if (!provado) return 'revisar'
+    // a mensagem SAIU: checklist com item vermelho pede revisão, mas nunca pode
+    // virar "Bloqueada — não foi enviada", que seria mentira sobre o próprio envio
+    if (d.checklist.geral !== 'tudo_certo') return 'revisar'
     return 'tudo_certo'
   }
 
-  const validado = ultimo('rascunho_validado')
-  const geral = validado?.dados?.checklist?.geral ?? null
+  const iValidado = ultimoIndice('rascunho_validado')
+  const geral = iValidado >= 0 ? (daVez[iValidado].dados?.checklist?.geral ?? null) : null
   if (geral === 'bloqueado') return 'bloqueado'
   if (geral === 'revisar') return 'revisar'
-  if (ultimo('aguardando_aprovacao')) return 'aguardando'
-  if (ultimo('envio_agendado')) return 'agendada'
-  if (validado) return 'aguardando'
+  if (ultimoIndice('aguardando_aprovacao') >= 0) return 'aguardando'
+  if (ultimoIndice('envio_agendado') >= 0) return 'agendada'
+  if (iValidado >= 0) return 'aguardando'
   return 'sem_dados'
+}
+
+/**
+ * Checklist da TENTATIVA ATUAL — nunca o de uma tentativa anterior. Quando a
+ * tentativa atual foi bloqueada antes de gerar o checklist completo, devolve o
+ * motivo e avisa que o checklist não foi concluído.
+ */
+export function checklistDaTentativa(eventos = []) {
+  const daVez = eventosDaTentativa(eventos)
+  const comChecklist = [...daVez].reverse().find(e => e.dados?.checklist?.itens?.length)
+  if (comChecklist) {
+    return {
+      checklist: comChecklist.dados.checklist,
+      concluido: true,
+      motivo: null,
+      tentativaId: comChecklist.dados?.tentativaId ?? null,
+      em: comChecklist.em,
+    }
+  }
+  const bloqueio = [...daVez].reverse().find(e => e.tipo === 'rascunho_bloqueado' || e.tipo === 'envio_falhou')
+  return {
+    checklist: null,
+    concluido: false,
+    motivo: bloqueio ? bloqueio.resumo : null,
+    tentativaId: bloqueio?.dados?.tentativaId ?? tentativaAtual(eventos),
+    em: bloqueio?.em ?? null,
+  }
 }
 
 export const ROTULO_SELO = {
@@ -373,6 +404,24 @@ export function passosCompactos(eventos = []) {
   return passos.join(' → ')
 }
 
+/**
+ * Como a última mensagem realmente saiu, pela EVIDÊNCIA gravada no envio:
+ * 'automatico' (saiu sozinha), 'aprovado_pelo_dono' (o dono liberou o aceite) ou
+ * 'manual' (você escreveu). Mudar a configuração da loja hoje não reescreve o
+ * passado — e desligar a automação não apaga a origem dos envios anteriores.
+ */
+export function origemDoEnvio(eventos = []) {
+  const enviados = eventos.filter(e => e.tipo === 'email_enviado')
+  const ultimo = enviados.at(-1)
+  return ultimo?.dados?.origemEnvio ?? null
+}
+
+export const ROTULO_ORIGEM_ENVIO = {
+  automatico: 'enviada automaticamente',
+  aprovado_pelo_dono: 'enviada depois da sua aprovação',
+  manual: 'escrita e enviada por você',
+}
+
 /** Filtros da página (validados; o resto cai no padrão). */
 export function filtrosDaAuditoria(q = {}) {
   const dias = [7, 30, 90].includes(Number(q.dias)) ? Number(q.dias) : 7
@@ -383,7 +432,7 @@ export function filtrosDaAuditoria(q = {}) {
     jornada: String(q.jornada ?? 'todas'),
     fase: String(q.fase ?? 'todas'),
     idioma: String(q.idioma ?? 'todos'),
-    situacao: ['tudo_certo', 'revisar', 'bloqueado'].includes(String(q.situacao)) ? String(q.situacao) : 'todas',
+    situacao: ['tudo_certo', 'revisar', 'aguardando', 'agendada', 'bloqueado'].includes(String(q.situacao)) ? String(q.situacao) : 'todas',
     soErro: q.soErro === true || q.soErro === 'true' || q.soErro === '1',
     soAprovacao: q.soAprovacao === true || q.soAprovacao === 'true' || q.soAprovacao === '1',
     soAutomaticos: q.soAutomaticos === true || q.soAutomaticos === 'true' || q.soAutomaticos === '1',
@@ -407,6 +456,6 @@ export function filtrarConversas(lista, f) {
     && (f.situacao === 'todas' || c.selo === f.situacao)
     && (!f.soErro || c.selo === 'bloqueado' || c.selo === 'revisar')
     && (!f.soAprovacao || c.aguardandoAprovacao === true)
-    && (!f.soAutomaticos || c.envioAutomatico === true)
+    && (!f.soAutomaticos || c.origemEnvio === 'automatico')
     && (f.classico ? true : c.motor === 'novo'))
 }

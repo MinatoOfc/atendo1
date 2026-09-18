@@ -3,7 +3,7 @@ import {
   RefreshCw, Search, MessageSquare, Bot, User, AlertTriangle, Check, Clock, ExternalLink, ShieldCheck,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { ROTULO_GERAL, ROTULO_SELO, ROTULO_SELO_CURTO } from '../../shared/auditoria.js'
+import { ROTULO_GERAL, ROTULO_SELO, ROTULO_SELO_CURTO, ROTULO_ORIGEM_ENVIO } from '../../shared/auditoria.js'
 import type { ConversaAuditoria, ResumoConversaAuditoria, MensagemAuditoria, ItemChecklist } from '../../shared/auditoria.js'
 import { useStore } from '../store'
 
@@ -168,6 +168,8 @@ export default function Auditoria() {
               <option value="todas">Todas</option>
               <option value="tudo_certo">Tudo certo</option>
               <option value="revisar">Revisar</option>
+              <option value="aguardando">Aguardando aprovação</option>
+              <option value="agendada">Agendada — ainda não enviada</option>
               <option value="bloqueado">Bloqueado</option>
             </select>
           ))}
@@ -290,6 +292,7 @@ export default function Auditoria() {
                     <li>confiança: {String(conversa.classificacao.confianca ?? '—')}</li>
                     <li>somente dado: {conversa.classificacao.somenteDado ? 'sim' : 'não'}</li>
                     <li>resumo: {String(conversa.classificacao.resumo ?? '—')}</li>
+                    <li>lida da mensagem de {hora(String(conversa.classificacao.mensagemEm ?? ''))} (ciclo {String(conversa.classificacao.ciclo ?? '—')}) · registrada {hora(String(conversa.classificacao.em ?? ''))}</li>
                   </ul>
                 ) : <p className="muted-sm">Sem classificação registrada para esta conversa.</p>}
               </div>
@@ -306,6 +309,7 @@ export default function Auditoria() {
                     <li>se recusar: {String(conversa.decisao.aoRecusar ?? '—')}</li>
                     <li>faltando: {(conversa.decisao.faltando as string[] ?? []).join('; ') || '—'}</li>
                     <li><b>{String(conversa.decisao.explicacao ?? '')}</b></li>
+                    <li>decidida sobre a mensagem de {hora(String(conversa.decisao.mensagemEm ?? ''))} (ciclo {String(conversa.decisao.ciclo ?? '—')}) · registrada {hora(String(conversa.decisao.em ?? ''))}</li>
                   </ul>
                 ) : <p className="muted-sm">Sem decisão registrada para esta conversa.</p>}
               </div>
@@ -325,6 +329,16 @@ export default function Auditoria() {
                         </li>
                       ))}
                     </ul>
+                    {conversa.checklistTentativa && (
+                      <div className="muted-sm" style={{ marginTop: 4 }}>tentativa {conversa.checklistTentativa}</div>
+                    )}
+                  </>
+                ) : conversa.checklistConcluido === false && conversa.motivoChecklist ? (
+                  <>
+                    <div className="muted-sm" style={{ color: CORES_SELO.bloqueado, fontWeight: 700, margin: '4px 0 6px' }}>
+                      Checklist não concluído nesta tentativa
+                    </div>
+                    <p className="muted-sm">{conversa.motivoChecklist}</p>
                   </>
                 ) : <p className="muted-sm">{conversa.motor === 'classico' ? 'Atendimento clássico — não usa o motor de etapas.' : 'Nenhuma resposta validada ainda.'}</p>}
               </div>
@@ -340,6 +354,7 @@ export default function Auditoria() {
                   <li>percentual: {conversa.percentual ?? '—'}{conversa.valor != null && ` · valor ${conversa.valor} ${conversa.moeda ?? ''}`}</li>
                   <li>cupom: {conversa.cupom ?? '—'}</li>
                   <li>idioma: {conversa.idioma ?? '—'}</li>
+                  <li>envio: {conversa.origemEnvio ? ROTULO_ORIGEM_ENVIO[conversa.origemEnvio] : 'ainda não enviada'}</li>
                   <li><Clock size={11} /> cadência: mínimo {hora(conversa.cadencia.minimo)}{conversa.cadencia.agendado && ` · agendado ${hora(conversa.cadencia.agendado)}`}</li>
                 </ul>
               </div>

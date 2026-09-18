@@ -41,11 +41,18 @@ estado.lojas = [
   loja({ id: 'loja1', nome: 'Loja Nova', verificacaoCupons: conferencia('loja1') }),
   { id: 'loja2', nome: 'Loja Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' },
 ]
+const diasAtras = d => new Date(Date.now() - d * 86400_000).toISOString().slice(0, 10)
 estado.pedidos = [1, 2, 3, 4, 5, 6, 9, 10].map(n => ({
   id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
   status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: n === 6 ? 'loja2' : 'loja1',
   itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
 }))
+// pedido 11: despachado ontem, ainda em trânsito — é o que permite a fase "dentro do prazo"
+estado.pedidos.push({
+  id: 'p11', numero: '#11', cliente: 'Cliente 11', email: 'c11@web.de', pais: 'Germany', valor: 100,
+  status: 'transito', criadoEm: diasAtras(2), despachadoEm: diasAtras(1), lojaId: 'loja1',
+  itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
+})
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
   segredo: 'segredo-de-teste-'.padEnd(64, 'x'),
@@ -100,8 +107,18 @@ globalThis.fetch = async (u, o) => {
   if (/quais produtos/.test(sys)) frases.push('Welchen Artikel meinen Sie?')
   if (/pequeno ou grande/i.test(sys)) frases.push('Ist es zu klein oder zu groß?')
   if (/rua e número/.test(sys)) frases.push('Bitte Straße und Hausnummer.')
+  // pedido de endereço COMPLETO (rua e número, código postal e cidade)
+  if (/endereço de entrega COMPLETO/.test(sys)) frases.push('Bitte senden Sie uns Ihre vollständige Lieferadresse: Straße und Hausnummer, Postleitzahl, Stadt und Land.')
   if (/3 a 14 dias/.test(sys)) frases.push('Das Geld ist in 3 bis 14 Tagen wieder da.')
   if (prazo) frases.push(`Lieferzeit ${prazo}.`)
+  // dentro do prazo: a data provável vem calculada pelo servidor, no próprio prompt
+  const provavel = sys.match(/Data provável de recebimento: ([^\s—]+)/)?.[1]
+  if (provavel) frases.push(`Ihre Bestellung ist innerhalb der Lieferzeit und kommt voraussichtlich am ${provavel} an.`)
+  // marcado como entregue: aguardar 2 dias e perguntar aos vizinhos
+  if (/aguarde mais 2 dias/.test(sys)) frases.push('Bitte warten Sie noch 2 Tage und fragen Sie bei den Nachbarn oder an der Rezeption nach.')
+  // confirmação de troca/reenvio: o endereço confirmado é repetido por inteiro
+  const endereco = sys.match(/Endereço de entrega confirmado: ([^\n]+)\./)?.[1]
+  if (endereco && /CONFIRMAÇÃO/.test(sys)) frases.push(`Lieferadresse: ${endereco}.`)
   frases.push('Möchten Sie das annehmen?')
   return responder({ resposta: frases.join(' '), acao_proposta: sys.match(/"acao_proposta" deve ser exatamente "([^"]+)"/)?.[1] ?? null, idioma: 'de' })
 }
@@ -403,12 +420,12 @@ test('duas respostas seguidas ficam ligadas aos eventos certos pelo Message-ID',
   const t = await ticket(id)
   // segunda resposta manual na mesma conversa, poucos segundos depois
   const r = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho ?? 'Hallo! Danke.', origem: 'manual', confirmarAlteracao: true })
-  if (r.status !== 200) return // a conversa pode já estar sem rascunho: o vínculo segue coberto pelos testes puros
+  assert.equal(r.status, 200, 'a 2ª resposta TEM de sair — sem escapatória: ' + (r.erro ?? ''))
   const c = await auditoria(id)
   const enviadas = c.mensagens.filter(m => m.situacao === 'enviada')
   assert.ok(enviadas.length >= 1)
   for (const m of enviadas) {
-    if (!m.mensagemId) continue
+    assert.ok(m.mensagemId, 'toda resposta enviada tem Message-ID')
     assert.equal(m.vinculo, 'exato', 'mensagem com Message-ID tem vínculo exato')
     const evento = c.eventos.find(e => e.tipo === 'email_enviado' && e.dados.mensagemId === m.mensagemId)
     assert.ok(evento, 'existe o evento com o mesmo Message-ID')
@@ -417,6 +434,175 @@ test('duas respostas seguidas ficam ligadas aos eventos certos pelo Message-ID',
   // Message-IDs distintos entre mensagens distintas
   const ids = enviadas.map(m => m.mensagemId).filter(Boolean)
   assert.equal(new Set(ids).size, ids.length)
+})
+
+const itemDo = (c, id) => (c.checklist?.itens ?? []).find(i => i.id === id)
+
+test('produto só fica cinza na COLETA que pergunta o produto — nas outras fases a prova continua exigida', async () => {
+  // 1) COLETA DO PRODUTO: o cliente reclama sem dizer qual peça
+  fila.push({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: [], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao gostou', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const rc = await simular({ de: 'c20@web.de', nome: 'C20', assunto: 'Bestellung #3', corpo: 'Die Qualität ist schlecht.' })
+  const tc = await ticket(rc.ticket.id)
+  assert.equal(tc.atendimentoNovo.transicaoPendente.para, 'coleta', 'a trava real mandou para a coleta')
+  assert.ok((tc.atendimentoNovo.transicaoPendente.faltando ?? []).includes('produtos'))
+  const cc = await auditoria(rc.ticket.id)
+  assert.equal(itemDo(cc, 'produto_informado').estado, 'cinza', 'na coleta do produto o item não se aplica')
+  assert.equal(itemDo(cc, 'produto_do_pedido').estado, 'cinza')
+
+  // 2) DENTRO DO PRAZO (pedido em trânsito, ainda no prazo): a prova do produto continua exigida
+  fila.push({ intencao: 'pergunta_status', motivo: 'nao_recebido', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'onde está', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const rp = await simular({ de: 'c11@web.de', nome: 'C11', assunto: 'Bestellung #11', corpo: 'Wo ist meine Bestellung?' })
+  const tp = await ticket(rp.ticket.id)
+  assert.equal(tp.atendimentoNovo.transicaoPendente.para, 'nc_no_prazo', 'fase dentro do prazo')
+  const cp = await auditoria(rp.ticket.id)
+  assert.equal(itemDo(cp, 'produto_informado').estado, 'verde', 'dentro do prazo o produto é exigido e está provado')
+  assert.notEqual(itemDo(cp, 'produto_do_pedido').estado, 'cinza')
+
+  // 3) AGUARDAR DOIS DIAS (marcado como entregue): idem
+  fila.push({ intencao: 'pede_reembolso', motivo: 'nao_recebido', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'entregue_nao_recebido', endereco: '', resumo: 'consta entregue, nada chegou', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const ra = await simular({ de: 'c9@web.de', nome: 'C9b', assunto: 'Bestellung #9', corpo: 'Als zugestellt markiert, nichts da.' })
+  const ta = await ticket(ra.ticket.id)
+  assert.equal(ta.atendimentoNovo.transicaoPendente.para, 'nr_entregue_aguardar', 'fase aguardar 2 dias')
+  const ca = await auditoria(ra.ticket.id)
+  assert.equal(itemDo(ca, 'produto_informado').estado, 'verde', 'aguardar 2 dias exige a prova do produto')
+
+  // 4) CONFIRMAÇÃO DE REEMBOLSO: reclamação → oferta → aceite → clique do dono
+  fila.push({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'ruim', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const rr = await simular({ de: 'c10@web.de', nome: 'C10b', assunto: 'Bestellung #10', corpo: 'Schlecht. Geld zurück.' })
+  let tr = await ticket(rr.ticket.id)
+  // segue a escada até uma fase de reembolso com percentual
+  for (let i = 0; i < 4 && tr.atendimentoNovo.transicaoPendente?.para && !/^reemb_/.test(tr.atendimentoNovo.etapa ?? ''); i++) {
+    const env = await api(`/api/tickets/${tr.id}/aprovar`, { texto: tr.rascunho, origem: 'ia' })
+    assert.equal(env.status, 200, 'envio da escada: ' + (env.erro ?? ''))
+    if (/^reemb_/.test((await ticket(tr.id)).atendimentoNovo.etapa ?? '')) { tr = await ticket(tr.id); break }
+    fila.push({ intencao: 'recusa', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nein', idioma: 'de', idiomaConfiavel: true, spam: false })
+    await simular({ ticketId: tr.id, corpo: 'Nein.' })
+    tr = await ticket(tr.id)
+  }
+  assert.match(tr.atendimentoNovo.etapa ?? '', /^reemb_/, 'chegou a uma fase de reembolso: ' + tr.atendimentoNovo.etapa)
+  fila.push({ intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'ok', idioma: 'de', idiomaConfiavel: true, spam: false })
+  await simular({ ticketId: tr.id, corpo: 'Ok, einverstanden.' })
+  const conf = await api(`/api/tickets/${tr.id}/novo/confirmar`)
+  assert.equal(conf.status, 200, 'o dono aprovou o aceite: ' + (conf.erro ?? ''))
+  tr = await ticket(tr.id)
+  assert.equal(tr.atendimentoNovo.transicaoPendente.para, 'conf_reembolso')
+  const cr = await auditoria(tr.id)
+  assert.equal(itemDo(cr, 'produto_informado').estado, 'verde', 'na confirmação de reembolso o produto continua exigido')
+  assert.notEqual(itemDo(cr, 'produto_do_pedido').estado, 'cinza')
+
+  // 5) CONFIRMAÇÃO DE TROCA: aceite de troca → endereço → confirmação
+  fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'quer trocar', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const rt = await simular({ de: 'c3@web.de', nome: 'C3b', assunto: 'Bestellung #3', corpo: 'Die Qualität ist schlecht, bitte Umtausch.' })
+  let tt = await ticket(rt.ticket.id)
+  const e1 = await api(`/api/tickets/${tt.id}/aprovar`, { texto: tt.rascunho, origem: 'ia' })
+  assert.equal(e1.status, 200, 'oferta de troca enviada: ' + (e1.erro ?? ''))
+  fila.push({ intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'ok', idioma: 'de', idiomaConfiavel: true, spam: false })
+  await simular({ ticketId: tt.id, corpo: 'Ja, gerne.' })
+  tt = await ticket(tt.id)
+  if (tt.atendimentoNovo.transicaoPendente?.para === 'endereco') {
+    const e2 = await api(`/api/tickets/${tt.id}/aprovar`, { texto: tt.rascunho, origem: 'ia' })
+    assert.equal(e2.status, 200, 'pedido de endereço enviado: ' + (e2.erro ?? ''))
+    fila.push({ intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: 'Hauptstrasse 12, 10115 Berlin, Deutschland', resumo: 'endereco', idioma: 'de', idiomaConfiavel: true, spam: false })
+    await simular({ ticketId: tt.id, corpo: 'Hauptstrasse 12, 10115 Berlin, Deutschland' })
+    tt = await ticket(tt.id)
+  }
+  if (tt.atendimentoNovo.transicaoPendente?.para !== 'conf_troca') {
+    const cf = await api(`/api/tickets/${tt.id}/novo/confirmar`)
+    assert.equal(cf.status, 200, 'o dono aprovou a troca: ' + (cf.erro ?? ''))
+    tt = await ticket(tt.id)
+  }
+  assert.equal(tt.atendimentoNovo.transicaoPendente.para, 'conf_troca', 'fase de confirmação de troca')
+  const ct = await auditoria(tt.id)
+  assert.equal(itemDo(ct, 'produto_informado').estado, 'verde', 'na confirmação de troca o produto continua exigido')
+})
+
+test('ponta a ponta: duas respostas em menos de dois minutos, a primeira arquivada, cada uma no SEU evento', async () => {
+  // 1ª resposta, enviada pelo canal simulado
+  fila.push({ intencao: 'pede_troca', motivo: 'tamanho', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [{ produto: 'Polo Premium (Schwarz / L)', ajuste: 'pequeno' }], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'pequeno', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const r0 = await simular({ de: 'c30@web.de', nome: 'C30', assunto: 'Bestellung #3', corpo: 'Das Polo ist zu klein.' })
+  const id = r0.ticket.id
+  const t1 = await ticket(id)
+  const env1 = await api(`/api/tickets/${id}/aprovar`, { texto: t1.rascunho, origem: 'ia' })
+  assert.equal(env1.status, 200, '1ª resposta enviada: ' + (env1.erro ?? ''))
+  const depois1 = await ticket(id)
+  const idPrimeira = depois1.respostaMensagemId
+  assert.ok(idPrimeira, 'a 1ª resposta guardou o Message-ID')
+
+  // 2ª resposta, MENOS de dois minutos depois: a mensagem nova arquiva a primeira
+  fila.push({ intencao: 'recusa', motivo: 'tamanho', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nein', idioma: 'de', idiomaConfiavel: true, spam: false })
+  await simular({ ticketId: id, corpo: 'Nein, danke.' })
+  const t2 = await ticket(id)
+  // a 1ª resposta foi para o histórico SEM perder o vínculo
+  const arquivada = (t2.historico ?? []).find(m => m.autor === 'atendo' && m.mensagemId === idPrimeira)
+  assert.ok(arquivada, 'a 1ª resposta está arquivada com o Message-ID preservado')
+  assert.ok(arquivada.fase, 'a fase sobreviveu ao arquivamento')
+  assert.equal(arquivada.idioma, 'de', 'o idioma sobreviveu ao arquivamento')
+  assert.ok(arquivada.origem, 'a origem sobreviveu ao arquivamento')
+  assert.ok(arquivada.tentativaId, 'a tentativa sobreviveu ao arquivamento')
+
+  const env2 = await api(`/api/tickets/${id}/aprovar`, { texto: t2.rascunho, origem: 'ia' })
+  assert.equal(env2.status, 200, '2ª resposta enviada: ' + (env2.erro ?? ''))
+  const t3 = await ticket(id)
+  const idSegunda = t3.respostaMensagemId
+  assert.ok(idSegunda && idSegunda !== idPrimeira, 'Message-IDs distintos')
+
+  const c = await auditoria(id)
+  const enviadas = c.mensagens.filter(m => m.situacao === 'enviada')
+  assert.equal(enviadas.length, 2, 'as duas respostas aparecem enviadas')
+  const eventos = c.eventos.filter(e => e.tipo === 'email_enviado')
+  assert.equal(eventos.length, 2, 'dois eventos de envio')
+  // menos de dois minutos entre elas — o horário NÃO basta para distinguir
+  const intervalo = Date.parse(eventos[1].em) - Date.parse(eventos[0].em)
+  assert.ok(intervalo < 120_000, 'as duas saíram em menos de dois minutos (' + intervalo + ' ms)')
+  // cada mensagem encontra EXATAMENTE o seu evento
+  for (const m of enviadas) {
+    assert.equal(m.vinculo, 'exato', 'vínculo exato pelo Message-ID')
+    const seu = eventos.filter(e => e.dados.mensagemId === m.mensagemId)
+    assert.equal(seu.length, 1, 'um único evento com este Message-ID')
+    assert.equal(m.envioReal, seu[0].em, 'a hora real do envio vem do evento certo')
+    assert.equal(m.fase, seu[0].dados.fase, 'a fase vem do evento certo')
+    assert.equal(m.minimoEnvio, seu[0].dados.minimoEnvio ?? null, 'o mínimo da cadência vem do evento certo')
+    assert.ok(seu[0].dados.tentativaId, 'o evento guarda a tentativa')
+    assert.equal(seu[0].dados.canalConfirmou, true, 'o canal confirmou a saída')
+    assert.equal(seu[0].dados.origemEnvio, 'aprovado_pelo_dono', 'a origem do envio ficou gravada')
+  }
+  assert.deepEqual(enviadas.map(m => m.mensagemId), [idPrimeira, idSegunda], 'ordem e identidade das duas respostas')
+  // as duas SAÍRAM: o selo jamais pode dizer "Bloqueada — não foi enviada".
+  // Aqui fica em "Revisar" porque o dono aprovou antes do mínimo da cadência.
+  assert.notEqual(c.selo, 'bloqueado', 'mensagem enviada nunca aparece como não enviada')
+  assert.ok(['tudo_certo', 'revisar'].includes(c.selo), 'selo: ' + c.selo)
+  assert.equal(c.checklistConcluido, true, 'o checklist da tentativa atual está completo')
+  assert.equal(c.checklistTentativa, eventos[1].dados.tentativaId, 'o checklist exibido é o da tentativa atual')
+  assert.equal(c.origemEnvio, 'aprovado_pelo_dono')
+})
+
+test('retenção real: mais de 400 eventos pelo caminho do servidor — corta, conta e data', async () => {
+  fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'ruim', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const r0 = await simular({ de: 'c40@web.de', nome: 'C40', assunto: 'Bestellung #4', corpo: 'Die Qualität ist schlecht.' })
+  const id = r0.ticket.id
+  // mensagens do cliente até passar do teto de 400 eventos, tudo pelo servidor de verdade
+  // (os eventos NÃO vêm no estado normal: só a rota da auditoria os enxerga)
+  let c = await auditoria(id)
+  for (let i = 0; i < 200 && c.eventos.length + (c.retencao?.omitidos ?? 0) <= 410; i++) {
+    fila.push({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'mensagem ' + i, idioma: 'de', idiomaConfiavel: true, spam: false })
+    await simular({ ticketId: id, corpo: 'Nachricht Nummer ' + i + '.' })
+    c = await auditoria(id)
+  }
+  const total = c.eventos.length + (c.retencao?.omitidos ?? 0)
+  assert.ok(total > 400, 'a conversa passou mesmo de 400 eventos (chegou a ' + total + ')')
+  assert.ok(c.eventos.length <= 400, 'o servidor cortou no teto: ' + c.eventos.length)
+  const ret = c.retencao
+  assert.ok(ret && ret.omitidos > 0, 'o corte ficou contado')
+  assert.equal(ret.limite, 400)
+  assert.ok(Date.parse(ret.primeiroOmitidoEm) > 0, 'data do primeiro omitido')
+  assert.ok(Date.parse(ret.ultimoOmitidoEm) > 0, 'data do último omitido')
+  assert.equal(ret.primeiroDisponivelEm, c.eventos[0].em, 'a data do primeiro disponível bate com o que sobrou')
+  assert.ok(Date.parse(ret.ultimoOmitidoEm) <= Date.parse(ret.primeiroDisponivelEm), 'o que saiu é o mais antigo')
+
+  // a página conta a verdade, sem "histórico completo"
+  assert.equal(c.historicoCompleto, false)
+  assert.notEqual(c.selo, 'sem_dados', 'mesmo depois do corte a conversa continua classificada')
+  assert.equal(c.eventos.at(-1).dados.tentativaId ?? c.tentativaAtual, c.tentativaAtual, 'a tentativa atual sobreviveu ao corte')
 })
 
 test('retenção: passar de 400 eventos não apaga nada em silêncio', async () => {

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import {
   TIPOS_AUDITORIA, novoEvento, registrarEvento, checklistDaResposta, ITENS_CHECKLIST,
   linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, ROTULO_GERAL,
-  ROTULO_SELO, tentativaAtual, eventosDaTentativa,
+  ROTULO_SELO, tentativaAtual, eventosDaTentativa, checklistDaTentativa, origemDoEnvio,
 } from '../shared/auditoria.js'
 
 const EM = '2026-09-18T12:00:00.000Z'
@@ -173,9 +173,9 @@ test('filtros: período 7/30/90, situação e os três "somente"', () => {
   assert.equal(filtrosDaAuditoria({}).classico, false, 'clássico só quando pedido')
 
   const lista = [
-    { ticketId: 'a', motor: 'novo', cliente: 'Ana', email: 'ana@web.de', pedido: '1001', lojaId: 'l1', jornada: 'qualidade', fase: 'qual_troca', idioma: 'de', selo: 'tudo_certo', aguardandoAprovacao: false, envioAutomatico: true },
-    { ticketId: 'b', motor: 'novo', cliente: 'Bruno', email: 'b@web.de', pedido: '1002', lojaId: 'l2', jornada: 'tamanho', fase: 'tam_troca', idioma: 'fr', selo: 'bloqueado', aguardandoAprovacao: true, envioAutomatico: false },
-    { ticketId: 'c', motor: 'classico', cliente: 'Carla', email: 'c@web.de', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'pt', selo: 'sem_dados', aguardandoAprovacao: false, envioAutomatico: false },
+    { ticketId: 'a', motor: 'novo', cliente: 'Ana', email: 'ana@web.de', pedido: '1001', lojaId: 'l1', jornada: 'qualidade', fase: 'qual_troca', idioma: 'de', selo: 'tudo_certo', aguardandoAprovacao: false, envioAutomatico: true, origemEnvio: 'automatico' },
+    { ticketId: 'b', motor: 'novo', cliente: 'Bruno', email: 'b@web.de', pedido: '1002', lojaId: 'l2', jornada: 'tamanho', fase: 'tam_troca', idioma: 'fr', selo: 'bloqueado', aguardandoAprovacao: true, envioAutomatico: false, origemEnvio: null },
+    { ticketId: 'c', motor: 'classico', cliente: 'Carla', email: 'c@web.de', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'pt', selo: 'sem_dados', aguardandoAprovacao: false, envioAutomatico: false, origemEnvio: null },
   ]
   const padrao = filtrarConversas(lista, filtrosDaAuditoria({}))
   assert.deepEqual(padrao.map(c => c.ticketId), ['a', 'b'], 'clássico fica fora por padrão')
@@ -186,6 +186,104 @@ test('filtros: período 7/30/90, situação e os três "somente"', () => {
   assert.deepEqual(filtrarConversas(lista, filtrosDaAuditoria({ busca: 'ana@web.de' })).map(c => c.ticketId), ['a'])
   assert.deepEqual(filtrarConversas(lista, filtrosDaAuditoria({ loja: 'l2' })).map(c => c.ticketId), ['b'])
   assert.deepEqual(filtrarConversas(lista, filtrosDaAuditoria({ idioma: 'fr' })).map(c => c.ticketId), ['b'])
+
+  // os dois estados novos entram no filtro
+  assert.equal(filtrosDaAuditoria({ situacao: 'aguardando' }).situacao, 'aguardando')
+  assert.equal(filtrosDaAuditoria({ situacao: 'agendada' }).situacao, 'agendada')
+  assert.equal(filtrosDaAuditoria({ situacao: 'inventada' }).situacao, 'todas')
+  const lista2 = [
+    { ticketId: 'ag', motor: 'novo', selo: 'aguardando', cliente: '', email: '', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'pt', aguardandoAprovacao: true, envioAutomatico: false, origemEnvio: null },
+    { ticketId: 'sc', motor: 'novo', selo: 'agendada', cliente: '', email: '', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'pt', aguardandoAprovacao: false, envioAutomatico: false, origemEnvio: null },
+  ]
+  assert.deepEqual(filtrarConversas(lista2, filtrosDaAuditoria({ situacao: 'aguardando' })).map(c => c.ticketId), ['ag'])
+  assert.deepEqual(filtrarConversas(lista2, filtrosDaAuditoria({ situacao: 'agendada' })).map(c => c.ticketId), ['sc'])
+})
+
+test('"somente enviados automaticamente" usa a evidência do envio, não a configuração de hoje', () => {
+  // a loja DESLIGOU o envio automático hoje; o que saiu sozinho ontem continua saindo no filtro
+  const lista = [
+    { ticketId: 'auto', motor: 'novo', selo: 'tudo_certo', cliente: '', email: '', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'pt', aguardandoAprovacao: false, envioAutomatico: false, origemEnvio: 'automatico' },
+    { ticketId: 'aprovada', motor: 'novo', selo: 'tudo_certo', cliente: '', email: '', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'pt', aguardandoAprovacao: false, envioAutomatico: true, origemEnvio: 'aprovado_pelo_dono' },
+    { ticketId: 'manual', motor: 'novo', selo: 'tudo_certo', cliente: '', email: '', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'pt', aguardandoAprovacao: false, envioAutomatico: true, origemEnvio: 'manual' },
+  ]
+  assert.deepEqual(filtrarConversas(lista, filtrosDaAuditoria({ soAutomaticos: true })).map(c => c.ticketId), ['auto'])
+
+  const ev = (tipo, dados) => novoEvento({ tipo, ticketId: 't', resumo: tipo, dados })
+  assert.equal(origemDoEnvio([ev('email_enviado', { origemEnvio: 'aprovado_pelo_dono' })]), 'aprovado_pelo_dono')
+  // vale sempre o ÚLTIMO envio da conversa
+  assert.equal(origemDoEnvio([
+    ev('email_enviado', { origemEnvio: 'automatico' }),
+    ev('email_enviado', { origemEnvio: 'manual' }),
+  ]), 'manual')
+  assert.equal(origemDoEnvio([ev('rascunho_validado', {})]), null, 'sem envio, sem origem')
+  assert.equal(origemDoEnvio([ev('email_enviado', {})]), null, 'registro antigo não inventa origem')
+})
+
+test('selo compara a ORDEM dos eventos, não o relógio (mesmo milissegundo)', () => {
+  const em = '2026-09-18T10:00:00.000Z'
+  const base = { tentativaId: 'tent-1', mensagemId: 'm1', enviado: true, canalConfirmou: true, checklist: { itens: [], geral: 'tudo_certo', enviado: true } }
+  const ev = (tipo, dados, resumo = tipo) => ({ ...novoEvento({ tipo, ticketId: 't', resumo, dados }), em })
+
+  // falha DEPOIS do envio no vetor append-only: a conversa está bloqueada
+  assert.equal(seloDaConversa([
+    ev('email_enviado', base),
+    ev('envio_falhou', { tentativaId: 'tent-1' }),
+  ]), 'bloqueado')
+
+  // falha ANTES e envio DEPOIS, no mesmo milissegundo: vale o envio
+  assert.equal(seloDaConversa([
+    ev('envio_falhou', { tentativaId: 'tent-1' }),
+    ev('email_enviado', base),
+  ]), 'tudo_certo')
+
+  // bloqueio no mesmo milissegundo, depois do envio
+  assert.equal(seloDaConversa([
+    ev('email_enviado', base),
+    ev('rascunho_bloqueado', { tentativaId: 'tent-1' }),
+  ]), 'bloqueado')
+
+  // bloqueio de uma tentativa ANTIGA não afeta a tentativa atual
+  assert.equal(seloDaConversa([
+    ev('rascunho_bloqueado', { tentativaId: 'tent-1' }),
+    ev('email_enviado', { ...base, tentativaId: 'tent-2', mensagemId: 'm2' }),
+  ]), 'tudo_certo')
+})
+
+test('"Tudo certo" exige confirmação explícita do canal', () => {
+  const checklist = { itens: [], geral: 'tudo_certo', enviado: true }
+  const ev = (tipo, dados) => novoEvento({ tipo, ticketId: 't', resumo: tipo, dados })
+  const completo = { tentativaId: 'tent-1', mensagemId: 'm1', enviado: true, canalConfirmou: true, checklist }
+  assert.equal(seloDaConversa([ev('email_enviado', completo)]), 'tudo_certo')
+  // sem canalConfirmou (registro antigo ou envio não comprovado) fica em "Revisar"
+  assert.equal(seloDaConversa([ev('email_enviado', { ...completo, canalConfirmou: undefined })]), 'revisar')
+  assert.equal(seloDaConversa([ev('email_enviado', { ...completo, canalConfirmou: false })]), 'revisar')
+  assert.equal(seloDaConversa([ev('email_enviado', { ...completo, mensagemId: null })]), 'revisar')
+  assert.equal(seloDaConversa([ev('email_enviado', { ...completo, checklist: null })]), 'revisar')
+})
+
+test('checklist mostrado é o da tentativa atual — nunca o verde de uma tentativa anterior', () => {
+  const verde = { itens: [{ id: 'idioma', rotulo: 'Idioma', estado: 'verde', detalhe: null }], geral: 'tudo_certo', enviado: true }
+  const ev = (tipo, dados, resumo = tipo) => novoEvento({ tipo, ticketId: 't', resumo, dados })
+
+  // tentativa 1 terminou bem; a tentativa 2 foi bloqueada ANTES de gerar checklist
+  const eventos = [
+    ev('rascunho_validado', { tentativaId: 'tent-1', checklist: verde }),
+    ev('email_enviado', { tentativaId: 'tent-1', mensagemId: 'm1', enviado: true, canalConfirmou: true, checklist: verde }),
+    ev('rascunho_bloqueado', { tentativaId: 'tent-2' }, 'Cupom da etapa não existe na Shopify'),
+  ]
+  const r = checklistDaTentativa(eventos)
+  assert.equal(r.checklist, null, 'não reaproveita o checklist verde de tent-1')
+  assert.equal(r.concluido, false)
+  assert.equal(r.motivo, 'Cupom da etapa não existe na Shopify')
+  assert.equal(r.tentativaId, 'tent-2')
+  assert.equal(seloDaConversa(eventos), 'bloqueado')
+
+  // já com checklist na tentativa atual, é esse que aparece
+  const eventos2 = [...eventos, ev('rascunho_validado', { tentativaId: 'tent-2', checklist: { ...verde, geral: 'revisar' } })]
+  const r2 = checklistDaTentativa(eventos2)
+  assert.equal(r2.concluido, true)
+  assert.equal(r2.checklist.geral, 'revisar')
+  assert.equal(r2.tentativaId, 'tent-2')
 })
 
 test('conversa sem auditoria detalhada não ganha classificação inventada', () => {

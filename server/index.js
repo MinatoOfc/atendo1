@@ -15,7 +15,7 @@ import {
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase, valoresMonetarios,
 } from './atendimento.js'
-import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual } from '../shared/auditoria.js'
+import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, checklistDaTentativa, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual, origemDoEnvio } from '../shared/auditoria.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { produtoFoiInformado } from '../shared/produto.js'
@@ -548,13 +548,17 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
     f.idioma = idiomaAlvo ? vi.ok : null
     if (!vi.ok) detalhes.idioma = vi.motivo
 
-    // produto informado pelo cliente e pertencente ao pedido. Numa fase SEM oferta
-    // (a coleta que justamente pergunta qual é o produto) o item não se aplica.
-    f.produto_informado = oferta ? produtoFoiInformado(an) : null
+    // produto: só NÃO se aplica na coleta que justamente pergunta qual é o
+    // produto (fase 'coleta' com 'produtos' na lista do que falta). Em
+    // confirmação, endereço, dentro do prazo, aguardar entrega, status,
+    // cancelamento e qualquer outra fase a prova continua obrigatória — a
+    // auditoria espelha a trava real do motor, sem afrouxá-la.
+    const coletaDoProduto = faseId === 'coleta' && (an?.transicaoPendente?.faltando ?? []).includes('produtos')
+    f.produto_informado = coletaDoProduto ? null : produtoFoiInformado(an)
     if (f.produto_informado === false) detalhes.produto_informado = 'o cliente ainda não disse qual produto'
     const rotulos = rotulosDoPedidoItens(pedido)
     const citados = an?.produtosAfetados ?? []
-    f.produto_do_pedido = !pedido || !citados.length ? null : citados.every(p => rotulos.includes(p))
+    f.produto_do_pedido = coletaDoProduto || !pedido || !citados.length ? null : citados.every(p => rotulos.includes(p))
     if (f.produto_do_pedido === false) detalhes.produto_do_pedido = 'produto citado não está no pedido localizado'
 
     // fase e escada do mapa
@@ -626,6 +630,37 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
   }
   f.detalhes = detalhes
   return f
+}
+
+/**
+ * Mensagem do atendo pronta para o HISTÓRICO. Existe uma função só para os dois
+ * caminhos de arquivamento (nova mensagem do cliente e resposta sobre resposta)
+ * nunca mais divergirem: o vínculo com o evento de auditoria (mensagemId, fase,
+ * idioma, origem, data real e tentativa) tem de sobreviver ao arquivamento.
+ */
+function mensagemArquivada(t) {
+  return {
+    autor: 'atendo',
+    corpo: t.resposta,
+    data: t.respondidoEm || t.data,
+    traducao: t.respostaTraducao,
+    origem: t.respostaOrigem,
+    mensagemId: t.respostaMensagemId ?? null,
+    fase: t.respostaFase ?? null,
+    idioma: t.respostaIdioma ?? null,
+    tentativaId: t.respostaTentativaId ?? null,
+  }
+}
+
+/** Limpa os campos da resposta atual depois que ela foi arquivada. */
+function limparRespostaAtual(t) {
+  t.resposta = undefined
+  t.respostaTraducao = undefined
+  t.respostaOrigem = undefined
+  t.respostaMensagemId = undefined
+  t.respostaFase = undefined
+  t.respostaIdioma = undefined
+  t.respostaTentativaId = undefined
 }
 
 /** Falha de envio: registrada SEM criar email_enviado — nada sai como enviado. */
@@ -1522,6 +1557,8 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
       idioma: idiomaAlvo ?? null, idiomaDeclarado: cls.idioma ?? null,
       endereco: cls.endereco ?? null, confianca: cls.confianca ?? null,
       somenteDado: !!(cls.somente_dado ?? cls.somenteDado), resumo: cls.resumo ?? null,
+      // de QUAL mensagem do cliente saiu esta leitura (data da mensagem e ciclo)
+      mensagemEm: t.data ?? null, ciclo: (t.historico ?? []).length,
     },
   })
 
@@ -1546,6 +1583,8 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
       explicacao: d.fase
         ? `${cls.intencao === 'recusa' ? 'Cliente recusou a oferta anterior. ' : ''}Próxima fase permitida pelo mapa: ${FASES[d.fase]?.titulo ?? d.fase}.`
         : (d.humano ?? 'Nada a decidir'),
+      // de QUAL mensagem do cliente saiu esta decisão (data da mensagem e ciclo)
+      mensagemEm: t.data ?? null, ciclo: (t.historico ?? []).length,
     },
   })
   if (an.fluxo && CATEGORIA_DO_FLUXO[an.fluxo]) t.categoria = CATEGORIA_DO_FLUXO[an.fluxo]
@@ -1837,24 +1876,13 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, ago
 
   t.historico = t.historico || []
   if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao, anexos: t.anexos })
-  if (t.resposta) {
-    t.historico.push({
-      autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data, traducao: t.respostaTraducao,
-      origem: t.respostaOrigem,
-      // preserva o vínculo com o evento de auditoria (nunca mais por horário)
-      mensagemId: t.respostaMensagemId ?? null, fase: t.respostaFase ?? null, idioma: t.respostaIdioma ?? null,
-    })
-  }
+  if (t.resposta) t.historico.push(mensagemArquivada(t))
 
   t.anexos = !viraSpam && wsId && anexos?.length ? await guardarAnexos(wsId, anexos) : undefined
   t.corpo = corpo
   t.data = data || new Date().toISOString()
   t.lido = false
-  t.resposta = undefined
-  t.respostaOrigem = undefined
-  t.respostaMensagemId = undefined
-  t.respostaFase = undefined
-  t.respostaIdioma = undefined
+  limparRespostaAtual(t)
   t.marcadoRespondido = undefined // cliente falou de novo: a conversa volta a ser pendente
   t.respostaTraducao = undefined
   t.respondidoEm = undefined
@@ -1976,7 +2004,7 @@ async function sincronizar(wsId) {
 
 /* ---------------- Envio ---------------- */
 
-async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
+async function enviarResposta(wsId, ticket, texto, origem = 'manual', { automatico = false } = {}) {
   const lojaId = ticket.lojaId ?? 'loja1'
   const contas = contasDe(wsId)
   const an = ticket.atendimentoNovo
@@ -2080,7 +2108,11 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
       dados: {
         tentativaId: tentativaEnvio, fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId,
         minimoEnvio: an?.proximoEnvioMinimo ?? null, checklist, enviado: true,
-        canalConfirmou: true,
+        // o canal confirmou a saída: só aqui, depois de enviar de verdade
+        canalConfirmou: enviou === true,
+        // EVIDÊNCIA de como esta mensagem saiu, gravada no próprio evento: mudar
+        // a configuração da loja depois não reescreve o passado
+        origemEnvio: automatico ? 'automatico' : (origem === 'manual' ? 'manual' : 'aprovado_pelo_dono'),
       },
     })
     if (origem === 'manual') {
@@ -2122,8 +2154,10 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
       ticket.traducao = undefined
       ticket.anexos = undefined
     }
-    ticket.historico.push({ autor: 'atendo', corpo: ticket.resposta, data: ticket.respondidoEm || ticket.data, traducao: ticket.respostaTraducao, origem: ticket.respostaOrigem })
-    ticket.respostaTraducao = undefined
+    // MESMA função do outro caminho: mensagemId, fase, idioma, origem, data e
+    // tentativa continuam ligando a resposta ao evento email_enviado dela
+    ticket.historico.push(mensagemArquivada(ticket))
+    limparRespostaAtual(ticket)
   }
   ticket.status = 'enviado'
   ticket.resposta = texto
@@ -2131,6 +2165,7 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   ticket.respostaMensagemId = mensagemId
   ticket.respostaFase = transicao?.para ?? ticket.atendimentoNovo?.etapa ?? null
   ticket.respostaIdioma = ticket.atendimentoNovo?.rascunhoIdioma ?? ticket.idioma ?? null
+  ticket.respostaTentativaId = tentativaEnvio
   ticket.respostaOrigem = origem // quem escreveu: 'ia' ou 'manual'
   ticket.rascunho = texto
   ticket.rascunhoTraducao = undefined
@@ -2210,7 +2245,7 @@ agendar(async () => {
             continue
           }
         }
-        await enviarResposta(wsId, t, t.rascunho || '', 'ia')
+        await enviarResposta(wsId, t, t.rascunho || '', 'ia', { automatico: true })
         t.erroEnvio = undefined
         t.tentativasEnvio = undefined
       } catch (err) {
@@ -3461,7 +3496,9 @@ function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
   const pedido = pedidoDoTicket(estado, t)
   const classificou = [...eventos].reverse().find(e => e.tipo === 'ia_classificou') ?? null
   const decidiu = [...eventos].reverse().find(e => e.tipo === 'motor_decidiu') ?? null
-  const comChecklist = [...eventos].reverse().find(e => e.dados?.checklist?.itens?.length) ?? null
+  // checklist SOMENTE da tentativa atual — um checklist verde antigo nunca
+  // aparece por cima de uma tentativa que foi bloqueada antes de concluí-lo
+  const daTentativa = checklistDaTentativa(eventos)
   const cp = an?.conclusaoPendente ?? null
   const base = {
     ticketId: t.id,
@@ -3479,6 +3516,9 @@ function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
     ultimaAtividade: t.respondidoEm ?? t.data ?? null,
     aguardandoAprovacao: t.status === 'aprovacao' || t.status === 'humano',
     envioAutomatico: !!loja?.novoEnvioAutomatico,
+    // como a última mensagem saiu de verdade (evidência do evento, não a
+    // configuração de hoje) — é isto que o filtro "envio automático" consulta
+    origemEnvio: origemDoEnvio(eventos),
     selo: motor === 'novo' ? seloDaConversa(eventos) : 'sem_dados',
     semAuditoriaDetalhada: motor === 'novo' && eventos.length === 0,
     revisao: t.auditoriaRevisao ?? null,
@@ -3496,9 +3536,12 @@ function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
     eventos: eventos.map(e => ({ ...e, dados: e.dados ?? {} })),
     tentativaAtual: tentativaAtual(eventos),
     historicoCompleto: !t.auditoriaRetencao?.omitidos,
-    classificacao: classificou?.dados ?? null,
-    decisao: decidiu?.dados ?? null,
-    checklist: motor === 'novo' ? (comChecklist?.dados?.checklist ?? null) : null,
+    classificacao: classificou ? { ...classificou.dados, em: classificou.em } : null,
+    decisao: decidiu ? { ...decidiu.dados, em: decidiu.em } : null,
+    checklist: motor === 'novo' ? daTentativa.checklist : null,
+    checklistConcluido: motor === 'novo' ? daTentativa.concluido : null,
+    checklistTentativa: daTentativa.tentativaId,
+    motivoChecklist: motor === 'novo' ? daTentativa.motivo : null,
     faseAnterior: an?.historicoEtapas?.filter(h => !h.evento).slice(-2, -1)[0]?.para ?? null,
     faseAtual: an?.etapa ?? null,
     proximaPermitida: an?.transicaoPendente?.para ?? null,

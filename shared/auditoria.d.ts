@@ -2,6 +2,8 @@ export type SituacaoAuditoria = 'ok' | 'atencao' | 'bloqueado' | 'informativo'
 export type EstadoItem = 'verde' | 'amarelo' | 'vermelho' | 'cinza'
 export type GeralChecklist = 'tudo_certo' | 'revisar' | 'bloqueado'
 export type SeloConversa = GeralChecklist | 'aguardando' | 'agendada' | 'sem_dados'
+/** Como a mensagem saiu, gravado no próprio evento de envio (campo fechado). */
+export type OrigemEnvio = 'automatico' | 'aprovado_pelo_dono' | 'manual'
 
 export interface EventoAuditoria {
   id: string
@@ -57,6 +59,7 @@ export interface ResumoConversaAuditoria {
   ultimaAtividade: string | null
   aguardandoAprovacao: boolean
   envioAutomatico: boolean
+  origemEnvio: OrigemEnvio | null
   selo: SeloConversa
   retencao: { omitidos: number; primeiroOmitidoEm: string | null; ultimoOmitidoEm: string | null; primeiroDisponivelEm: string | null; limite: number } | null
   semAuditoriaDetalhada: boolean
@@ -71,6 +74,9 @@ export interface ConversaAuditoria extends ResumoConversaAuditoria {
   classificacao: Record<string, unknown> | null
   decisao: Record<string, unknown> | null
   checklist: Checklist | null
+  checklistConcluido: boolean | null
+  checklistTentativa: string | null
+  motivoChecklist: string | null
   faseAnterior: string | null
   faseAtual: string | null
   proximaPermitida: string | null
@@ -92,6 +98,8 @@ export declare const ITENS_CHECKLIST: [string, string][]
 export declare const ROTULO_GERAL: Record<GeralChecklist, string>
 export declare const ROTULO_SELO: Record<string, string>
 export declare const ROTULO_SELO_CURTO: Record<string, string>
+export declare const ROTULO_ORIGEM_ENVIO: Record<OrigemEnvio, string>
+export declare const LIMITE_AUDITORIA: number
 export declare function tentativaAtual(eventos?: EventoAuditoria[]): string | null
 export declare function eventosDaTentativa(eventos?: EventoAuditoria[], tentativaId?: string | null): EventoAuditoria[]
 export declare function novoEvento(dados: Partial<EventoAuditoria> & { tipo: string }): EventoAuditoria
@@ -100,5 +108,8 @@ export declare function checklistDaResposta(fatos: Record<string, unknown>): Che
 export declare function linhaDoTempo(t: unknown, opcoes?: { eventos?: EventoAuditoria[] | null }): MensagemAuditoria[]
 export declare function passosCompactos(eventos?: EventoAuditoria[]): string
 export declare function seloDaConversa(eventos?: EventoAuditoria[]): SeloConversa
+export declare function checklistDaTentativa(eventos?: EventoAuditoria[]): { checklist: Checklist | null; concluido: boolean; motivo: string | null; tentativaId: string | null; em: string | null }
+export declare function origemDoEnvio(eventos?: EventoAuditoria[]): OrigemEnvio | null
+export declare function aplicarRetencao(lista?: EventoAuditoria[], opcoes?: { limite?: number; anterior?: unknown }): { eventos: EventoAuditoria[]; retencao: unknown }
 export declare function filtrosDaAuditoria(q?: Record<string, unknown>): Record<string, unknown>
 export declare function filtrarConversas<T>(lista: T[], f: Record<string, unknown>): T[]
