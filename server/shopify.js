@@ -267,6 +267,10 @@ async function graphql(cx, query, variables = {}) {
     if (erros.some(e => /ACCESS_DENIED|access denied|read_discounts/i.test(`${e?.extensions?.code ?? ''} ${e?.message ?? ''}`))) {
       return { semPermissao: true, erro: SEM_PERMISSAO_DESCONTOS }
     }
+    // campo que não existe nesta versão da API: quem chama tenta a variante antiga
+    if (erros.some(e => /undefinedField|doesn't exist on type|Field '[^']+' doesn't exist/i.test(`${e?.extensions?.code ?? ''} ${e?.message ?? ''}`))) {
+      return { campoDesconhecido: true, erro: String(erros[0]?.message ?? 'campo desconhecido').slice(0, 200) }
+    }
     if (erros.length) return { erro: `A Shopify respondeu: ${String(erros[0]?.message ?? 'erro no GraphQL').slice(0, 200)}` }
     return { dados: d?.data ?? null }
   } catch (err) {
@@ -274,15 +278,26 @@ async function graphql(cx, query, variables = {}) {
   }
 }
 
-const CONSULTA_CUPOM = `query($code: String!) {
+/* Campos do cupom. `context` (quem pode usar) existe nas versões novas da API;
+   nas antigas o mesmo dado vem em `customerSelection`. A consulta tenta a nova e
+   cai para a antiga quando o servidor reclama do campo desconhecido. */
+const CAMPOS_BASICO = alvo => `... on DiscountCodeBasic {
+        title status startsAt endsAt usageLimit asyncUsageCount
+        ${alvo === 'context' ? 'context { __typename }' : 'customerSelection { __typename }'}
+        minimumRequirement { __typename }
+        customerGets {
+          appliesOnOneTimePurchase
+          items { __typename }
+          value { __typename ... on DiscountPercentage { percentage } }
+        }
+      }`
+
+const CONSULTA_CUPOM = alvo => `query($code: String!) {
   codeDiscountNodeByCode(code: $code) {
     id
     codeDiscount {
       __typename
-      ... on DiscountCodeBasic {
-        title status startsAt endsAt usageLimit asyncUsageCount
-        customerGets { value { __typename ... on DiscountPercentage { percentage } } }
-      }
+      ${CAMPOS_BASICO(alvo)}
       ... on DiscountCodeBxgy { title status startsAt endsAt }
       ... on DiscountCodeFreeShipping { title status startsAt endsAt }
       ... on DiscountCodeApp { title status startsAt endsAt }
@@ -290,12 +305,33 @@ const CONSULTA_CUPOM = `query($code: String!) {
   }
 }`
 
+/** Quem pode usar o cupom: só "todos os compradores" serve. */
+const RESTRICAO_COMPRADOR = {
+  DiscountBuyerSelectionAll: null, DiscountCustomerAll: null,
+  DiscountCustomers: 'só vale para clientes específicos',
+  DiscountCustomerSegments: 'só vale para um segmento de clientes',
+  DiscountCustomerSelectionAll: null,
+}
+/** A que itens o cupom se aplica: só "todos os produtos" serve. */
+const RESTRICAO_ITENS = {
+  AllDiscountItems: null,
+  DiscountProducts: 'só vale para produtos ou variantes específicos',
+  DiscountCollections: 'só vale para coleções específicas',
+}
+/** Exigência mínima de compra: qualquer uma desqualifica. */
+const RESTRICAO_MINIMO = {
+  DiscountMinimumSubtotal: 'exige um subtotal mínimo',
+  DiscountMinimumQuantity: 'exige uma quantidade mínima',
+}
+
 /**
  * Confere na Shopify (GraphQL `codeDiscountNodeByCode`) os cupons cadastrados no
- * Atendo: o código existe NESTA loja, é um DiscountCodeBasic de percentual, está
- * ACTIVE, já começou, não expirou e ainda tem uso disponível — e o percentual
- * bate exatamente. Sem `read_discounts` devolve { permissao: false }: quem chama
- * mostra "cupom não verificado na Shopify".
+ * Atendo. Só fica `ok` o cupom que serve para QUALQUER pedido: DiscountCodeBasic,
+ * valor em percentual exato, ACTIVE, já iniciado, não expirado, com uso
+ * disponível, para todos os compradores, em todos os produtos, sem compra mínima
+ * e válido em compra avulsa. Restrito a cliente, segmento, produto, variante,
+ * coleção, mínimo ou assinatura vira `incompativel`, dizendo qual é a restrição.
+ * Sem `read_discounts` devolve { permissao: false }.
  *
  * `pedidos` = [{ pct, codigo }]. Nada é inventado: cada item volta com a
  * situação que a própria Shopify respondeu.
@@ -304,11 +340,16 @@ export async function verificarCuponsShopify(cx, pedidos = [], { agora = Date.no
   const em = new Date(agora).toISOString()
   if (!cx) return { permissao: false, erro: 'Shopify não conectada.', em, itens: [] }
   const itens = []
+  let alvo = 'context' // campo novo; cai para customerSelection se a API não conhecer
 
   for (const { pct, codigo } of pedidos) {
     const cod = String(codigo ?? '').trim()
     if (!cod) continue
-    const r = await graphql(cx, CONSULTA_CUPOM, { code: cod })
+    let r = await graphql(cx, CONSULTA_CUPOM(alvo), { code: cod })
+    if (r.campoDesconhecido && alvo === 'context') {
+      alvo = 'customerSelection'
+      r = await graphql(cx, CONSULTA_CUPOM(alvo), { code: cod })
+    }
     if (r.semPermissao) return { permissao: false, erro: r.erro, em, itens: [] }
     if (r.erro) { itens.push({ pct, codigo: cod, situacao: 'erro', detalhe: r.erro }); continue }
 
@@ -334,6 +375,20 @@ export async function verificarCuponsShopify(cx, pedidos = [], { agora = Date.no
     const fim = d.endsAt ? Date.parse(d.endsAt) : null
     const base = { pct, codigo: cod, valor: encontrado, inicio: d.startsAt ?? null, fim: d.endsAt ?? null, tipo }
 
+    // o cupom tem de valer para QUALQUER pedido
+    const comprador = d.context?.__typename ?? d.customerSelection?.__typename ?? null
+    const itensAlvo = d.customerGets?.items?.__typename ?? null
+    const minimo = d.minimumRequirement?.__typename ?? null
+    const avulsa = d.customerGets?.appliesOnOneTimePurchase
+    // sem prova de que vale para qualquer pedido, o cupom NÃO passa
+    const restricao = comprador == null ? 'não informa quem pode usar (a Shopify não devolveu o campo)'
+      : comprador in RESTRICAO_COMPRADOR ? RESTRICAO_COMPRADOR[comprador]
+        : `tem restrição de comprador não reconhecida (${comprador})`
+    const restricaoItens = itensAlvo == null ? 'não informa a que produtos se aplica (a Shopify não devolveu o campo)'
+      : itensAlvo in RESTRICAO_ITENS ? RESTRICAO_ITENS[itensAlvo]
+        : `tem restrição de itens não reconhecida (${itensAlvo})`
+    const restricaoMinimo = minimo ? (RESTRICAO_MINIMO[minimo] ?? `exige ${minimo}`) : null
+
     if (Math.round(encontrado * 100) !== Math.round(Number(pct) * 100)) {
       itens.push({ ...base, situacao: 'percentual_divergente', detalhe: `na Shopify vale ${encontrado}%, não ${pct}%` })
     } else if (String(d.status).toUpperCase() === 'EXPIRED' || (fim != null && fim < agora)) {
@@ -344,8 +399,16 @@ export async function verificarCuponsShopify(cx, pedidos = [], { agora = Date.no
       itens.push({ ...base, situacao: 'esgotado', detalhe: 'o limite de usos do cupom já foi atingido' })
     } else if (String(d.status).toUpperCase() !== 'ACTIVE') {
       itens.push({ ...base, situacao: 'inativo', detalhe: `status na Shopify: ${d.status}` })
+    } else if (restricao) {
+      itens.push({ ...base, situacao: 'incompativel', detalhe: `o cupom ${restricao}` })
+    } else if (restricaoItens) {
+      itens.push({ ...base, situacao: 'incompativel', detalhe: `o cupom ${restricaoItens}` })
+    } else if (restricaoMinimo) {
+      itens.push({ ...base, situacao: 'incompativel', detalhe: `o cupom ${restricaoMinimo}` })
+    } else if (avulsa !== true) {
+      itens.push({ ...base, situacao: 'incompativel', detalhe: avulsa === false ? 'o cupom vale só para assinatura, não para compra avulsa' : 'a Shopify não confirmou que o cupom vale em compra avulsa' })
     } else {
-      itens.push({ ...base, situacao: 'ok', detalhe: `${encontrado}% ativo na Shopify` })
+      itens.push({ ...base, situacao: 'ok', detalhe: `${encontrado}% ativo na Shopify, para qualquer pedido` })
     }
   }
   return { permissao: true, erro: null, em, itens }

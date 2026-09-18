@@ -14,6 +14,8 @@ let respostas = {} // código → resposta do dublê
 const chamadas = []
 
 const corpo = dados => ({ ok: true, status: 200, json: async () => dados })
+/** customerGets completo (todos os produtos, compra avulsa), variando só o percentual */
+const ganha = percentage => ({ appliesOnOneTimePurchase: true, items: { __typename: 'AllDiscountItems' }, value: { __typename: 'DiscountPercentage', percentage } })
 const basico = extra => ({
   data: {
     codeDiscountNodeByCode: {
@@ -21,7 +23,13 @@ const basico = extra => ({
       codeDiscount: {
         __typename: 'DiscountCodeBasic', title: 'Cupom', status: 'ACTIVE',
         startsAt: '2026-01-01T00:00:00Z', endsAt: null, usageLimit: null, asyncUsageCount: 0,
-        customerGets: { value: { __typename: 'DiscountPercentage', percentage: 0.15 } },
+        context: { __typename: 'DiscountBuyerSelectionAll' },
+        minimumRequirement: null,
+        customerGets: {
+          appliesOnOneTimePurchase: true,
+          items: { __typename: 'AllDiscountItems' },
+          value: { __typename: 'DiscountPercentage', percentage: 0.15 },
+        },
         ...extra,
       },
     },
@@ -31,7 +39,7 @@ const basico = extra => ({
 before(() => {
   globalThis.fetch = async (url, opcoes) => {
     const { variables } = JSON.parse(opcoes.body)
-    chamadas.push({ url: String(url), code: variables.code })
+    chamadas.push({ url: String(url), code: variables.code, body: opcoes.body })
     const r = respostas[variables.code]
     if (!r) throw new Error('dublê sem resposta para ' + variables.code)
     return typeof r === 'function' ? r() : corpo(r)
@@ -121,17 +129,17 @@ test('expirado, agendado, esgotado e inativo', async () => {
 })
 
 test('percentual em fração (0.15) e em inteiro (15) dão o mesmo resultado', async () => {
-  respostas = { FRACAO: basico({ customerGets: { value: { __typename: 'DiscountPercentage', percentage: 0.4 } } }) }
+  respostas = { FRACAO: basico({ customerGets: ganha(0.4) }) }
   let r = await verificarCuponsShopify(CX, [{ pct: 40, codigo: 'FRACAO' }], { agora: AGORA })
   assert.equal(r.itens[0].situacao, 'ok')
-  respostas = { INTEIRO: basico({ customerGets: { value: { __typename: 'DiscountPercentage', percentage: 40 } } }) }
+  respostas = { INTEIRO: basico({ customerGets: ganha(40) }) }
   r = await verificarCuponsShopify(CX, [{ pct: 40, codigo: 'INTEIRO' }], { agora: AGORA })
   assert.equal(r.itens[0].situacao, 'ok')
 })
 
 test('os cinco cupons do fluxo passam numa tacada', async () => {
   const pcts = [15, 25, 30, 35, 40]
-  respostas = Object.fromEntries(pcts.map(p => [`C${p}`, basico({ customerGets: { value: { __typename: 'DiscountPercentage', percentage: p / 100 } } })]))
+  respostas = Object.fromEntries(pcts.map(p => [`C${p}`, basico({ customerGets: ganha(p / 100) })]))
   const r = await verificarCuponsShopify(CX, pcts.map(p => ({ pct: p, codigo: `C${p}` })), { agora: AGORA })
   assert.equal(r.permissao, true)
   assert.equal(r.itens.length, 5)
@@ -145,4 +153,92 @@ test('sem conexão nada é inventado, e read_discounts está nos escopos padrão
   assert.match(r.erro, /não conectada/i)
   assert.deepEqual(r.itens, [])
   assert.match(ESCOPOS_PADRAO, /read_discounts/)
+})
+/* ---- o cupom precisa valer para QUALQUER pedido ---- */
+
+test('todos os compradores + todos os produtos + sem mínimo + compra avulsa: passa', async () => {
+  respostas = { LIVRE: basico() }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'LIVRE' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'ok')
+  assert.match(r.itens[0].detalhe, /qualquer pedido/)
+  // a consulta pede mesmo os campos da restrição
+  const enviada = JSON.parse(chamadas.at(-1).body ?? '{}').query ?? ''
+  for (const campo of ['context', 'minimumRequirement', 'appliesOnOneTimePurchase', 'items']) {
+    assert.match(enviada, new RegExp(campo), 'a consulta precisa pedir ' + campo)
+  }
+})
+
+test('restrito a cliente específico: incompatível, dizendo a restrição', async () => {
+  respostas = { SOCLIENTE: basico({ context: { __typename: 'DiscountCustomers' } }) }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'SOCLIENTE' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /clientes específicos/i)
+})
+
+test('restrito a segmento de clientes: incompatível', async () => {
+  respostas = { SEGMENTO: basico({ context: { __typename: 'DiscountCustomerSegments' } }) }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'SEGMENTO' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /segmento/i)
+})
+
+test('restrito a produto ou variante: incompatível', async () => {
+  respostas = { SOPRODUTO: basico({ customerGets: { appliesOnOneTimePurchase: true, items: { __typename: 'DiscountProducts' }, value: { __typename: 'DiscountPercentage', percentage: 0.15 } } }) }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'SOPRODUTO' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /produtos ou variantes/i)
+})
+
+test('restrito a coleção: incompatível', async () => {
+  respostas = { SOCOLECAO: basico({ customerGets: { appliesOnOneTimePurchase: true, items: { __typename: 'DiscountCollections' }, value: { __typename: 'DiscountPercentage', percentage: 0.15 } } }) }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'SOCOLECAO' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /coleções/i)
+})
+
+test('exige subtotal mínimo: incompatível', async () => {
+  respostas = { MIN50: basico({ minimumRequirement: { __typename: 'DiscountMinimumSubtotal' } }) }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'MIN50' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /subtotal mínimo/i)
+})
+
+test('exige quantidade mínima: incompatível', async () => {
+  respostas = { MIN2: basico({ minimumRequirement: { __typename: 'DiscountMinimumQuantity' } }) }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'MIN2' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /quantidade mínima/i)
+})
+
+test('só para assinatura: incompatível', async () => {
+  respostas = { ASSINA: basico({ customerGets: { appliesOnOneTimePurchase: false, items: { __typename: 'AllDiscountItems' }, value: { __typename: 'DiscountPercentage', percentage: 0.15 } } }) }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'ASSINA' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /assinatura/i)
+})
+
+test('campo de restrição ausente não vira "ok" por omissão', async () => {
+  respostas = { OMISSO: basico({ context: undefined }) }
+  let r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'OMISSO' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /não informa quem pode usar/i)
+  respostas = { SEMAVULSA: basico({ customerGets: { items: { __typename: 'AllDiscountItems' }, value: { __typename: 'DiscountPercentage', percentage: 0.15 } } }) }
+  r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'SEMAVULSA' }], { agora: AGORA })
+  assert.equal(r.itens[0].situacao, 'incompativel')
+  assert.match(r.itens[0].detalhe, /compra avulsa/i)
+})
+
+test('API antiga sem "context": a consulta cai para customerSelection e continua funcionando', async () => {
+  let vez = 0
+  respostas = {
+    VELHA: () => {
+      vez++
+      if (vez === 1) return corpo({ errors: [{ message: "Field 'context' doesn't exist on type 'DiscountCodeBasic'", extensions: { code: 'undefinedField' } }] })
+      return corpo(basico({ context: undefined, customerSelection: { __typename: 'DiscountCustomerAll' } }))
+    },
+  }
+  const r = await verificarCuponsShopify(CX, [{ pct: 15, codigo: 'VELHA' }], { agora: AGORA })
+  assert.equal(r.permissao, true)
+  assert.equal(r.itens[0].situacao, 'ok')
+  assert.equal(vez, 2, 'tentou a consulta nova e depois a antiga')
 })

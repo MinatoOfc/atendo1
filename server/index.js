@@ -39,6 +39,52 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 
+/* ---------------- Simulação: SÓ em teste, nunca em produção ----------------
+ * Uma única porta de entrada para tudo que é simulado. Nenhum comportamento de
+ * ensaio pode depender só de ATENDO_SIMULAR: em produção a variável é inerte —
+ * e-mail real continua sendo lido, o envio usa só o canal real, nenhum gancho de
+ * falha/queda funciona, nenhum arquivo de teste é escrito ou lido e nenhuma
+ * transição é confirmada por envio simulado.
+ */
+
+/** Ambiente de TESTE de verdade (o runner define NODE_ENV=test). */
+const ambienteDeTeste = () => process.env.NODE_ENV === 'test'
+
+/**
+ * PORTA ÚNICA da simulação: exige ATENDO_SIMULAR=1 **e** NODE_ENV=test.
+ * Vale para: pular a leitura de e-mail real, canal SMTP falso, registro de
+ * envios simulados, falha de gravação simulada, queda controlada e integração
+ * (Shopify, sincronização, cupons) dada como conferida.
+ */
+const simulacaoDeTeste = () => process.env.ATENDO_SIMULAR === '1' && ambienteDeTeste()
+
+/** Integração (Shopify/sincronização/cupons) simulada — mesma porta única. */
+const integracaoSimulada = () => simulacaoDeTeste()
+
+/**
+ * Rota autenticada de simulação de e-mail. Em teste, ou no Railway com
+ * ATENDO_SIMULAR_EMAIL=1 — que libera SÓ esta rota: não simula Shopify, não
+ * simula sincronização, não valida cupom, não libera envio automático, não
+ * liga SMTP falso e não impede a leitura dos e-mails reais.
+ */
+const simulacaoDeEmailLiberada = () => simulacaoDeTeste() || process.env.ATENDO_SIMULAR_EMAIL === '1'
+
+/** Canal simulado ('ok' | 'falha') — null fora do ambiente de teste. */
+const canalSimulado = () => (simulacaoDeTeste() ? (process.env.ATENDO_SMTP_FAKE || null) : null)
+
+/** Arquivo onde os envios simulados são registrados — null fora do teste. */
+const arquivoDeEnviosSimulados = () => (simulacaoDeTeste() ? (process.env.ATENDO_TESTE_ENVIOS || null) : null)
+
+/** Ganchos de falha proposital — todos mortos fora do ambiente de teste. */
+const ganchoDeTeste = nome => (simulacaoDeTeste() ? (process.env[nome] || null) : null)
+
+if (process.env.ATENDO_SIMULAR === '1' && !ambienteDeTeste()) {
+  console.warn('[atendo] AVISO: ATENDO_SIMULAR=1 está configurado FORA de NODE_ENV=test e foi IGNORADO.')
+  console.warn('[atendo] Nada é simulado aqui: e-mails reais continuam sendo lidos, o envio usa só o canal real,')
+  console.warn('[atendo] nenhum gancho de falha/queda funciona e Shopify, sincronização e cupons continuam sendo conferidos.')
+  console.warn('[atendo] Para injetar e-mails de teste no Railway use ATENDO_SIMULAR_EMAIL=1 (libera só a rota autenticada de simulação).')
+}
+
 /* ---------------- Ciclo de vida (intervalos e encerramento) ---------------- */
 const intervalos = []
 const tarefasUnicas = []
@@ -92,7 +138,7 @@ function enfileirarGravacao(wsId) {
   const anterior = cadeiaGravacao.get(wsId) ?? Promise.resolve()
   const proxima = anterior.catch(() => {}).then(() => {
     // falha de persistência simulada (SÓ com o ambiente de teste ligado)
-    if (process.env.ATENDO_SIMULAR === '1' && process.env.ATENDO_TESTE_FALHA_GRAVACAO === '1') throw new Error('falha de gravação simulada')
+    if (ganchoDeTeste('ATENDO_TESTE_FALHA_GRAVACAO') === '1') throw new Error('falha de gravação simulada')
     const timer = salvarPendentes.get(wsId)
     if (timer) clearTimeout(timer)
     salvarPendentes.delete(wsId)
@@ -569,13 +615,13 @@ function corrigirConfirmacoesMeioGravadas(wsId) {
 
 /** Registro durável dos envios simulados (só em teste): permite conferir o Message-ID depois de uma queda. */
 function registrarEnvioSimulado(mensagemId) {
-  const arq = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_TESTE_ENVIOS : null
+  const arq = arquivoDeEnviosSimulados()
   if (!arq) return
   try { fs.appendFileSync(arq, mensagemId + '\n') } catch { /* teste */ }
 }
 /** A confirmação com este Message-ID chegou a sair? true | false | null (não deu para conferir). */
 async function confirmacaoFoiEnviada(wsId, t, mensagemId) {
-  const arq = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_TESTE_ENVIOS : null
+  const arq = arquivoDeEnviosSimulados()
   if (arq) { try { return fs.readFileSync(arq, 'utf8').split('\n').includes(mensagemId) } catch { return false } }
   const conta = contasDe(wsId).find(c => c.id === (t.lojaId ?? 'loja1'))
   if (!conta?.procurarEnviado) return null
@@ -713,35 +759,6 @@ function marcarSincronizacao(estado, lojaId, { ok, erro = null, pedidos = null }
 
 /** Shopify conectada NESTA loja (credenciais válidas no estado). */
 const shopifyDaLoja = (estado, lojaId) => ({ conectada: !!conexaoLoja(estado, lojaId) })
-
-/* ---------------- Simulação: só em teste, nunca em produção ---------------- */
-
-/**
- * Ambiente de TESTE de verdade. `ATENDO_SIMULAR=1` sozinho não basta: em
- * produção (NODE_ENV=production) ele é ignorado para tudo que diz respeito à
- * integração (Shopify, sincronização, cupons) e o arranque avisa.
- */
-const ambienteDeTeste = () => process.env.NODE_ENV === 'test'
-
-/**
- * Integração simulada (Shopify conectada, sincronização feita, cupons conferidos)
- * — exclusivamente em teste. Em produção isto NUNCA é verdade.
- */
-const integracaoSimulada = () => process.env.ATENDO_SIMULAR === '1' && ambienteDeTeste()
-
-/**
- * Rota autenticada de simulação de e-mail. Vale em teste e, no Railway, com
- * ATENDO_SIMULAR_EMAIL=1 — que libera SÓ esta rota: não simula Shopify, não
- * simula sincronização, não valida cupom, não libera envio automático e não
- * impede a leitura dos e-mails reais.
- */
-const simulacaoDeEmailLiberada = () => (process.env.ATENDO_SIMULAR === '1' && ambienteDeTeste()) || process.env.ATENDO_SIMULAR_EMAIL === '1'
-
-if (process.env.ATENDO_SIMULAR === '1' && !ambienteDeTeste()) {
-  console.warn('[atendo] AVISO: ATENDO_SIMULAR=1 está configurado FORA de NODE_ENV=test.')
-  console.warn('[atendo] A variável é IGNORADA para prontidão: Shopify, sincronização e cupons continuam sendo conferidos de verdade.')
-  console.warn('[atendo] Para injetar e-mails de teste no Railway use ATENDO_SIMULAR_EMAIL=1 (libera só a rota autenticada de simulação).')
-}
 
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
 function prontidaoModoNovo(wsId, loja, { agora = Date.now() } = {}) {
@@ -1629,7 +1646,7 @@ async function sincronizar(wsId) {
       marcarSincronizacao(estado, loja.id, { ok: !rp.erro, erro: rp.erro ?? null })
     }
 
-    if (process.env.ATENDO_SIMULAR === '1') {
+    if (simulacaoDeTeste()) {
       // testes e ensaio: nada entra pela rede nem pela demonstração — só /api/simular-email
     } else if (algumEmail(wsId)) {
       for (const conta of contasDe(wsId)) {
@@ -1712,8 +1729,9 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
       throw new Error(`O texto não traz o código do cupom conferido (${cupE.codigo}) — nada é enviado`)
     }
   }
-  // canal simulado só nos testes (ATENDO_SIMULAR=1): 'ok' envia, 'falha' quebra
-  const simulado = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_SMTP_FAKE : null
+  // canal simulado SÓ em teste (ATENDO_SIMULAR=1 + NODE_ENV=test): 'ok' envia, 'falha' quebra.
+  // Em produção é sempre null: o envio passa obrigatoriamente pelo canal real.
+  const simulado = canalSimulado()
   let enviou = false
   const estado = workspaces.get(wsId)
   // Message-ID ESTÁVEL por confirmação: gerado uma única vez e preservado em toda nova
@@ -1741,7 +1759,7 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   else if (canal) { await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto, messageId: mensagemId }); enviou = true }
   // pontos de queda controlados: SÓ com o canal simulado (ATENDO_SIMULAR=1 + ATENDO_SMTP_FAKE),
   // nunca por uma variável solta em produção. 'antes' = depois do canal e antes da gravação final.
-  if (enviou && cpEnvio && simulado && process.env.ATENDO_TESTE_QUEDA === 'antes') { console.error('[teste] queda proposital depois do envio, antes da gravação'); process.exit(7) }
+  if (enviou && cpEnvio && simulado && ganchoDeTeste('ATENDO_TESTE_QUEDA') === 'antes') { console.error('[teste] queda proposital depois do envio, antes da gravação'); process.exit(7) }
   // modo novo: a fase só muda depois de um canal real enviar com sucesso — sem
   // canal, nem envia (nada abaixo é executado, então nada muda no ticket)
   if (modoNovo && !enviou) {
@@ -1789,9 +1807,9 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   // cair antes dela, o estado persistido continua "enviando" e o arranque reconcilia.
   if (finalizarConfirmacao) {
     concluirAposEnvio(estado, wsId, ticket, finalizarConfirmacao, mensagemId)
-    if (simulado && process.env.ATENDO_TESTE_QUEDA === 'depois-memoria') { console.error('[teste] queda proposital com o estado final só em memória'); process.exit(8) }
+    if (simulado && ganchoDeTeste('ATENDO_TESTE_QUEDA') === 'depois-memoria') { console.error('[teste] queda proposital com o estado final só em memória'); process.exit(8) }
     await gravarCritico(wsId)
-    if (simulado && process.env.ATENDO_TESTE_QUEDA === 'depois') { console.error('[teste] queda proposital depois da gravação final'); process.exit(9) }
+    if (simulado && ganchoDeTeste('ATENDO_TESTE_QUEDA') === 'depois') { console.error('[teste] queda proposital depois da gravação final'); process.exit(9) }
   }
 }
 
