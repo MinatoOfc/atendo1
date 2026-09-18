@@ -1045,18 +1045,17 @@ export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now()
     `"idiomaConfiavel": false quando a mensagem é curta demais para saber o idioma com segurança ("ok", "sim", só um endereço, números, só uma foto).`,
     `"spam": true só se não for cliente falando da própria compra.`,
   ].join('\n')
-  // SÓ o texto novo do cliente vale como declaração. Assunto automático e texto
-  // citado (notificação da Shopify, e-mail anterior, rodapé) entram apenas como
-  // referência para localizar a conversa — nunca como fala dele.
+  // O classificador recebe SOMENTE o texto novo do cliente. Nada de texto citado
+  // nem de assunto automático: enquanto estiverem no prompt, contaminam intenção,
+  // aceite, recusa, motivo, endereço, produto, tamanho e entrega — rotular como
+  // "referência" não impede isso. O contexto do pedido já vem estruturado e
+  // conferido pelo servidor no bloco de dados do system.
   const partes = separarTexto(ticket.corpo)
   const user = [
     ultimaDaLoja ? `Última mensagem da loja:\n${String(ultimaDaLoja).slice(0, 1500)}\n\n---\n` : '',
-    `MENSAGEM NOVA do cliente (${ticket.nome} <${ticket.de}>) — somente isto conta como declaração dele:`,
+    `MENSAGEM NOVA do cliente (${ticket.nome} <${ticket.de}>) — é só isto que ele escreveu agora:`,
     partes.atual.slice(0, 4000) || '(sem texto novo)',
     ticket.anexos?.length ? `\n(O cliente anexou ${ticket.anexos.length} imagem(ns).)` : '',
-    `\n---\nREFERÊNCIA — NÃO é fala do cliente. Serve só para localizar a conversa e o número do pedido. Nunca use para intenção, motivo, situação de entrega, produtos, tamanho, aceite, recusa ou idioma:`,
-    `Assunto (automático): ${ticket.assunto}`,
-    partes.citado ? partes.citado.slice(0, 1200) : '(sem texto citado)',
   ].join('\n')
   return { system, user }
 }

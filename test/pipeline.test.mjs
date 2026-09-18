@@ -229,7 +229,13 @@ const an = t => t.atendimentoNovo ?? {}
 
 async function cliente(cls, { de, nome, corpo, ticketId, lojaId, comImagem, agora } = {}) {
   if (cls) fila.push(cls)
-  const r = await api('/api/simular-email', { de, nome, assunto: 'Bestellung', corpo, ticketId, lojaId, comImagem, agora })
+  // o servidor só aceita produto que o CLIENTE escreveu: se a classificação
+  // simulada diz que ele citou o polo, a mensagem dele precisa citar também
+  // só a PRIMEIRA mensagem precisa nomear o produto: daí em diante a conversa
+  // já sabe qual é, e "ok"/"nein" continuam mensagens curtas de verdade
+  const produtos = cls?.produtos ?? ['Polo Premium']
+  const texto = !ticketId && produtos.length && !/polo/i.test(String(corpo ?? '')) ? `${corpo ?? ''} Es geht um das Polo Premium.`.trim() : corpo
+  const r = await api('/api/simular-email', { de, nome, assunto: 'Bestellung', corpo: texto, ticketId, lojaId, comImagem, agora })
   assert.ok(r.ok, 'simular falhou: ' + r.erro)
   return r.ticket
 }

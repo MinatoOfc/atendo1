@@ -129,7 +129,7 @@ test('sem ATENDO_LIBERAR_AUTOENVIO: loja neutralizada, agendamento antigo do nov
 
 test('mensagem nova numa loja do novo (que dizia automático=true) não ganha enviaEm; o bloqueio fica registrado', async () => {
   // religa à força o valor salvo, como se um estado antigo voltasse — o agendamento continua bloqueado
-  const r = await api('/api/simular-email', { de: 'c2@web.de', nome: 'C2', assunto: 'Bestellung #2', corpo: 'Die Qualität ist schlecht, ich will mein Geld zurück.', lojaId: 'loja1' })
+  const r = await api('/api/simular-email', { de: 'c2@web.de', nome: 'C2', assunto: 'Bestellung #2', corpo: 'Das Polo Premium: die Qualität ist schlecht, ich will mein Geld zurück.', lojaId: 'loja1' })
   assert.ok(r.ok, r.erro)
   const t = r.ticket
   assert.equal(t.motor, 'novo'); assert.equal(t.status, 'aprovacao'); assert.equal(t.enviaEm, undefined, 'nenhum enviaEm criado'); assert.ok(t.rascunho); assert.equal(t.atendimentoNovo.transicaoPendente.para, 'qual_troca')

@@ -1794,10 +1794,18 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   // já aconteceu de um cliente responder ao aviso "sua entrega foi entregue"
   // reclamando da roupa e receber "aguarde 2 dias e pergunte aos vizinhos".
   const partesMsg = separarTexto(t.corpo)
-  const entrega = validarSituacaoEntrega({ situacao: cls.situacaoEntrega ?? null, evidencia: cls.evidenciaEntrega ?? '', textoAtual: partesMsg.atual })
+  // PROPOSTA ORIGINAL, congelada antes de qualquer limpeza: cls é o mesmo objeto
+  // de c.r, então zerar um campo apagaria também o que a IA tinha proposto — e a
+  // auditoria precisa mostrar os dois lados.
+  const proposta = {
+    intencao: cls.intencao ?? null, motivo: cls.motivo ?? null,
+    situacaoEntrega: cls.situacaoEntrega ?? null, evidenciaEntrega: cls.evidenciaEntrega ?? '',
+    produtos: [...(cls.produtos ?? [])],
+  }
+  const entrega = validarSituacaoEntrega({ situacao: proposta.situacaoEntrega, evidencia: proposta.evidenciaEntrega, textoAtual: partesMsg.atual })
   const descartes = []
   if (entrega.descartada) {
-    descartes.push({ campo: 'situacaoEntrega', valor: cls.situacaoEntrega, motivo: entrega.motivo })
+    descartes.push({ campo: 'situacaoEntrega', valor: proposta.situacaoEntrega, motivo: entrega.motivo })
     cls.situacaoEntrega = null
   }
   // "não recebido" como MOTIVO abre a mesma jornada: exige a mesma prova
@@ -1810,39 +1818,44 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
     descartes.push({ campo: 'intencao', valor: 'pergunta_status', motivo: 'o texto novo do cliente não pergunta onde está o pedido nem quando chega' })
     cls.intencao = 'outro'
   }
-  // PRODUTO: o que aparece só na notificação citada ou no catálogo não conta
-  const produtosAntes = [...(cls.produtos ?? [])]
-  cls.produtos = produtosDoTextoAtual(produtosAntes, partesMsg.atual, { itensDoPedido: rotulosDoPedidoItens(pedido) })
-  if (produtosAntes.length !== cls.produtos.length) {
-    descartes.push({ campo: 'produtos', valor: produtosAntes.filter(p => !cls.produtos.includes(p)), motivo: 'produto citado só na notificação/no catálogo, não pelo cliente' })
+  // PRODUTO: só conta o que o CLIENTE escreveu agora. Catálogo do pedido e
+  // notificação citada nunca informam produto — nem quando o pedido tem um item
+  // só: quem diz qual peça tem problema é ele.
+  cls.produtos = produtosDoTextoAtual(proposta.produtos, partesMsg.atual)
+  const produtosDescartados = proposta.produtos.filter(p => !cls.produtos.includes(p))
+  if (produtosDescartados.length) {
+    descartes.push({ campo: 'produtos', valor: produtosDescartados, motivo: 'produto não citado pelo cliente no texto novo (veio da notificação citada ou do catálogo)' })
   }
-  // declarações conflitantes (produto em mãos + "não recebi"): decide você
-  if (entrega.conflito) {
-    mandarParaHumanoNovo(t, 'A mensagem diz que o produto está em mãos e ao mesmo tempo que não foi recebido — declarações conflitantes, decida você', 'motor')
-    return { spam: false }
-  }
-  // idioma-alvo: só uma mensagem completa troca; "ok"/endereço/foto preservam o último confiável
-  const idiomaAlvo = definirIdioma(an, cls, t.corpo)
+
+  // idioma-alvo: só do texto NOVO. Assinatura, endereço solto, notificação da
+  // Shopify e mensagem anterior não decidem em que idioma a loja responde.
+  const idiomaAlvo = definirIdioma(an, cls, partesMsg.atual)
   if (idiomaAlvo) t.idioma = idiomaAlvo
   if (cls.resumo) { t.resumoSituacao = cls.resumo; t.situacaoTraducao = undefined }
 
-  // AUDITORIA: o que a IA entendeu (classificação estruturada, nunca o prompt)
+  // AUDITORIA ANTES DE QUALQUER SAÍDA: o caso problemático é justamente o que
+  // não pode ficar sem registro. Mostra o que a IA propôs, o que o servidor
+  // aceitou, a evidência, de onde ela veio e por que algo foi descartado.
   auditar(t, 'ia_classificou', {
-    resumo: `IA entendeu: ${cls.intencao ?? 'sem intenção'}${cls.motivo ? ' — ' + cls.motivo : ''}`,
-    situacao: 'informativo',
+    resumo: `IA entendeu: ${cls.intencao ?? 'sem intenção'}${cls.motivo ? ' — ' + cls.motivo : ''}${descartes.length ? ` (servidor descartou: ${descartes.map(d => d.campo).join(', ')})` : ''}`,
+    situacao: entrega.conflito ? 'atencao' : 'informativo',
     chave: `ia_classificou:${t.id}:${t.data}:${(t.historico ?? []).length}`,
     dados: {
+      // ACEITO pelo servidor
       intencao: cls.intencao ?? null, motivo: cls.motivo ?? null,
-      produtos: cls.produtos ?? [], produtosDescartados: produtosAntes.filter(p => !(cls.produtos ?? []).includes(p)),
-      ajuste: cls.ajuste ?? cls.tamanho ?? null,
+      produtos: cls.produtos ?? [], ajuste: cls.ajuste ?? cls.tamanho ?? null,
       // PONTO CEGO CORRIGIDO: o campo do classificador é situacaoEntrega. Gravar
       // cls.entrega/cls.situacao_entrega mostrava null justamente quando este
       // campo era o que decidia a jornada.
       entrega: cls.situacaoEntrega ?? null,
-      entregaProposta: entrega.descartada ? c.r.situacaoEntrega ?? null : cls.situacaoEntrega ?? null,
-      evidenciaEntrega: entrega.evidencia || null,
+      // PROPOSTO pela IA, lado a lado com o aceito
+      propostaIA: proposta,
+      entregaProposta: proposta.situacaoEntrega,
+      evidenciaEntrega: proposta.evidenciaEntrega || null,
       evidenciaNoTextoAtual: entrega.evidenciaNoTextoAtual,
+      produtosDescartados,
       descartes,
+      conflito: entrega.conflito,
       textoAtualCaracteres: partesMsg.atual.length, textoCitadoCaracteres: partesMsg.citado.length,
       idioma: idiomaAlvo ?? null, idiomaDeclarado: cls.idioma ?? null,
       endereco: cls.endereco ?? null, confianca: cls.confianca ?? null,
@@ -1851,6 +1864,13 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
       mensagemEm: t.data ?? null, ciclo: (t.historico ?? []).length,
     },
   })
+
+  // declarações conflitantes (produto em mãos + "não recebi"): decide você.
+  // Só DEPOIS da auditoria — o caso duvidoso não pode sair sem registro.
+  if (entrega.conflito) {
+    mandarParaHumanoNovo(t, 'A mensagem diz que o produto está em mãos e ao mesmo tempo que não foi recebido — declarações conflitantes, decida você', 'motor')
+    return { spam: false }
+  }
 
   // 2. o servidor decide a única ação permitida
   const faseAnterior = an.etapa ?? null

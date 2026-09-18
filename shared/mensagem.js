@@ -158,11 +158,10 @@ export function validarSituacaoEntrega({ situacao = null, evidencia = '', textoA
 const COMUNS = ['com', 'mit', 'und', 'and', 'the', 'das', 'der', 'die', 'van', 'von', 'para', 'por', 'les', 'del']
 const tokensDoProduto = p => normalizar(p).split(/[^a-z0-9]+/).filter(t => t.length >= 3 && !COMUNS.includes(t))
 
-export function produtosDoTextoAtual(produtos = [], textoAtual = '', { itensDoPedido = null } = {}) {
+export function produtosDoTextoAtual(produtos = [], textoAtual = '') {
   const lista = produtos ?? []
-  // pedido de UM item so: nao ha o que desambiguar. Perguntar "qual produto?"
-  // para quem comprou uma peca so seria burocracia, nao cuidado.
-  if (Array.isArray(itensDoPedido) && itensDoPedido.length === 1) return lista
+  // REGRA LITERAL, sem excecao por tamanho do pedido: o catalogo nunca informa
+  // produto. Mesmo com um item so, quem diz qual peca tem problema e o cliente.
   const atual = normalizar(textoAtual)
   if (!atual) return []
   const todos = lista.map(tokensDoProduto)

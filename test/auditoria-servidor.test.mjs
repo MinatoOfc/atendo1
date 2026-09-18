@@ -50,8 +50,17 @@ estado.pedidos = [1, 2, 3, 4, 5, 6, 9, 10].map(n => ({
   status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: n === 6 ? 'loja2' : 'loja1',
   itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
 }))
+// pedido do caso real: DOIS polos, para o texto do cliente ter de dizer qual
+estado.pedidos.push({
+  id: 'p-kurt', numero: '#2766', cliente: 'Kurt', email: 'kurt@web.de', pais: 'Austria', valor: 118,
+  status: 'entregue', criadoEm: '2026-09-05', despachadoEm: '2026-09-09', lojaId: 'loja1',
+  itens: [
+    { titulo: 'Polohemd mit langen Ärmeln', variante: 'Grün / XL', quantidade: 1, preco: 59 },
+    { titulo: 'Polohemd mit langen Ärmeln', variante: 'Hellblau / XL', quantidade: 1, preco: 59 },
+  ],
+})
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -66,6 +75,12 @@ for (const n of [50, 51]) {
     itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
   })
 }
+// pedido 86: em trânsito, para a pergunta "onde está?" cair na escada do prazo
+estado.pedidos.push({
+  id: 'p86', numero: '#86', cliente: 'Cliente 86', email: 'c86@web.de', pais: 'Germany', valor: 100,
+  status: 'transito', criadoEm: diasAtras(2), despachadoEm: diasAtras(1), lojaId: 'loja1',
+  itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
+})
 // pedido 11: despachado ontem, ainda em trânsito — é o que permite a fase "dentro do prazo"
 estado.pedidos.push({
   id: 'p11', numero: '#11', cliente: 'Cliente 11', email: 'c11@web.de', pais: 'Germany', valor: 100,
@@ -162,7 +177,13 @@ before(async () => {
 })
 after(async () => { globalThis.fetch = realFetch; await servidor.encerrar(); try { rmSync(DIR, { recursive: true, force: true }) } catch {} })
 
-const simular = (extra = {}) => api('/api/simular-email', { de: 'c1@web.de', nome: 'C1', assunto: 'Bestellung #1', corpo: 'Das Polo ist zu klein.', lojaId: 'loja1', ...extra })
+// o produto só conta quando o cliente o escreve: as mensagens de ensaio citam o polo
+const simular = (extra = {}) => {
+  const base = { de: 'c1@web.de', nome: 'C1', assunto: 'Bestellung #1', corpo: 'Das Polo ist zu klein.', lojaId: 'loja1', ...extra }
+  // só a primeira mensagem precisa nomear o produto; depois a conversa já sabe
+  if (!base.ticketId && base.corpo && !/polo/i.test(base.corpo)) base.corpo = `${base.corpo} Es geht um das Polo Premium.`
+  return api('/api/simular-email', base)
+}
 
 /* =================================================================== */
 
@@ -832,6 +853,192 @@ test('conversa sem fase pendente nem fase recusada não regenera nada', async ()
     const reg = await api(`/api/tickets/${r0.ticket.id}/regenerar`, {})
     assert.equal(reg.status, 200, reg.erro ?? '')
   }
+})
+
+/* Caso REAL do piloto: o cliente respondeu ao aviso de entrega da Shopify
+   reclamando da roupa. A notificação veio colada abaixo e o motor ofereceu
+   "aguarde 2 dias e pergunte aos vizinhos" para quem estava com a peça na mão. */
+const CORPO_KURT = [
+  'Bitte was ist das für ein Schrott ! Das kann doch kein Mensch anziehen !',
+  '',
+  'Das ist ein Witz !',
+  '',
+  'Fa. Karasek, Karasek Kurt, Litschauer Str. 38, A-3950 Gmünd, AUSTRIA',
+  'Tel.:06641335337',
+  '',
+  'Gesendet: Freitag, 18. September 2026 um 14:29',
+  'Von: "Von Alder" <store+71907508326@t.shopifyemail.com>',
+  'An: kurt@web.de',
+  'Betreff: Eine Lieferung aus der Bestellung #2766 wurde zugestellt',
+  'Ihre Sendung mit Polohemd mit langen Ärmeln (Grün / XL) und Polohemd mit langen Ärmeln (Hellblau / XL) wurde zugestellt.',
+].join('\n')
+
+test('caso real: notificação de entrega citada não vira jornada de entrega — vai para a coleta do produto', async () => {
+  // a IA TENTA devolver o que devolveu na produção: entrega + produtos, com
+  // prova e produtos que só existem no trecho CITADO
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade',
+    produtos: ['Polohemd mit langen Ärmeln (Grün / XL)', 'Polohemd mit langen Ärmeln (Hellblau / XL)'],
+    ajustes: [], situacaoEntrega: 'entregue_nao_recebido',
+    evidenciaEntrega: 'wurde zugestellt',
+    endereco: '', resumo: 'cliente reclama da qualidade dos polos', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'kurt@web.de', nome: 'Kurt', assunto: 'Aw: Eine Lieferung aus der Bestellung #2766 wurde zugestellt', corpo: CORPO_KURT, lojaId: 'loja1' })
+  assert.ok(r0.ok, 'a conversa nasceu')
+  const t = await ticket(r0.ticket.id)
+  const an = t.atendimentoNovo
+  const c = await auditoria(t.id)
+
+  // o que o servidor ACEITOU
+  assert.equal(c.classificacao.intencao, 'pede_reembolso', 'a intenção do texto novo vale')
+  assert.equal(c.classificacao.motivo, 'qualidade', 'o motivo do texto novo vale')
+  assert.equal(c.classificacao.entrega, null, 'a situação de entrega foi descartada')
+  assert.deepEqual(c.classificacao.produtos, [], 'nenhum produto veio do trecho citado')
+  assert.equal(an.produtosInformados ?? false, false)
+  assert.deepEqual(an.produtosAfetados ?? [], [])
+
+  // o que a IA PROPÔS continua visível, lado a lado
+  assert.equal(c.classificacao.entregaProposta, 'entregue_nao_recebido')
+  assert.equal(c.classificacao.evidenciaEntrega, 'wurde zugestellt')
+  assert.equal(c.classificacao.evidenciaNoTextoAtual, false, 'a prova não estava no texto novo')
+  assert.equal(c.classificacao.propostaIA.situacaoEntrega, 'entregue_nao_recebido')
+  assert.deepEqual(c.classificacao.propostaIA.produtos.length, 2)
+  assert.equal(c.classificacao.produtosDescartados.length, 2)
+  const descartes = c.classificacao.descartes.map(d => d.campo)
+  assert.ok(descartes.includes('situacaoEntrega'), 'descarte da entrega registrado')
+  assert.ok(descartes.includes('produtos'), 'descarte dos produtos registrado')
+
+  // jornada e fase
+  assert.equal(c.decisao.jornada, 'qualidade')
+  assert.equal(an.transicaoPendente.para, 'coleta')
+  assert.deepEqual(an.transicaoPendente.faltando, ['produtos'])
+
+  // o texto pergunta QUAL produto e não oferece nada
+  const rascunho = t.rascunho ?? ''
+  assert.ok(rascunho, 'há rascunho de coleta')
+  assert.doesNotMatch(rascunho, /zugestellt|Nachbar|Rezeption|2 Tage|zwei Tage|Sendung|Lieferzeit/i, 'nada de rastreio, vizinhos, portaria ou aguardar dois dias')
+  assert.doesNotMatch(rascunho, /Umtausch|Gutschein|Rückerstattung|%/i, 'nenhuma troca, cupom, percentual ou reembolso na coleta')
+
+  // nada saiu, nada avançou, nada no relatório
+  assert.equal(t.status, 'aprovacao')
+  assert.equal(an.etapa ?? null, null, 'nenhuma fase avançada')
+  assert.equal(t.relatorioAuto ?? null, null)
+  assert.equal(t.relatorioDia ?? null, null)
+  assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0, 'nenhum e-mail enviado')
+})
+
+test('pedido de UM item só: sem o cliente escrever qual produto, ainda vai para a coleta', async () => {
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'reclama', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  // corpo sem citar o produto (o simular só completa quando o texto não diz "polo")
+  const r0 = await api('/api/simular-email', { de: 'c80@web.de', nome: 'C80', assunto: 'Bestellung #80', corpo: 'Die Qualität ist schlecht.', lojaId: 'loja1' })
+  const t = await ticket(r0.ticket.id)
+  assert.equal(t.atendimentoNovo.transicaoPendente.para, 'coleta', 'catálogo não informa produto, nem com um item só')
+  assert.deepEqual(t.atendimentoNovo.transicaoPendente.faltando, ['produtos'])
+  const c = await auditoria(t.id)
+  assert.deepEqual(c.classificacao.produtos, [])
+  assert.equal(c.classificacao.produtosDescartados.length, 1)
+})
+
+test('texto citado com aceite, recusa, endereço e produtos não muda a classificação do texto novo', async () => {
+  const corpo = [
+    'Die Qualität vom Polo Premium ist schlecht.',
+    '',
+    'Gesendet: Freitag',
+    'Von: "Von Alder"',
+    'Betreff: Ihre Bestellung',
+    'Ok, ich akzeptiere den Umtausch. Bitte stornieren Sie und erstatten Sie mir das Geld.',
+    'Meine Adresse: Hauptstrasse 12, 10115 Berlin, Deutschland.',
+    'Artikel: Polohemd mit langen Ärmeln (Grün / XL)',
+  ].join('\n')
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'qualidade ruim', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'c81@web.de', nome: 'C81', assunto: 'Bestellung #81', corpo, lojaId: 'loja1' })
+  const t = await ticket(r0.ticket.id)
+  const an = t.atendimentoNovo
+  assert.equal(an.fluxo, 'qualidade', 'o aceite/cancelamento do texto citado não vale')
+  assert.equal(an.acaoAceita ?? null, null, 'nenhum aceite registrado')
+  assert.notEqual(an.transicaoPendente?.para, 'endereco', 'o endereço do texto citado não foi tomado como informado')
+  assert.equal(an.enderecoConfirmado ?? null, null)
+  // o produto citado no texto NOVO ("Polo Premium") é o que vale
+  assert.deepEqual(an.produtosAfetados, ['Polo Premium (Schwarz / L)'])
+})
+
+test('conflito (produto em mãos + não recebi) vai ao dono COM o evento de classificação completo', async () => {
+  const corpo = 'Die Sendung wird als zugestellt angezeigt, aber ich habe nichts erhalten. Der Stoff vom Polo Premium ist außerdem sehr dünn.'
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'entregue_nao_recebido',
+    evidenciaEntrega: 'als zugestellt angezeigt, aber ich habe nichts erhalten',
+    endereco: '', resumo: 'conflito', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'c82@web.de', nome: 'C82', assunto: 'Bestellung #82', corpo, lojaId: 'loja1' })
+  const t = await ticket(r0.ticket.id)
+  assert.equal(t.status, 'humano', 'declarações conflitantes decidem com você')
+  assert.match(t.motivoEscalada, /conflitantes/)
+  const c = await auditoria(t.id)
+  const ev = c.eventos.find(e => e.tipo === 'ia_classificou')
+  assert.ok(ev, 'o caso problemático NÃO ficou sem auditoria')
+  assert.equal(ev.dados.conflito, true)
+  assert.equal(ev.dados.entregaProposta, 'entregue_nao_recebido')
+  assert.equal(ev.dados.entrega, null)
+  assert.ok(ev.dados.descartes.some(d => d.campo === 'situacaoEntrega'))
+})
+
+test('o texto NOVO decide a jornada de entrega: "consta entregue mas não recebi" e "onde está?"', async () => {
+  // 1) consta entregue + não recebi → entregue_nao_recebido
+  const corpo1 = 'Die Sendung wird als zugestellt angezeigt, aber ich habe nichts erhalten.'
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'nao_recebido', produtos: [], ajustes: [],
+    situacaoEntrega: 'entregue_nao_recebido', evidenciaEntrega: corpo1,
+    endereco: '', resumo: 'consta entregue', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r1 = await api('/api/simular-email', { de: 'c83@web.de', nome: 'C83', assunto: 'Bestellung #83', corpo: corpo1, lojaId: 'loja1' })
+  const t1 = await ticket(r1.ticket.id)
+  assert.equal(t1.atendimentoNovo.fluxo, 'entregue_nao_recebido', 'a jornada de entrega foi reconhecida')
+  // ...mas sem o cliente dizer QUAL produto, a trava do produto manda coletar antes
+  assert.equal(t1.atendimentoNovo.transicaoPendente.para, 'coleta')
+  assert.equal(t1.atendimentoNovo.proximaAposColeta, 'nr_entregue_aguardar', 'a fase de entrega fica guardada para depois da coleta')
+
+  // com o produto nomeado pelo cliente, a fase de entrega sai na hora
+  const corpo1b = 'Die Sendung mit dem Polo Premium wird als zugestellt angezeigt, aber ich habe nichts erhalten.'
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'nao_recebido', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'entregue_nao_recebido', evidenciaEntrega: corpo1b,
+    endereco: '', resumo: 'consta entregue', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r1b = await api('/api/simular-email', { de: 'c85@web.de', nome: 'C85', assunto: 'Bestellung #85', corpo: corpo1b, lojaId: 'loja1' })
+  const t1b = await ticket(r1b.ticket.id)
+  assert.equal(t1b.atendimentoNovo.fluxo, 'entregue_nao_recebido')
+  assert.equal(t1b.atendimentoNovo.transicaoPendente.para, 'nr_entregue_aguardar')
+
+  // 2) só perguntou onde está → jornada logística
+  const corpo2 = 'Wo ist meine Bestellung mit dem Polo Premium?'
+  fila.push({
+    intencao: 'pergunta_status', motivo: 'nao_recebido', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nao_chegou', evidenciaEntrega: corpo2,
+    endereco: '', resumo: 'onde está', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r2 = await api('/api/simular-email', { de: 'c86@web.de', nome: 'C86', assunto: 'Bestellung #86', corpo: corpo2, lojaId: 'loja1' })
+  const t2 = await ticket(r2.ticket.id)
+  assert.match(t2.atendimentoNovo.fluxo, /nao_recebido/)
+  assert.match(t2.atendimentoNovo.transicaoPendente.para, /^nc_/)
+})
+
+test('reclamação de qualidade nunca vira entrega só porque a Shopify diz "entregue"', async () => {
+  // pedido #10 está entregue na Shopify; o cliente fala do tecido
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'tecido ruim', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r = await api('/api/simular-email', { de: 'c10@web.de', nome: 'C10c', assunto: 'Bestellung #10', corpo: 'Der Stoff vom Polo Premium ist schrecklich.', lojaId: 'loja1' })
+  const t = await ticket(r.ticket.id)
+  assert.equal(t.atendimentoNovo.fluxo, 'qualidade', 'o status logístico não substitui a reclamação')
+  assert.notEqual(t.atendimentoNovo.transicaoPendente.para, 'nr_entregue_aguardar')
 })
 
 test('retenção real: mais de 400 eventos pelo caminho do servidor — corta, conta e data', async () => {
