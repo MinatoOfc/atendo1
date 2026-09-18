@@ -125,10 +125,10 @@ let idiomaSabotado = null
 let ultimoPromptInferencia = ''
 // frases do escritor simulado por idioma (o bloqueio positivo exige a ação nomeada no idioma do cliente)
 const FRASES = {
-  de: { ola: 'Hallo!', troca: 'Wir bieten Ihnen einen kostenlosen Umtausch an.', reenvio: 'Wir senden das Paket erneut.', reembolso: p => `Wir bieten eine Rückerstattung von ${p[1]}% (${p[2]}) an.`, reembolsoSem: 'Wir bieten eine Rückerstattung an.', cupom: c => `Gutschein: ${c}.`, cupomSem: 'Wir bieten einen Gutschein an.', cancel: 'Die Bestellung wird storniert.', frete: f => `Die Rücksendung würde ca. ${f} kosten.`, dinheiro: 'Das Geld ist in 3 bis 14 Tagen wieder da.', prazo: p => `Lieferzeit ${p}.`, pergunta: 'Möchten Sie das annehmen?' },
-  nl: { ola: 'Hallo!', troca: 'Wij bieden u graag een gratis omruil aan.', reenvio: 'Wij verzenden het pakket opnieuw.', reembolso: p => `Wij bieden een terugbetaling van ${p[1]}% (${p[2]}) aan.`, reembolsoSem: 'Wij bieden een terugbetaling aan.', cupom: c => `Kortingscode: ${c}.`, cupomSem: 'Wij bieden een kortingscode aan.', cancel: 'De bestelling wordt geannuleerd.', frete: f => `De retourzending kost ongeveer ${f}.`, dinheiro: 'Het geld is binnen 3 tot 14 dagen terug.', prazo: p => `Levertijd ${p}.`, pergunta: 'Wilt u dit aanvaarden?' },
-  fr: { ola: 'Bonjour !', troca: 'Nous vous proposons un échange gratuit.', reenvio: 'Nous renvoyons le colis.', reembolso: p => `Nous vous proposons un remboursement de ${p[1]}% (${p[2]}).`, reembolsoSem: 'Nous vous proposons un remboursement.', cupom: c => `Code coupon : ${c}.`, cupomSem: 'Nous vous proposons un coupon.', cancel: 'La commande est annulée.', frete: f => `Le retour coûterait environ ${f}.`, dinheiro: "L'argent revient sous 3 à 14 jours.", prazo: p => `Délai ${p}.`, pergunta: 'Acceptez-vous ?' },
-  en: { ola: 'Hello!', troca: 'We can offer you a free exchange.', reenvio: 'We will resend the parcel.', reembolso: p => `We offer a refund of ${p[1]}% (${p[2]}).`, reembolsoSem: 'We offer a refund.', cupom: c => `Coupon: ${c}.`, cupomSem: 'We offer a coupon.', cancel: 'The order is cancelled.', frete: f => `The return would cost about ${f}.`, dinheiro: 'The money is back within 3 to 14 days.', prazo: p => `Delivery ${p}.`, pergunta: 'Do you accept?' },
+  de: { ola: 'Hallo!', troca: 'Wir bieten Ihnen einen kostenlosen Umtausch an.', reenvio: 'Wir senden das Paket erneut.', reembolso: p => `Wir bieten eine Rückerstattung von ${p[1]}% (${p[2]}) an.`, reembolsoSem: 'Wir bieten eine Rückerstattung an.', cupom: c => `Gutschein: ${c}.`, cupomSem: 'Wir bieten einen Gutschein an.', cupomPct: p => `Sie erhalten einen Gutschein über ${p}%.`, cancel: 'Die Bestellung wird storniert.', frete: f => `Die Rücksendung würde ca. ${f} kosten.`, dinheiro: 'Das Geld ist in 3 bis 14 Tagen wieder da.', prazo: p => `Lieferzeit ${p}.`, pergunta: 'Möchten Sie das annehmen?' },
+  nl: { ola: 'Hallo!', troca: 'Wij bieden u graag een gratis omruil aan.', reenvio: 'Wij verzenden het pakket opnieuw.', reembolso: p => `Wij bieden een terugbetaling van ${p[1]}% (${p[2]}) aan.`, reembolsoSem: 'Wij bieden een terugbetaling aan.', cupom: c => `Kortingscode: ${c}.`, cupomSem: 'Wij bieden een kortingscode aan.', cupomPct: p => `U ontvangt een kortingscode van ${p}%.`, cancel: 'De bestelling wordt geannuleerd.', frete: f => `De retourzending kost ongeveer ${f}.`, dinheiro: 'Het geld is binnen 3 tot 14 dagen terug.', prazo: p => `Levertijd ${p}.`, pergunta: 'Wilt u dit aanvaarden?' },
+  fr: { ola: 'Bonjour !', troca: 'Nous vous proposons un échange gratuit.', reenvio: 'Nous renvoyons le colis.', reembolso: p => `Nous vous proposons un remboursement de ${p[1]}% (${p[2]}).`, reembolsoSem: 'Nous vous proposons un remboursement.', cupom: c => `Code coupon : ${c}.`, cupomSem: 'Nous vous proposons un coupon.', cupomPct: p => `Vous recevez un coupon de ${p}%.`, cancel: 'La commande est annulée.', frete: f => `Le retour coûterait environ ${f}.`, dinheiro: "L'argent revient sous 3 à 14 jours.", prazo: p => `Délai ${p}.`, pergunta: 'Acceptez-vous ?' },
+  en: { ola: 'Hello!', troca: 'We can offer you a free exchange.', reenvio: 'We will resend the parcel.', reembolso: p => `We offer a refund of ${p[1]}% (${p[2]}).`, reembolsoSem: 'We offer a refund.', cupom: c => `Coupon: ${c}.`, cupomSem: 'We offer a coupon.', cupomPct: p => `You will receive a ${p}% coupon.`, cancel: 'The order is cancelled.', frete: f => `The return would cost about ${f}.`, dinheiro: 'The money is back within 3 to 14 days.', prazo: p => `Delivery ${p}.`, pergunta: 'Do you accept?' },
 }
 let ultimoPromptEscrita = ''
 const realFetch = globalThis.fetch
@@ -164,8 +164,12 @@ globalThis.fetch = async (url, opts) => {
     if (escritaQuebrada) { escritaQuebrada = false; return responder('isto não é JSON') }
     const acao = sys.match(/"acao_proposta" deve ser exatamente "([^"]+)"/)?.[1] ?? '?'
     const pct = sys.match(/Reembolso de (\d+)% = ([\d,]+ €)/)
-    const cup = sys.match(/Cupom de (\d+)%: código (\w+)\. Use EXATAMENTE/)
+    // o código do cupom só chega ao prompt na CONFIRMAÇÃO; na oferta vem a ordem
+    // de falar do cupom sem revelar o código
+    const cup = sys.match(/Cupom de (\d+)%: código ([\w-]+)\. Use EXATAMENTE/)
+    const cupOferta = sys.match(/Cupom de (\d+)%: diga que/)
     const cupom = cup ? `${cup[2]} (${cup[1]}%)` : null
+    const cupomPct = !cup && cupOferta ? cupOferta[1] : null
     const frete = sys.match(/Frete de devolução estimado: ([\d,]+ €)/)?.[1]
     const prazoDinheiro = /3 a 14 dias/.test(sys)
     const prazo = sys.match(/Prazo do envio expresso: ([^.]+)\./)?.[1]
@@ -182,7 +186,7 @@ globalThis.fetch = async (url, opts) => {
     if (/troca/.test(alvo)) frases.push(F.troca)
     if (/reenvio|enviar/.test(alvo)) frases.push(F.reenvio)
     if (/reembolso/.test(alvo) || pct) frases.push(pct ? F.reembolso(pct) : F.reembolsoSem)
-    if (/cupom/.test(alvo) || cupom) frases.push(cupom ? F.cupom(cupom) : F.cupomSem)
+    if (/cupom/.test(alvo) || cupom || cupomPct) frases.push(cupom ? F.cupom(cupom) : cupomPct ? F.cupomPct(cupomPct) : F.cupomSem)
     if (/cancel/.test(alvo)) frases.push(F.cancel)
     if (frete) frases.push(F.frete(frete))
     // fases sem oferta: o escritor simulado diz o que o mapa manda (o bloqueio exige)
@@ -246,7 +250,8 @@ after(async () => {
 test('cliente exigindo 100% em toda mensagem: uma etapa por resposta, 100% só com o dono', async () => {
   let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', resumo: 'material ruim, 100%!' }, { de: 'c1@web.de', nome: 'C1', corpo: 'Schlecht. 100%!', lojaId: 'loja1' })
   assert.equal(t.status, 'aprovacao'); assert.equal(an(t).transicaoPendente.para, 'qual_troca'); assert.equal(an(t).etapa, null)
-  assert.match(t.rascunho, /DANKE15/)
+  // a OFERTA fala do cupom e do percentual, mas nunca do código
+  assert.match(t.rascunho, /Gutschein/); assert.match(t.rascunho, /15\s?%/); assert.doesNotMatch(t.rascunho, /DANKE15/)
   for (const esperada of ['qual_troca', 'qual_cupom_35', 'reemb_25', 'reemb_40', 'reemb_50', 'reemb_60', 'reemb_70']) {
     const r = await comEnvio('ok', () => aprovar(t))
     assert.equal(r.status, 200, r.erro)
@@ -373,7 +378,9 @@ test('auto-envio reconfere o rascunho: editado fora da fase ou com oferta mudada
     // cliente holandês cujo rascunho foi trocado por um texto em alemão (mesma etapa, mesmos números)
     let d = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'nl' }, { de: 'c25@web.de', nome: 'C25', corpo: 'De kwaliteit is slecht, ik wil mijn geld terug.', lojaId: 'loja3', agora: ha4min() })
     assert.equal(an(d).idioma, 'nl'); assert.match(d.rascunho, /omruil/)
-    await api(`/api/tickets/${d.id}/rascunho`, { texto: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 a 11 dias. Möchten Sie das annehmen?' })
+    // texto em alemão para um cliente holandês: sem código de cupom, para o
+    // bloqueio ser mesmo o do IDIOMA e não o do código revelado cedo
+    await api(`/api/tickets/${d.id}/rascunho`, { texto: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Sie erhalten einen Gutschein über 15%. Lieferzeit 4 a 11 dias. Möchten Sie das annehmen?' })
     let fim = Date.now() + 15000
     while (Date.now() < fim) {
       await esperar(1000)
@@ -1158,11 +1165,11 @@ test('Base de Conhecimento é exclusiva do clássico: marcadores conflitantes en
   // 3) novo (loja1): primeira resposta, regeneração, aprovação, recusa, aceite, confirmação — nenhum marcador em NENHUM prompt do novo
   promptsCapturados.length = 0
   let n = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', resumo: 'qualidade ruim, quer 100%' }, { de: 'c93@web.de', nome: 'C93', corpo: 'Schlecht. 100% zurück!', lojaId: 'loja1' })
-  assert.equal(n.motorAtendimento, 'novo'); assert.equal(an(n).transicaoPendente.para, 'qual_troca', 'a regra conflitante da Base não antecipa o 100%'); assert.match(n.rascunho, /DANKE15/); assert.doesNotMatch(n.rascunho, /100%|XK3|TOTAL100/)
-  r = await api(`/api/tickets/${n.id}/regenerar`, { instrucao: 'mais curto' }); assert.equal(r.status, 200, r.erro); n = await ticket(n.id); assert.equal(an(n).transicaoPendente.para, 'qual_troca'); assert.match(n.rascunho, /DANKE15/)
+  assert.equal(n.motorAtendimento, 'novo'); assert.equal(an(n).transicaoPendente.para, 'qual_troca', 'a regra conflitante da Base não antecipa o 100%'); assert.match(n.rascunho, /Gutschein/); assert.doesNotMatch(n.rascunho, /DANKE15/); assert.doesNotMatch(n.rascunho, /100%|XK3|TOTAL100/)
+  r = await api(`/api/tickets/${n.id}/regenerar`, { instrucao: 'mais curto' }); assert.equal(r.status, 200, r.erro); n = await ticket(n.id); assert.equal(an(n).transicaoPendente.para, 'qual_troca'); assert.match(n.rascunho, /Gutschein/); assert.doesNotMatch(n.rascunho, /DANKE15/)
   r = await comEnvio('ok', () => aprovar(n)); assert.equal(r.status, 200, r.erro); n = await ticket(n.id); assert.equal(an(n).etapa, 'qual_troca')
   n = await cliente({ intencao: 'recusa', resumo: 'nein, 100%' }, { de: 'c93@web.de', corpo: 'Nein! 100%!', ticketId: n.id })
-  assert.equal(an(n).transicaoPendente.para, 'qual_cupom_35', 'segue a escada do mapa, não a Base'); assert.match(n.rascunho, /KEEP35/); assert.doesNotMatch(n.rascunho, /100%|TOTAL100/)
+  assert.equal(an(n).transicaoPendente.para, 'qual_cupom_35', 'segue a escada do mapa, não a Base'); assert.match(n.rascunho, /Gutschein/); assert.match(n.rascunho, /35\s?%/); assert.doesNotMatch(n.rascunho, /KEEP35/, 'oferta não revela o código'); assert.doesNotMatch(n.rascunho, /100%|TOTAL100/)
   r = await comEnvio('ok', () => aprovar(n)); assert.equal(r.status, 200, r.erro)
   n = await cliente({ intencao: 'aceita', resumo: 'ok, cupom' }, { de: 'c93@web.de', corpo: 'Ok, den Gutschein.', ticketId: n.id })
   assert.equal(n.status, 'humano'); assert.equal(an(n).acaoAceita, 'qual_cupom_35')

@@ -271,16 +271,20 @@ test('exigências positivas: percentual, valor do servidor, cupom cadastrado (ne
   // ação não nomeada
   v = conferir('reemb_40', 'Wir bieten 40% (28,00 €) an. Ok?')
   assert.equal(v.ok, false); assert.match(v.motivo, /não nomeia a ação/)
-  // troca + cupom + prazo
-  assert.equal(conferir('qual_troca', 'Kostenloser Umtausch, Lieferzeit 4 bis 11 Tage, Gutschein DANKE15 (15%). Ok?').ok, true)
-  v = conferir('qual_troca', 'Kostenloser Umtausch mit Gutschein DANKE15 (15%). Ok?')
+  // troca + cupom + prazo: NA OFERTA o código NUNCA aparece
+  assert.equal(conferir('qual_troca', 'Kostenloser Umtausch, Lieferzeit 4 bis 11 Tage, dazu ein Gutschein über 15%. Ok?').ok, true)
+  v = conferir('qual_troca', 'Kostenloser Umtausch mit einem Gutschein über 15%. Ok?')
   assert.equal(v.ok, false); assert.match(v.motivo, /prazo obrigatório/)
   v = conferir('qual_troca', 'Umtausch, 4 bis 11 Tage, Gutschein: FAKE99 (15%). Ok?')
   assert.equal(v.ok, false); assert.match(v.motivo, /não está cadastrado/, 'cupom inventado')
   v = conferir('qual_troca', 'Umtausch, 4 bis 11 Tage, Gutschein KEEP35 (15%). Ok?')
   assert.equal(v.ok, false, 'código de outra etapa')
-  v = conferir('qual_troca', 'Umtausch, 4 bis 11 Tage, mit Gutschein (15%). Ok?')
-  assert.equal(v.ok, false); assert.match(v.motivo, /falta o código do cupom/)
+  // o código CERTO também bloqueia antes do aceite
+  v = conferir('qual_troca', 'Umtausch, 4 bis 11 Tage, Gutschein DANKE15 (15%). Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /não pode aparecer antes de o cliente aceitar/)
+  // sem percentual, continua faltando informação
+  v = conferir('qual_troca', 'Umtausch, 4 bis 11 Tage, mit Gutschein. Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /percentual do cupom/)
   // 50%: frete só em dinheiro (25% de 70 = 17,50) e o valor de 50% (35,00)
   assert.equal(conferir('reemb_50', 'Rücksendung kostet ca. 17,50 €. Wir bieten eine Rückerstattung von 50% (35,00 €). Ok?').ok, true)
   v = conferir('reemb_50', 'Rücksendung kostet ca. 20,00 €. Rückerstattung von 50% (35,00 €)?')
@@ -291,6 +295,56 @@ test('exigências positivas: percentual, valor do servidor, cupom cadastrado (ne
   // utilitários
   assert.deepEqual(valoresMonetarios('17,50 € und €1.500,00 und 1,500.00 USD und 12 EUR und 10115 Berlin'), [17.5, 1500, 1500, 12])
   assert.deepEqual(codigosCitados('Gutschein: FAKE99, código postal 10115, coupon code SORRY25'), ['FAKE99', 'SORRY25'])
+})
+
+test('o CÓDIGO do cupom só aparece na confirmação, nunca durante a negociação', () => {
+  const an0 = novoEstado()
+  const conferir = (fase, txt, an = an0) => conferirTextoDaFase(fase, txt, loja, an, pedido1)
+
+  // TODA fase de oferta com cupom: percentual sim, código não
+  const ofertas = [
+    ['qual_troca', 15, 'DANKE15', 'Kostenloser Umtausch, 4 bis 11 Tage, dazu ein Gutschein über 15%. Ok?'],
+    ['qual_cupom_35', 35, 'KEEP35', 'Ein Gutschein über 35% für jede Bestellung, Sie behalten das Produkt. Ok?'],
+    ['nc_atrasado_25', 25, 'SORRY25', 'Bitte noch maximal 5 Werktage Geduld; als Entschuldigung ein Gutschein über 25%.'],
+    ['nc_cupom_40', 40, 'WAIT40', 'Als Entschuldigung erhalten Sie einen Gutschein über 40% für Ihre nächste Bestellung. Ok?'],
+    ['nr_reenvio_30', 30, 'BACK30', 'Wir senden das Paket erneut (4 bis 11 Tage) plus einen Gutschein über 30%. Ok?'],
+  ]
+  for (const [fase, pct, codigo, texto] of ofertas) {
+    assert.equal(conferir(fase, texto).ok, true, `${fase} devia passar sem código: ${texto}`)
+    // o mesmo texto COM o código cadastrado bloqueia
+    const comCodigo = conferir(fase, texto.replace(/Gutschein/, `Gutschein ${codigo}`))
+    assert.equal(comCodigo.ok, false, `${fase} devia bloquear o código antes do aceite`)
+    assert.match(comCodigo.motivo, /não pode aparecer antes de o cliente aceitar/)
+    assert.match(comCodigo.motivo, new RegExp(codigo))
+    // e em Markdown também
+    const negrito = conferir(fase, texto.replace(/Gutschein/, `Gutschein **${codigo}**`))
+    assert.equal(negrito.ok, false, `${fase}: Markdown não esconde o código`)
+    assert.ok(/não pode aparecer antes de o cliente aceitar|não está cadastrado/.test(negrito.motivo))
+    void pct
+  }
+
+  // CONFIRMAÇÃO: aí sim o código é obrigatório, e só o certo serve
+  const anCup = { ...novoEstado(), acaoAceita: 'qual_cupom_35' }
+  const conf = cod => `Ihr Gutschein ${cod} (35%) ist freigegeben und gilt für jede Bestellung. Sie behalten den Artikel.`
+  assert.equal(conferir('conf_cupom', conf('KEEP35'), anCup).ok, true, 'código certo passa')
+  let v = conferir('conf_cupom', 'Ihr Gutschein über 35% ist freigegeben und gilt für jede Bestellung.', anCup)
+  assert.equal(v.ok, false); assert.match(v.motivo, /falta o código do cupom cadastrado/, 'confirmação sem código bloqueia')
+  v = conferir('conf_cupom', conf('INVENTADO35'), anCup)
+  assert.equal(v.ok, false); assert.match(v.motivo, /não está cadastrado/, 'código inventado bloqueia')
+  v = conferir('conf_cupom', `Ihr Gutschein KEEP35 (35%) gilt für jede Bestellung. Zweiter Code: **ZZZZ99**.`, anCup)
+  assert.equal(v.ok, false); assert.match(v.motivo, /ZZZZ99/, 'código certo + inventado bloqueia')
+  v = conferir('conf_cupom', conf('DANKE15'), anCup)
+  assert.equal(v.ok, false, 'código de outra etapa bloqueia')
+
+  // a recusa do cliente não revela nada: a próxima oferta segue a mesma regra
+  assert.equal(conferir('qual_cupom_35', 'Ein Gutschein über 35% für jede Bestellung, Sie behalten das Produkt. Ok?').ok, true)
+  assert.equal(conferir('qual_cupom_35', 'Gutschein KEEP35 (35%) für jede Bestellung, Sie behalten das Produkt. Ok?').ok, false)
+
+  // e a regra vale igual nos outros idiomas suportados
+  assert.equal(conferir('qual_cupom_35', 'A 35% coupon valid for any order, and you keep the product. Ok?').ok, true)
+  assert.equal(conferir('qual_cupom_35', 'Coupon KEEP35 (35%) valid for any order, and you keep the product. Ok?').ok, false)
+  assert.equal(conferir('qual_cupom_35', 'Een kortingscode van 35% voor elke bestelling, u houdt het product. Akkoord?').ok, true)
+  assert.equal(conferir('qual_cupom_35', 'Kortingscode KEEP35 (35%) voor elke bestelling, u houdt het product. Akkoord?').ok, false)
 })
 
 test('código de cupom com hífen é lido INTEIRO — a Shopify gera códigos assim', () => {
@@ -306,13 +360,27 @@ test('código de cupom com hífen é lido INTEIRO — a Shopify gera códigos as
   assert.deepEqual(codigosCitados('cupom: ABC'), [])
   assert.deepEqual(codigosCitados('código postal 10115'), [])
 
-  // ponta a ponta na fase: o código CADASTRADO com hífen passa; o inventado não
-  const lojaHifen = { ...loja, cupons: { ...loja.cupons, 15: 'V7KQ-M4XN' } }
-  const texto = pct => `Wir bieten Ihnen einen kostenlosen Umtausch in einer anderen Farbe oder Größe an, ohne Rücksendung. Gutschein: ${pct} (15%). Lieferzeit 4 bis 11 Tage. Möchten Sie das annehmen?`
-  assert.equal(conferirTextoDaFase('qual_troca', texto('V7KQ-M4XN'), lojaHifen, novoEstado(), pedido1).ok, true)
-  const inventado = conferirTextoDaFase('qual_troca', texto('V7KQ-XXXX'), lojaHifen, novoEstado(), pedido1)
+  // Markdown não esconde o código: negrito, itálico, sublinhado e crase
+  assert.deepEqual(codigosCitados('Gutschein: **V7KQ-M4XN**'), ['V7KQ-M4XN'])
+  assert.deepEqual(codigosCitados('Gutschein: *FAKE99*'), ['FAKE99'])
+  assert.deepEqual(codigosCitados('Gutschein: _DANKE15_'), ['DANKE15'])
+  assert.deepEqual(codigosCitados('Gutschein: `SORRY25`'), ['SORRY25'])
+
+  // ponta a ponta na CONFIRMAÇÃO, que é onde o código pode viver
+  const lojaHifen = { ...loja, cupons: { ...loja.cupons, 35: 'V7KQ-M4XN' } }
+  const anCup = { ...novoEstado(), acaoAceita: 'qual_cupom_35' }
+  const texto = cod => `Ihr Gutschein ${cod} (35%) ist freigegeben und gilt für jede Bestellung. Sie behalten den Artikel.`
+  assert.equal(conferirTextoDaFase('conf_cupom', texto('V7KQ-M4XN'), lojaHifen, anCup, pedido1).ok, true, 'código com hífen cadastrado passa')
+  assert.equal(conferirTextoDaFase('conf_cupom', texto('**V7KQ-M4XN**'), lojaHifen, anCup, pedido1).ok, true, 'e passa também em negrito')
+  const inventado = conferirTextoDaFase('conf_cupom', texto('V7KQ-XXXX'), lojaHifen, anCup, pedido1)
   assert.equal(inventado.ok, false)
   assert.match(inventado.motivo, /V7KQ-XXXX/, 'o motivo mostra o código inteiro, não um pedaço')
+  // inventado em Markdown também bloqueia
+  const emNegrito = conferirTextoDaFase('conf_cupom', texto('**V7KQ-XXXX**'), lojaHifen, anCup, pedido1)
+  assert.equal(emNegrito.ok, false); assert.match(emNegrito.motivo, /não está cadastrado/)
+  // código certo ACOMPANHADO de um inventado também bloqueia
+  const dois = conferirTextoDaFase('conf_cupom', `Ihr Gutschein V7KQ-M4XN (35%) gilt für jede Bestellung. Zweiter Code: **ZZZZ-9999**.`, lojaHifen, anCup, pedido1)
+  assert.equal(dois.ok, false); assert.match(dois.motivo, /ZZZZ-9999/)
 })
 
 test('valor em dinheiro obrigatório, ação composta completa, percentual do cupom, frete e prazo da confirmação', () => {
@@ -341,12 +409,15 @@ test('valor em dinheiro obrigatório, ação composta completa, percentual do cu
   v = conferir('reemb_50', 'Wir bieten eine Rückerstattung von 50% (35,00 €). Ok?')
   assert.equal(v.ok, false); assert.match(v.motivo, /frete de devolução/)
   assert.equal(conferir('reemb_50', 'Rücksendung ca. 17,50 €; wir bieten eine Rückerstattung von 50% (35,00 €). Ok?').ok, true)
-  // cupom: código E percentual
-  v = conferir('qual_cupom_35', 'Gutschein KEEP35 für jede Bestellung, Sie behalten das Produkt. Ok?')
+  // cupom na OFERTA: percentual sim, código NUNCA
+  v = conferir('qual_cupom_35', 'Gutschein für jede Bestellung, Sie behalten das Produkt. Ok?')
   assert.equal(v.ok, false); assert.match(v.motivo, /percentual do cupom \(35%\)/)
-  assert.equal(conferir('qual_cupom_35', 'Gutschein KEEP35 (35%) für jede Bestellung, Sie behalten das Produkt. Ok?').ok, true)
+  assert.equal(conferir('qual_cupom_35', 'Ein Gutschein über 35% für jede Bestellung, Sie behalten das Produkt. Ok?').ok, true)
+  v = conferir('qual_cupom_35', 'Gutschein KEEP35 (35%) für jede Bestellung, Sie behalten das Produkt. Ok?')
+  assert.equal(v.ok, false); assert.match(v.motivo, /não pode aparecer antes de o cliente aceitar/, 'código antes do aceite')
+  assert.equal(conferir('nc_atrasado_25', 'Bitte 5 Werktage Geduld; ein Gutschein über 25%.').ok, true)
   v = conferir('nc_atrasado_25', 'Bitte 5 Werktage Geduld; Gutschein SORRY25 (25%).')
-  assert.equal(v.ok, true)
+  assert.equal(v.ok, false); assert.match(v.motivo, /não pode aparecer antes de o cliente aceitar/)
   // confirmação de reembolso/cancelamento: valor exato e 3 a 14 dias
   const anAceite = { ...novoEstado(), acaoAceita: 'reemb_40' }
   v = conferir('conf_reembolso', 'Ihre Rückerstattung von 40% (28,00 €) wurde veranlasst.', anAceite)
@@ -383,19 +454,23 @@ test('fases sem oferta e ofertas compostas: nenhuma informação do mapa pode se
   bloqueia('conf_troca', 'Umtausch bestätigt (4 bis 11 Tage), DANKE15 (15%): Hauptstraße 5, 10115 Berlin.', /se trata de um cupom/, { an: anTrocaCupom })
   passa('conf_troca', 'Umtausch bestätigt (4 bis 11 Tage) plus Gutschein DANKE15 (15%): Hauptstraße 5, 10115 Berlin.', { an: anTrocaCupom })
 
-  // ofertas compostas com cupom: código solto não basta
-  bloqueia('qual_troca', 'Kostenloser Umtausch, 4 bis 11 Tage, DANKE15 (15%). Ok?', /se trata de um cupom/)
-  passa('qual_troca', 'Kostenloser Umtausch, 4 bis 11 Tage, Gutschein DANKE15 (15%). Ok?')
-  bloqueia('nr_reenvio_30', 'Wir senden das Paket erneut (4 bis 11 Tage), BACK30 (30%). Ok?', /se trata de um cupom/)
-  bloqueia('nr_reenvio_30', 'Wir senden das Paket erneut, Gutschein BACK30 (30%). Ok?', /prazo obrigatório/)
-  bloqueia('nr_reenvio_30', 'Gutschein BACK30 (30%), 4 bis 11 Tage. Ok?', /"reenvio"/)
-  passa('nr_reenvio_30', 'Wir senden das Paket erneut (4 bis 11 Tage) plus Gutschein BACK30 (30%). Ok?')
+  // ofertas compostas com cupom: palavra "cupom" obrigatória, código PROIBIDO
+  bloqueia('qual_troca', 'Kostenloser Umtausch, 4 bis 11 Tage, 15% Rabatt. Ok?', /se trata de um cupom/)
+  passa('qual_troca', 'Kostenloser Umtausch, 4 bis 11 Tage, dazu ein Gutschein über 15%. Ok?')
+  bloqueia('qual_troca', 'Kostenloser Umtausch, 4 bis 11 Tage, Gutschein DANKE15 (15%). Ok?', /antes de o cliente aceitar/)
+  bloqueia('nr_reenvio_30', 'Wir senden das Paket erneut (4 bis 11 Tage), 30% Rabatt. Ok?', /se trata de um cupom/)
+  bloqueia('nr_reenvio_30', 'Wir senden das Paket erneut, ein Gutschein über 30%. Ok?', /prazo obrigatório/)
+  bloqueia('nr_reenvio_30', 'Ein Gutschein über 30%, 4 bis 11 Tage. Ok?', /"reenvio"/)
+  passa('nr_reenvio_30', 'Wir senden das Paket erneut (4 bis 11 Tage) plus einen Gutschein über 30%. Ok?')
+  bloqueia('nr_reenvio_30', 'Wir senden das Paket erneut (4 bis 11 Tage) plus Gutschein BACK30 (30%). Ok?', /antes de o cliente aceitar/)
 
   // não recebido
-  bloqueia('nc_atrasado_25', 'Bitte etwas Geduld; Gutschein SORRY25 (25%).', /5 dias úteis/)
-  bloqueia('nc_atrasado_25', 'Bitte noch 5 Tage Geduld; Gutschein SORRY25 (25%).', /5 dias úteis/, undefined)
-  passa('nc_atrasado_25', 'Bitte noch maximal 5 Werktage Geduld; als Entschuldigung Gutschein SORRY25 (25%).')
-  passa('nc_atrasado_25', 'Please wait at most five more business days; coupon SORRY25 (25%).')
+  bloqueia('nc_atrasado_25', 'Bitte etwas Geduld; ein Gutschein über 25%.', /5 dias úteis/)
+  bloqueia('nc_atrasado_25', 'Bitte noch 5 Tage Geduld; ein Gutschein über 25%.', /5 dias úteis/, undefined)
+  passa('nc_atrasado_25', 'Bitte noch maximal 5 Werktage Geduld; als Entschuldigung ein Gutschein über 25%.')
+  bloqueia('nc_atrasado_25', 'Bitte noch maximal 5 Werktage Geduld; Gutschein SORRY25 (25%).', /antes de o cliente aceitar/)
+  passa('nc_atrasado_25', 'Please wait at most five more business days; a 25% coupon as an apology.')
+  bloqueia('nc_atrasado_25', 'Please wait at most five more business days; coupon SORRY25 (25%).', /antes de o cliente aceitar/)
   bloqueia('nr_entregue_aguardar', 'Bitte warten Sie noch etwas.', /2 dias/)
   bloqueia('nr_entregue_aguardar', 'Bitte warten Sie noch 2 Tage.', /vizinhos/)
   bloqueia('nr_entregue_aguardar', 'Bitte warten Sie noch 2 Tage und fragen Sie die Nachbarn; hier ein Gutschein.', /não se oferece/)
@@ -626,13 +701,16 @@ test('holandês: ofertas, negações e exigências positivas passam pelos mesmos
   bloqueia('nc_no_prazo', 'Uw bestelling is nog binnen de levertijd, verwacht op 28-08-2026. Wij kunnen het pakket opnieuw verzenden.', /reenvio/)
   passa('nc_no_prazo', 'Uw bestelling is nog binnen de levertijd, verwacht op 28-08-2026. Een terugbetaling is pas na de levertermijn mogelijk.')
   // exigências positivas
-  passa('qual_troca', 'Wij bieden u graag een gratis omruil aan, levertijd 4 tot 11 dagen, met kortingscode DANKE15 (15%). Akkoord?')
-  bloqueia('qual_troca', 'Wij bieden u graag een gratis omruil aan, levertijd 4 tot 11 dagen, DANKE15 (15%). Akkoord?', /se trata de um cupom/)
+  passa('qual_troca', 'Wij bieden u graag een gratis omruil aan, levertijd 4 tot 11 dagen, met een kortingscode van 15%. Akkoord?')
+  bloqueia('qual_troca', 'Wij bieden u graag een gratis omruil aan, levertijd 4 tot 11 dagen, 15% korting. Akkoord?', /se trata de um cupom/)
+  // mesma proteção em holandês: o código não sai antes do aceite
+  bloqueia('qual_troca', 'Wij bieden u graag een gratis omruil aan, levertijd 4 tot 11 dagen, met kortingscode DANKE15 (15%). Akkoord?', /antes de o cliente aceitar/)
   passa('reemb_40', 'Wij bieden een terugbetaling van 40% (28,00 €) aan; u houdt het product. Akkoord?')
   bloqueia('reemb_40', 'Wij bieden 40% (28,00 €) aan. Akkoord?', /não nomeia a ação/)
   passa('nr_reenvio_35', 'Wij verzenden het pakket opnieuw (4 tot 11 dagen) plus een terugbetaling van 35% (24,50 €). Akkoord?')
-  passa('nc_atrasado_25', 'Nog maximaal 5 werkdagen geduld alstublieft; als excuus kortingscode SORRY25 (25%).')
-  bloqueia('nc_atrasado_25', 'Nog even geduld alstublieft; kortingscode SORRY25 (25%).', /5 dias úteis/)
+  passa('nc_atrasado_25', 'Nog maximaal 5 werkdagen geduld alstublieft; als excuus een kortingscode van 25%.')
+  bloqueia('nc_atrasado_25', 'Nog even geduld alstublieft; een kortingscode van 25%.', /5 dias úteis/)
+  bloqueia('nc_atrasado_25', 'Nog maximaal 5 werkdagen geduld alstublieft; kortingscode SORRY25 (25%).', /antes de o cliente aceitar/)
   passa('nr_entregue_aguardar', 'Wacht nog 2 dagen en vraag even bij de buren of de receptie.')
   bloqueia('nr_entregue_aguardar', 'Wacht nog 2 dagen.', /vizinhos/)
   passa('tam_ajuste', 'Was het te klein of te groot?')

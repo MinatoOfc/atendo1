@@ -601,11 +601,19 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
       if (!f.valor) detalhes.valor = `esperado ${esperado.toFixed(2)} (${pct}% de ${valorPedido.toFixed(2)}); no texto: ${citados.length ? citados.map(v => v.toFixed(2)).join(' / ') : 'nenhum valor'}`
     } else f.valor = null
 
-    // cupom: mesma trava única do envio
+    // cupom: mesma trava única do envio. Na CONFIRMAÇÃO o código tem de estar no
+    // texto; na negociação ele tem de estar AUSENTE — o cliente só recebe o código
+    // depois de aceitar e o lojista aprovar.
     const cup = travaCupom(loja, faseId, an, { agora })
-    f.cupom = !cup.precisa ? null : (cup.ok && String(texto).includes(cup.codigo ?? ' '))
+    const revelaCupom = FASES[faseId]?.confirmacao === true
+    const codigoNoTexto = !!cup.codigo && String(texto).includes(cup.codigo)
+    f.cupom = !cup.precisa ? null : (cup.ok && (revelaCupom ? codigoNoTexto : !codigoNoTexto))
     if (cup.precisa && !cup.ok) detalhes.cupom = cup.motivo
-    else if (f.cupom === false) detalhes.cupom = `o texto não traz o código conferido (${cup.codigo})`
+    else if (f.cupom === false) {
+      detalhes.cupom = revelaCupom
+        ? `o texto não traz o código conferido (${cup.codigo})`
+        : 'o código do cupom apareceu antes de o cliente aceitar'
+    }
 
     // prazo, endereço e foto
     f.prazo = oferta?.prazo ? conferencia.ok : null
@@ -2293,8 +2301,17 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
     if (cupE.precisa && !cupE.ok) {
       throw new Error(motivoCupom(transicao.para, cupE))
     }
-    if (cupE.precisa && cupE.codigo && !String(texto ?? '').includes(cupE.codigo)) {
-      throw new Error(`O texto não traz o código do cupom conferido (${cupE.codigo}) — nada é enviado`)
+    // o código só sai na CONFIRMAÇÃO, depois do aceite. Na negociação a barreira
+    // é ao contrário: se o código estiver no texto, nada é enviado.
+    if (cupE.precisa && cupE.codigo) {
+      const revela = FASES[transicao.para]?.confirmacao === true
+      const noTexto = String(texto ?? '').includes(cupE.codigo)
+      if (revela && !noTexto) {
+        throw new Error(`O texto não traz o código do cupom conferido (${cupE.codigo}) — nada é enviado`)
+      }
+      if (!revela && noTexto) {
+        throw new Error('O código do cupom não pode sair antes de o cliente aceitar — nada é enviado')
+      }
     }
   }
   // tentativa do ciclo. Uma tentativa já bloqueada ou que falhou está encerrada:

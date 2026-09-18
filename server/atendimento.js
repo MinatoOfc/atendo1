@@ -821,6 +821,23 @@ export function validarProposta(faseId, resultado, loja, an = null) {
 }
 
 /** Código do cupom exigido pela fase, ou null se a loja não cadastrou. */
+/**
+ * A fase pode REVELAR o código do cupom? Só a confirmação, depois de o cliente
+ * aceitar e o lojista aprovar. Durante a negociação a IA fala do cupom e do
+ * percentual, nunca do código: código entregue cedo é benefício entregue sem
+ * aceite.
+ */
+export const faseRevelaCupom = faseId => FASES[faseId]?.confirmacao === true
+
+/** Palavras aceitas para nomear cada ação (as mesmas que o validador exige). */
+const EXEMPLOS_ACAO = {
+  troca: 'troca / Umtausch / Tausch / Austausch / Ersatz / exchange / échange / cambio / ruil',
+  reenvio: 'reenvio / erneut senden / Ersatzlieferung / resend / renvoi / reenvío / opnieuw verzenden',
+  reembolso: 'reembolso / Rückerstattung / Erstattung / refund / remboursement / rimborso / terugbetaling',
+  cupom: 'cupom / Gutschein / Rabattcode / coupon / code promo / kortingscode',
+  cancelamento: 'cancelamento / Stornierung / cancellation / annulation',
+}
+
 export function cupomDaFase(faseId, loja, an = null) {
   const pct = ofertaDaFase(faseId, an)?.cupom
   if (!pct) return { precisa: false, codigo: null }
@@ -1072,7 +1089,13 @@ export function promptEscrever({ loja, config: configBruta, faseId, faltando = [
   if (oferta?.pct && (conf || oferta.pct < 100)) dados.push(`Reembolso de ${oferta.pct}% = ${dinheiro(valor * oferta.pct / 100, moeda)} (sobre ${dinheiro(valor, moeda)} pagos).`)
   if (faseId === 'reemb_50') dados.push(`Frete de devolução estimado: ${dinheiro(valor * 0.25, moeda)} — informe só este valor em dinheiro; não diga a porcentagem que ele representa.`)
   const cupom = cupomDaFase(faseId, loja, an)
-  if (cupom.precisa) dados.push(`Cupom de ${cupom.pct}%: código ${cupom.codigo}. Use EXATAMENTE este código.`)
+  if (cupom.precisa) {
+    // o CÓDIGO só é entregue ao escritor na confirmação. Na negociação ele nem
+    // chega ao prompt: o que a IA não recebe, ela não pode revelar cedo demais.
+    dados.push(conf
+      ? `Cupom de ${cupom.pct}%: código ${cupom.codigo}. Use EXATAMENTE este código.`
+      : `Cupom de ${cupom.pct}%: diga que o cliente receberá um cupom de ${cupom.pct}%. NÃO escreva nenhum código de cupom — o código só é entregue na confirmação, depois de o cliente aceitar.`)
+  }
   if (oferta?.prazo) dados.push(`Prazo do envio expresso: ${oferta.prazo}.`)
   if (conf && /troca|reenvio/.test(oferta?.tipo ?? '')) {
     if (!oferta?.prazo) dados.push(`Prazo do envio expresso: 4 a 11 dias.`)
@@ -1120,7 +1143,9 @@ export function promptEscrever({ loja, config: configBruta, faseId, faltando = [
       `- Você NUNCA confirma reembolso, troca, reenvio ou cancelamento como fato consumado. Você OFERECE e PERGUNTA se o cliente aceita; quem confirma depois é o lojista.`,
       `- Só cite valores, percentuais e códigos que estejam nos dados abaixo. Nunca invente prazo, valor, política ou código.`,
       `- Não escreva "aprovado", "confirmado", "já está em andamento", "enviaremos", "o dinheiro chegará".`,
-      `- Nomeie a ação com a palavra própria no idioma do cliente (troca/Umtausch/exchange, reenvio/erneut senden/resend, reembolso/Rückerstattung/refund, cupom/Gutschein/coupon) e escreva o percentual, o valor em dinheiro, o prazo e o código EXATAMENTE como estão nos dados abaixo.`,
+      `- Escreva o percentual, o valor em dinheiro e o prazo EXATAMENTE como estão nos dados abaixo.`,
+      ...acoesDaOferta(oferta).map(a => `- OBRIGATÓRIO: a resposta PRECISA conter a palavra que nomeia a ação "${a}" no idioma do cliente. Palavras aceitas: ${EXEMPLOS_ACAO[a]}. Descrever a ação sem nomeá-la faz a resposta ser recusada.`),
+      ...(cupomDaFase(faseId, loja, an).precisa ? [`- PROIBIDO escrever qualquer código de cupom nesta resposta. Diga só que haverá um cupom e o percentual; o código vai na confirmação, depois do aceite.`] : []),
     ]),
     ``,
     `AÇÃO DESTA RESPOSTA — ${fase.titulo}:`,
@@ -1241,14 +1266,15 @@ const RE_CUPOM_KW = /(cupom|cup[óo]n|coupon(?:code)?|gutschein(?:code)?|rabattc
  * como "V7KQ-M4XN", e ler só "V7KQ" faria o validador acusar de inventado um
  * código que está cadastrado, travando toda etapa com cupom. O token começa e
  * termina em letra ou dígito, então o hífen de pontuação ("Gutschein - ABC123")
- * continua de fora.
+ * continua de fora. Ênfase de Markdown (**CODE**, *CODE*, _CODE_, `CODE`) é
+ * descascada: sem isso um código inventado em negrito passaria batido.
  */
 export function codigosCitados(texto) {
   const out = new Set()
   const s = String(texto || '')
   for (const m of s.matchAll(RE_CUPOM_KW)) {
     const resto = s.slice(m.index + m[0].length, m.index + m[0].length + 40)
-    const tok = resto.match(/^[\s:\-–—"“«'’]*([A-Za-z0-9][A-Za-z0-9_-]{2,22}[A-Za-z0-9])/)?.[1]
+    const tok = resto.match(/^[\s:\-–—"“«'’*_`]*([A-Za-z0-9][A-Za-z0-9_-]{2,22}[A-Za-z0-9])/)?.[1]
     if (tok && /^[A-Z0-9_-]+$/.test(tok) && /[A-Z]/.test(tok)) out.add(tok)
   }
   return [...out]
@@ -1420,9 +1446,11 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   const idiomaAlvo = normalizarIdioma(opcoes.idioma)
   const leve = !!(idiomaAlvo && !IDIOMAS_VALIDADOS.has(idiomaAlvo))
   const aviso = leve ? `idioma "${idiomaAlvo}" não é validado localmente — aprovação humana obrigatória` : null
-  // cupom inventado / código diferente do cadastrado
+  // cupom inventado / código diferente do cadastrado. Vale mesmo em Markdown:
+  // um código correto acompanhado de outro inventado também bloqueia.
   const cadastrados = new Set(Object.values(loja?.cupons ?? {}).filter(Boolean))
-  for (const c of codigosCitados(s)) {
+  const codigosNoTexto = codigosCitados(s)
+  for (const c of codigosNoTexto) {
     if (!cadastrados.has(c)) return { ok: false, motivo: `o texto cita o código de cupom "${c}", que não está cadastrado na loja` }
   }
   // valores em dinheiro: só os calculados pelo servidor
@@ -1469,9 +1497,19 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
   }
   const cup = cupomDaFase(faseId, loja, an)
   if (cup.precisa) {
-    if (cup.codigo && !s.includes(cup.codigo)) return { ok: false, motivo: `falta o código do cupom cadastrado (${cup.codigo})` }
     if (!new RegExp(`\\b${cup.pct}\\s?%`).test(s)) return { ok: false, motivo: `falta o percentual do cupom (${cup.pct}%)` }
     if (!leve && !RE_ACAO.cupom.test(s)) return { ok: false, motivo: 'falta dizer que se trata de um cupom (Gutschein / coupon / código de desconto) — o código solto não basta' }
+    if (faseRevelaCupom(faseId)) {
+      // CONFIRMAÇÃO: o código cadastrado é obrigatório (e só ele — outro código
+      // já foi barrado acima, cadastrado ou inventado)
+      if (cup.codigo && !s.includes(cup.codigo)) return { ok: false, motivo: `falta o código do cupom cadastrado (${cup.codigo})` }
+    } else {
+      // NEGOCIAÇÃO: nenhum código pode aparecer antes do aceite do cliente
+      const revelado = codigosNoTexto[0] ?? (cup.codigo && s.includes(cup.codigo) ? cup.codigo : null)
+      if (revelado) {
+        return { ok: false, motivo: `o código do cupom ("${revelado}") não pode aparecer antes de o cliente aceitar — nesta etapa diga só que haverá um cupom de ${cup.pct}%` }
+      }
+    }
   }
   // atrasado: o prazo máximo de mais 5 dias úteis é obrigatório
   if (!leve && faseId === 'nc_atrasado_25' && !mencionaDiasUteis(s, 5)) {

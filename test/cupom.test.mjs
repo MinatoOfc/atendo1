@@ -64,7 +64,9 @@ estado.pedidos = [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({
   itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
 }))
 
-const RASCUNHO_COM_CUPOM = 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 bis 11 Tage. Möchten Sie das annehmen?'
+// OFERTA: fala do cupom e do percentual, nunca do código (o código só vai na confirmação)
+const RASCUNHO_COM_CUPOM = 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Sie erhalten einen Gutschein über 15%. Lieferzeit 4 bis 11 Tage. Möchten Sie das annehmen?'
+const RASCUNHO_REVELANDO_CODIGO = 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 bis 11 Tage. Möchten Sie das annehmen?'
 /** ticket do novo parado na fase qual_troca (que usa o cupom de 15%). */
 const comCupom = (id, lojaId, extra = {}) => ({
   id, nome: 'C', de: `${id}@web.de`, assunto: 'Bestellung #1', corpo: 'Schlecht.', data: '2026-09-01T10:00:00.000Z',
@@ -81,6 +83,7 @@ const comCupom = (id, lojaId, extra = {}) => ({
 
 estado.tickets = [
   comCupom('ok1', 'loja1'),                    // loja com cupom conferido
+  comCupom('ok2', 'loja1'),                    // idem, para o caso do código revelado cedo
   comCupom('ruim1', 'loja2'),                  // cupom inexistente na Shopify
   comCupom('ruim2', 'loja2'),                  // idem, para o autoenvio
   comCupom('ruim3', 'loja2'),                  // idem, para "só o texto"
@@ -201,7 +204,16 @@ test('cupom conferido: o caminho feliz continua enviando normalmente', async () 
   assert.equal(r.status, 200, 'com o cupom conferido o envio acontece: ' + (r.erro ?? ''))
   const t = await ticket('ok1')
   assert.ok(t.respondidoEm, 'a resposta saiu')
-  assert.match(t.resposta ?? '', /DANKE15/)
+  assert.match(t.resposta ?? '', /Gutschein/)
+  assert.doesNotMatch(t.resposta ?? '', /DANKE15/, 'o código não sai antes do aceite')
+})
+
+test('oferta que revela o código do cupom não é enviada, nem com o cupom conferido', async () => {
+  const r = await api('/api/tickets/ok2/aprovar', { texto: RASCUNHO_REVELANDO_CODIGO, origem: 'ia' })
+  assert.equal(r.status, 400, 'o código entregue antes do aceite bloqueia o envio')
+  assert.match(r.erro, /antes de o cliente aceitar/)
+  const t = await ticket('ok2')
+  assert.equal(t.respondidoEm ?? null, null, 'nada saiu')
 })
 
 test('trocar o código apaga a conferência da loja na hora', async () => {

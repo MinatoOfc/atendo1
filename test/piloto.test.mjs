@@ -72,9 +72,11 @@ globalThis.fetch = async (url, opts) => {
   if (req.includes('acao_proposta')) {
     const sys = String(body.system || '')
     const acao = sys.match(/"acao_proposta" deve ser exatamente "([^"]+)"/)?.[1] ?? '?'
-    const cup = sys.match(/Cupom de (\d+)%: código (\w+)\. Use EXATAMENTE/)
+    const cup = sys.match(/Cupom de (\d+)%: código ([\w-]+)\. Use EXATAMENTE/)
+    // na oferta o código nem chega ao prompt: só o percentual
+    const cupOferta = sys.match(/Cupom de (\d+)%: diga que/)
     const prazo = sys.match(/Prazo do envio expresso: ([^.]+)\./)?.[1]
-    return responder({ resposta: `Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an.${cup ? ` Gutschein: ${cup[2]} (${cup[1]}%).` : ''}${prazo ? ` Lieferzeit ${prazo}.` : ''} Möchten Sie das annehmen?`, acao_proposta: acao, idioma: 'de' })
+    return responder({ resposta: `Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an.${cup ? ` Gutschein: ${cup[2]} (${cup[1]}%).` : cupOferta ? ` Sie erhalten einen Gutschein über ${cupOferta[1]}%.` : ''}${prazo ? ` Lieferzeit ${prazo}.` : ''} Möchten Sie das annehmen?`, acao_proposta: acao, idioma: 'de' })
   }
   return responder({ situacao: 'rastreio', resolucao: 'rastreio enviado', categoria: 'rastreio', idioma: 'de', resposta: 'Ihr Paket ist unterwegs.', confianca: 0.95, escalar_humano: false, aprova_reembolso: false, confirma_troca: false, encerrar: false, motivo: '', spam: false })
 }

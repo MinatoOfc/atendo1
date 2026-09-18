@@ -121,13 +121,17 @@ globalThis.fetch = async (u, o) => {
   const aceita = sys.match(/Opção aceita pelo cliente e aprovada pelo lojista: ([^\n]+)/)?.[1] ?? ''
   const acao = (aceita || titulo).toLowerCase()
   const pct = sys.match(/Reembolso de (\d+)% = ([\d,]+ €)/)
-  const cup = sys.match(/Cupom de (\d+)%: código (\w+)\. Use EXATAMENTE/)
+  // o código só chega ao prompt na CONFIRMAÇÃO; na oferta vem a ordem de
+  // falar do cupom e do percentual sem revelar o código
+  const cup = sys.match(/Cupom de (\d+)%: código ([\w-]+)\. Use EXATAMENTE/)
+  const cupOferta = sys.match(/Cupom de (\d+)%: diga que/)
   const prazo = sys.match(/Prazo do envio expresso: ([^.]+)\./)?.[1]
   const frases = ['Hallo!']
   if (/troca/.test(acao)) frases.push('Wir bieten Ihnen einen kostenlosen Umtausch an.')
   if (/reenvio|enviar/.test(acao)) frases.push('Wir senden das Paket erneut.')
   if (/reembolso/.test(acao) || pct) frases.push(pct ? `Wir bieten eine Rückerstattung von ${pct[1]}% (${pct[2]}) an.` : 'Wir bieten eine Rückerstattung an.')
   if (cup) frases.push(`Gutschein: ${cup[2]} (${cup[1]}%).`)
+  else if (cupOferta) frases.push(`Sie erhalten einen Gutschein über ${cupOferta[1]}%.`)
   if (/cancel/.test(acao)) frases.push('Die Bestellung wird storniert.')
   if (/número do pedido/.test(sys)) frases.push('Bitte nennen Sie Ihre Bestellnummer.')
   if (/quais produtos/.test(sys)) frases.push('Welchen Artikel meinen Sie?')
