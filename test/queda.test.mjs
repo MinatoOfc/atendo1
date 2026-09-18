@@ -60,6 +60,8 @@ writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
 const ambiente = extra => ({
   ...process.env, DATA_DIR: DIR, PORT: String(PORTA), ANTHROPIC_API_KEY: 'sk-ant-teste',
   ATENDO_SIMULAR: '1', ATENDO_SMTP_FAKE: 'ok', ATENDO_TESTE_ENVIOS: ENVIOS,
+  // a simulação de integração só vale em teste
+  NODE_ENV: 'test',
   DATABASE_URL: '', ATENDO_LIBERAR_AUTOENVIO: '1',
   EMAIL_USER: 'loja1@teste.local', EMAIL_PASS: 'senha-falsa', EMAIL_IMAP_HOST: 'imap.invalido.test', EMAIL_SMTP_HOST: 'smtp.invalido.test',
   ...extra,

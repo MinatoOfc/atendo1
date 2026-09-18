@@ -294,7 +294,10 @@ export interface Loja {
     faltando: { chave: string; texto: string }[]
     avisos?: { chave: string; texto: string }[]
     /** situação de cada cupom (o de 10% vem como reserva) */
-    cupons?: { pct: number; codigo: string | null; usadoPeloFluxo: boolean; reserva: boolean; situacao: string; detalhe: string }[]
+    cupons?: { pct: number; codigo: string | null; usadoPeloFluxo: boolean; reserva: boolean; situacao: string; detalhe: string; verificadoEm?: string | null; verificadoNaLoja?: string | null; valeAte?: string | null; pctEncontrado?: number | null }[]
+    /** resumo da última conferência (quando venceu, se houve permissão) */
+    verificacaoCupons?: { em: string | null; lojaId: string | null; permissao: boolean; valeAte: string | null; vencida: boolean; erro: string | null } | null
+    sincronizacao?: { ok: boolean; em: string; erro: string | null; valeAte?: string | null; vencida?: boolean } | null
     /** nível do envio TOTALMENTE automático (Shopify, sincronização, moeda, cupons verificados) */
     automatico?: { pronto: boolean; faltando: { chave: string; texto: string }[] }
   }

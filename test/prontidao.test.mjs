@@ -10,13 +10,16 @@ import {
 
 // percentuais que as fases realmente usam (server/atendimento.js é a fonte)
 const USADOS = [15, 25, 30, 35, 40]
+// relógio fixo: toda conferência tem validade de 24 h, então nada pode depender do dia real
+const AGORA = Date.parse('2026-09-18T12:00:00.000Z')
+const HORA = 3600_000
 const CODIGOS = { 10: 'RESERVA10', 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }
 const loja = (extra = {}) => ({
   id: 'loja1', nome: 'Loja Nova', moeda: 'EUR', modoAtendimento: 'novo',
   prazoEntrega: { min: 5, max: 12, processamento: 3 }, cupons: { ...CODIGOS }, ...extra,
 })
 const verificacaoOk = (lojaId = 'loja1', extra = []) => ({
-  permissao: true, erro: null, em: '2026-09-18T10:00:00.000Z', lojaId,
+  permissao: true, erro: null, em: new Date(AGORA - 2 * HORA).toISOString(), lojaId,
   itens: [...USADOS.map(pct => ({ pct, codigo: CODIGOS[pct], situacao: 'ok', detalhe: `${pct}% ativo na Shopify` })), ...extra],
 })
 const comItem = (pct, patch) => {
@@ -26,8 +29,8 @@ const comItem = (pct, patch) => {
 }
 const completo = (extra = {}) => ({
   loja: loja(), emailOk: true, shopify: { conectada: true },
-  sincronizacao: { ok: true, em: '2026-09-18T09:00:00.000Z', erro: null },
-  verificacaoCupons: verificacaoOk(), pctsUsados: USADOS, ...extra,
+  sincronizacao: { ok: true, em: new Date(AGORA - 3 * HORA).toISOString(), erro: null },
+  verificacaoCupons: verificacaoOk(), pctsUsados: USADOS, agora: AGORA, ...extra,
 })
 const chaves = lista => lista.map(f => f.chave)
 
@@ -51,7 +54,7 @@ test('sincronização de pedidos que falhou bloqueia, e o erro aparece no texto'
   const semSync = prontidaoDaLoja(completo({ sincronizacao: null }))
   assert.equal(semSync.pronto, false)
   assert.ok(chaves(semSync.faltando).includes('sincronizacao'))
-  const falhou = prontidaoDaLoja(completo({ sincronizacao: { ok: false, erro: 'token revogado', em: '2026-09-18T09:00:00.000Z' } }))
+  const falhou = prontidaoDaLoja(completo({ sincronizacao: { ok: false, erro: 'token revogado', em: new Date(AGORA - 3 * HORA).toISOString() } }))
   assert.equal(falhou.pronto, false)
   assert.match(falhou.faltando.find(f => f.chave === 'sincronizacao').texto, /token revogado/)
 })
@@ -88,29 +91,97 @@ test('cupom expirado bloqueia o automático e nunca vai para a mensagem', () => 
 
 test('verificação feita em OUTRA loja não vale: nada de misturar código entre lojas', () => {
   const daOutra = verificacaoOk('loja2')
-  const e = estadoCupom(30, CODIGOS[30], daOutra, 'loja1')
+  const e = estadoCupom(30, CODIGOS[30], daOutra, 'loja1', AGORA)
   assert.equal(e.situacao, 'outra_loja')
   assert.equal(e.detalhe, SITUACAO_CUPOM.outra_loja)
   const r = prontidaoDaLoja(completo({ verificacaoCupons: daOutra }))
   assert.equal(r.pronto, true, 'o piloto com aprovação continua')
   assert.equal(r.automatico.pronto, false)
-  assert.ok(chaves(r.automatico.faltando).includes('cupons_nao_verificados'))
-  // e a mensagem automática não usa esse código
-  assert.equal(cupomParaMensagem({ pct: 30, cupons: CODIGOS, verificacao: daOutra, lojaId: 'loja1', exigirVerificado: true }).codigo, null)
+  assert.ok(chaves(r.automatico.faltando).includes('cupons_invalidos'))
+  // e o código de outra loja NUNCA entra numa mensagem, nem com aprovação humana
+  const uso = cupomParaMensagem({ pct: 30, cupons: CODIGOS, verificacao: daOutra, lojaId: 'loja1', agora: AGORA })
+  assert.equal(uso.ok, false)
+  assert.equal(uso.codigo, null)
 })
 
-test('sem permissão read_discounts: "cupom não verificado" e só o automático é bloqueado', () => {
-  const semPermissao = { permissao: false, erro: 'Faltou a permissão de leitura de descontos.', em: '2026-09-18T10:00:00.000Z', lojaId: 'loja1', itens: [] }
+test('sem permissão read_discounts: "cupom não verificado" — piloto segue, mensagem com cupom para', () => {
+  const semPermissao = { permissao: false, erro: 'Faltou a permissão de leitura de descontos.', em: new Date(AGORA - 2 * HORA).toISOString(), lojaId: 'loja1', itens: [] }
   const r = prontidaoDaLoja(completo({ verificacaoCupons: semPermissao }))
-  assert.equal(r.pronto, true, 'o piloto com aprovação humana pode continuar')
+  assert.equal(r.pronto, true, 'a loja pode rodar o piloto com aprovação humana')
   assert.equal(r.automatico.pronto, false)
   assert.ok(chaves(r.automatico.faltando).includes('cupons_nao_verificados'))
-  assert.ok(r.avisos.some(a => /não verificado/.test(a.texto) && /piloto com aprovação continua/.test(a.texto)))
-  // com aprovação humana o código ainda é usado (com o aviso); sozinho, não
-  const comHumano = cupomParaMensagem({ pct: 15, cupons: CODIGOS, verificacao: semPermissao, lojaId: 'loja1' })
-  assert.equal(comHumano.codigo, 'DANKE15')
-  assert.match(comHumano.motivo, /permissão|não verificado/i)
-  assert.equal(cupomParaMensagem({ pct: 15, cupons: CODIGOS, verificacao: semPermissao, lojaId: 'loja1', exigirVerificado: true }).codigo, null)
+  assert.ok(r.avisos.some(a => /não verificado/.test(a.texto) && /Aprovações/.test(a.texto)))
+  // a MENSAGEM é outra régua: sem conferência, nenhum código sai — nem com o dono aprovando
+  const uso = cupomParaMensagem({ pct: 15, cupons: CODIGOS, verificacao: semPermissao, lojaId: 'loja1', agora: AGORA })
+  assert.equal(uso.ok, false)
+  assert.equal(uso.codigo, null)
+  assert.match(uso.motivo, /ainda não foi conferido na Shopify/)
+})
+
+test('conferência com mais de 24 h vence: aparece como vencida e bloqueia o automático', () => {
+  const antiga = verificacaoOk()
+  antiga.em = new Date(AGORA - 25 * HORA).toISOString()
+  const e = estadoCupom(15, CODIGOS[15], antiga, 'loja1', AGORA)
+  assert.equal(e.situacao, 'vencida')
+  assert.equal(e.detalhe, SITUACAO_CUPOM.vencida)
+  assert.equal(e.valeAte, new Date(Date.parse(antiga.em) + 24 * HORA).toISOString())
+  const r = prontidaoDaLoja(completo({ verificacaoCupons: antiga }))
+  assert.equal(r.pronto, true)
+  assert.equal(r.automatico.pronto, false, 'verificação vencida bloqueia o autoenvio')
+  assert.ok(chaves(r.automatico.faltando).includes('cupons_nao_verificados'))
+  assert.equal(r.verificacaoCupons.vencida, true)
+  // e a mensagem com cupom para
+  assert.equal(cupomParaMensagem({ pct: 15, cupons: CODIGOS, verificacao: antiga, lojaId: 'loja1', agora: AGORA }).codigo, null)
+  // dentro das 24 h, a mesma conferência vale
+  assert.equal(cupomParaMensagem({ pct: 15, cupons: CODIGOS, verificacao: antiga, lojaId: 'loja1', agora: Date.parse(antiga.em) + 23 * HORA }).codigo, CODIGOS[15])
+})
+
+test('sincronização de pedidos com mais de 24 h também vence', () => {
+  const r = prontidaoDaLoja(completo({ sincronizacao: { ok: true, em: new Date(AGORA - 25 * HORA).toISOString(), erro: null } }))
+  assert.equal(r.pronto, false)
+  assert.match(r.faltando.find(f => f.chave === 'sincronizacao').texto, /vencida/)
+  assert.equal(r.sincronizacao.vencida, true)
+})
+
+test('trocar o código invalida a conferência na hora (sem apagar nada do resto)', () => {
+  const v = verificacaoOk()
+  // o dono trocou DANKE15 por NOVO15: a conferência anterior não vale para o novo código
+  const cupons = { ...CODIGOS, 15: 'NOVO15' }
+  const e = estadoCupom(15, cupons[15], v, 'loja1', AGORA)
+  assert.equal(e.situacao, 'nao_verificado')
+  assert.match(e.detalhe, /mudou depois/)
+  assert.equal(cupomParaMensagem({ pct: 15, cupons, verificacao: v, lojaId: 'loja1', agora: AGORA }).codigo, null)
+  // os outros percentuais continuam conferidos
+  assert.equal(cupomParaMensagem({ pct: 25, cupons, verificacao: v, lojaId: 'loja1', agora: AGORA }).codigo, CODIGOS[25])
+})
+
+test('a mensagem só aceita cupom conferido: todas as outras situações param a fase com motivo', () => {
+  const casos = [
+    ['inexistente', /não serve/],
+    ['percentual_divergente', /não serve/],
+    ['incompativel', /não serve/],
+    ['expirado', /não serve/],
+    ['nao_iniciado', /não serve/],
+    ['esgotado', /não serve/],
+    ['erro', /não serve/],
+  ]
+  for (const [situacao, motivo] of casos) {
+    const v = comItem(35, { situacao, detalhe: 'detalhe ' + situacao })
+    const uso = cupomParaMensagem({ pct: 35, cupons: CODIGOS, verificacao: v, lojaId: 'loja1', agora: AGORA })
+    assert.equal(uso.codigo, null, situacao + ' não pode virar código')
+    assert.equal(uso.ok, false, situacao)
+    assert.match(uso.motivo, motivo, situacao)
+  }
+  // e os cinco cupons válidos passam
+  for (const pct of USADOS) {
+    const uso = cupomParaMensagem({ pct, cupons: CODIGOS, verificacao: verificacaoOk(), lojaId: 'loja1', agora: AGORA })
+    assert.equal(uso.codigo, CODIGOS[pct], 'cupom de ' + pct + '% deveria passar')
+    assert.equal(uso.ok, true)
+  }
+  // fase sem cupom não é bloqueada por nada disso
+  const semCupom = cupomParaMensagem({ pct: null, cupons: CODIGOS, verificacao: null, lojaId: 'loja1', agora: AGORA })
+  assert.equal(semCupom.ok, true)
+  assert.equal(semCupom.precisa, false)
 })
 
 test('cupom não cadastrado no Atendo bloqueia os dois níveis', () => {

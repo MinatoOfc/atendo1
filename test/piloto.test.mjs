@@ -12,6 +12,8 @@ process.env.DATA_DIR = DIR
 process.env.PORT = '8797'
 process.env.ANTHROPIC_API_KEY = 'sk-ant-teste'
 process.env.ATENDO_SIMULAR = '1'
+// a simulação de integração só vale em teste: em produção ATENDO_SIMULAR é ignorado
+process.env.NODE_ENV = 'test'
 delete process.env.DATABASE_URL
 delete process.env.ATENDO_LIBERAR_AUTOENVIO
 delete process.env.ATENDO_SMTP_FAKE

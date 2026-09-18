@@ -103,15 +103,17 @@ const nomesProvedores: Record<string, string> = {
 /** Ajustes do modo novo, por loja: envio automático, prazo em dias úteis e cupons. */
 const PERCENTUAIS_CUPOM = ['10', '15', '25', '30', '35', '40'] as const
 const ROTULO_CURTO_CUPOM: Record<string, string> = {
-  ok: '✓ confere', ausente: 'não cadastrado', nao_verificado: 'não verificado', inexistente: 'não existe',
-  percentual_divergente: 'percentual diferente', expirado: 'expirado', nao_iniciado: 'ainda não vale',
-  inativo: 'desativado', erro: 'erro ao verificar', outra_loja: 'de outra loja', reserva: 'reserva — não usado pelo fluxo',
+  ok: '✓ confere', ausente: 'não cadastrado', nao_verificado: 'não verificado', vencida: 'verificação vencida',
+  inexistente: 'não existe', percentual_divergente: 'percentual diferente', incompativel: 'tipo incompatível',
+  expirado: 'expirado', nao_iniciado: 'ainda não vale', inativo: 'desativado', esgotado: 'limite atingido',
+  erro: 'erro ao verificar', outra_loja: 'de outra loja', reserva: 'reserva — não usado pelo fluxo',
 }
 const rotuloCurtoCupom = (situacao: string) => ROTULO_CURTO_CUPOM[situacao] ?? situacao
+// verde SÓ com a Shopify tendo confirmado de verdade, dentro da validade
 const corDoCupom = (situacao: string) =>
   situacao === 'ok' ? 'var(--green, #3fb950)'
     : situacao === 'reserva' ? 'var(--text-3)'
-      : situacao === 'nao_verificado' ? 'var(--amber, #d29922)'
+      : ['nao_verificado', 'vencida', 'ausente', 'erro'].includes(situacao) ? 'var(--amber, #d29922)'
         : 'var(--red, #f85149)'
 const fmtQuando = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
 
@@ -326,14 +328,36 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
           {PERCENTUAIS_CUPOM.map(p => {
             const est = estadoDoCupom(Number(p))
             return (
-              <label key={p} className="muted-sm" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label key={p} className="muted-sm" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                 {p}%{p === '10' && <span style={{ fontSize: 11 }}> (reserva)</span>}
-                <input value={cupons[p] ?? ''} placeholder={`CUPOM${p}`} style={{ width: 118, fontFamily: 'monospace' }}
+                <input value={cupons[p] ?? ''} placeholder={`CUPOM${p}`} style={{ width: 150, fontFamily: 'monospace' }}
                   onChange={e => setCupons(c => ({ ...c, [p]: e.target.value.toUpperCase() }))}
                   onBlur={salvarCupons} />
                 {est && (
-                  <span style={{ fontSize: 11, color: corDoCupom(est.situacao) }} title={est.detalhe}>
-                    {rotuloCurtoCupom(est.situacao)}
+                  <span style={{ fontSize: 11, lineHeight: 1.45, display: 'block' }} title={est.detalhe}>
+                    <b style={{ color: corDoCupom(est.situacao) }}>{rotuloCurtoCupom(est.situacao)}</b>
+                    {!est.reserva && (
+                      <>
+                        <span style={{ display: 'block', color: 'var(--text-3)' }}>
+                          esperado {p}%{est.pctEncontrado != null && <> · encontrado {est.pctEncontrado}%</>}
+                        </span>
+                        <span style={{ display: 'block', color: 'var(--text-3)' }}>
+                          {est.verificadoNaLoja ? `loja ${est.verificadoNaLoja}` : 'sem verificação'}
+                          {est.verificadoEm && <> · {new Date(est.verificadoEm).toLocaleString('pt-BR')}</>}
+                        </span>
+                        {est.valeAte && (
+                          <span style={{ display: 'block', color: 'var(--text-3)' }}>
+                            vale até {new Date(est.valeAte).toLocaleString('pt-BR')}
+                          </span>
+                        )}
+                        {est.situacao === 'vencida' && (
+                          <button className="btn btn-sm" style={{ marginTop: 4 }} disabled={testandoCupons}
+                            onClick={async () => { setTestandoCupons(true); const r = await s.testarCupons(lojaId); setTestandoCupons(false); setResultadoCupons(r.erro ?? null) }}>
+                            Reverificar
+                          </button>
+                        )}
+                      </>
+                    )}
                   </span>
                 )}
               </label>
@@ -347,6 +371,11 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
           {faltam.length > 0 && <> <b style={{ color: 'var(--amber, #d29922)' }}>Faltam: {faltam.map(p => p + '%').join(', ')}.</b></>}
         </p>
         {resultadoCupons && <p className="muted-sm" style={{ color: 'var(--amber, #d29922)' }}>{resultadoCupons}</p>}
+        <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
+          A conferência vale por <b>24 horas</b> e usa a permissão <b>read_discounts</b> da Shopify. Se ela ainda não foi
+          concedida, publique a nova configuração do app na Shopify e <b>reconecte cada loja</b> — enquanto isso os cupons
+          ficam como "não verificado", o envio automático fica bloqueado e as etapas com cupom param em Aprovações.
+        </p>
         {(loja?.prontidaoNovo?.avisos ?? []).map(a => (
           <p key={a.chave + a.texto} className="muted-sm" style={{ color: 'var(--amber, #d29922)', lineHeight: 1.5 }}>{a.texto}</p>
         ))}

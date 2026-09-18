@@ -4,7 +4,10 @@ const envClientId = (process.env.SHOPIFY_CLIENT_ID || '').trim()
 const envClientSecret = (process.env.SHOPIFY_CLIENT_SECRET || '').trim()
 const versao = (process.env.SHOPIFY_API_VERSION || '2026-07').trim()
 // read_inventory: sem ele a API nova omite inventory_quantity e todo produto pareceria esgotado
-const escopos = (process.env.SHOPIFY_SCOPES || 'read_orders,read_all_orders,read_customers,read_fulfillments,read_products,read_inventory').trim()
+// read_discounts: sem ele os cupons do fluxo não podem ser conferidos e o envio
+// automático fica bloqueado (é preciso publicar a nova configuração do app e reconectar a loja)
+const escopos = (process.env.SHOPIFY_SCOPES || 'read_orders,read_all_orders,read_customers,read_fulfillments,read_products,read_inventory,read_discounts').trim()
+export const ESCOPOS_PADRAO = escopos
 
 // Aceita "loja", "loja.myshopify.com" ou a URL completa colada do navegador
 function normalizar(v) {
@@ -240,82 +243,109 @@ export async function buscarProdutosShopify(cx) {
   return { produtos: r.itens.map(p => mapearProduto(p, cx.loja)) }
 }
 
-/** Chamada que devolve o STATUS junto: o 404 do cupom ("não existe") não pode
- *  ser confundido com o 404 de loja/versão da API. */
-async function chamarComStatus(cx, caminho) {
-  if (!cx) return { status: 0, erro: 'Shopify não conectada.' }
+const SEM_PERMISSAO_DESCONTOS = 'Faltou a permissão de leitura de descontos (read_discounts). Publique a nova configuração do app na Shopify e reconecte esta loja.'
+
+/** Consulta GraphQL na MESMA versão configurada da API. */
+async function graphql(cx, query, variables = {}) {
+  if (!cx) return { erro: 'Shopify não conectada.' }
   try {
-    const resp = await fetch(`https://${cx.loja}/admin/api/${versao}/${caminho}`, {
-      headers: { 'X-Shopify-Access-Token': cx.token },
+    const resp = await fetch(`https://${cx.loja}/admin/api/${versao}/graphql.json`, {
+      method: 'POST',
+      headers: { 'X-Shopify-Access-Token': cx.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
     })
     if (resp.status === 429) {
       const espera = Math.min(10, Number(resp.headers.get('Retry-After') || 2))
       await new Promise(r => setTimeout(r, espera * 1000))
-      return chamarComStatus(cx, caminho)
+      return graphql(cx, query, variables)
     }
-    if (!resp.ok) return { status: resp.status, erro: traduzirErro(resp.status, await resp.text().catch(() => ''), cx) }
-    return { status: resp.status, dados: await resp.json() }
+    if (resp.status === 401 || resp.status === 403) return { semPermissao: true, erro: SEM_PERMISSAO_DESCONTOS }
+    if (!resp.ok) return { erro: traduzirErro(resp.status, await resp.text().catch(() => ''), cx) }
+    const d = await resp.json()
+    // erro de permissão no GraphQL vem 200 com errors[].extensions.code = ACCESS_DENIED
+    const erros = d?.errors ?? []
+    if (erros.some(e => /ACCESS_DENIED|access denied|read_discounts/i.test(`${e?.extensions?.code ?? ''} ${e?.message ?? ''}`))) {
+      return { semPermissao: true, erro: SEM_PERMISSAO_DESCONTOS }
+    }
+    if (erros.length) return { erro: `A Shopify respondeu: ${String(erros[0]?.message ?? 'erro no GraphQL').slice(0, 200)}` }
+    return { dados: d?.data ?? null }
   } catch (err) {
-    return { status: 0, erro: `Não foi possível alcançar ${cx.loja}: ${err.message}` }
+    return { erro: `Não foi possível alcançar ${cx.loja}: ${err.message}` }
   }
 }
 
-const SEM_PERMISSAO_DESCONTOS = 'Faltou a permissão de leitura de descontos. Adicione o escopo read_discounts no app da Shopify, libere uma nova versão e reconecte.'
+const CONSULTA_CUPOM = `query($code: String!) {
+  codeDiscountNodeByCode(code: $code) {
+    id
+    codeDiscount {
+      __typename
+      ... on DiscountCodeBasic {
+        title status startsAt endsAt usageLimit asyncUsageCount
+        customerGets { value { __typename ... on DiscountPercentage { percentage } } }
+      }
+      ... on DiscountCodeBxgy { title status startsAt endsAt }
+      ... on DiscountCodeFreeShipping { title status startsAt endsAt }
+      ... on DiscountCodeApp { title status startsAt endsAt }
+    }
+  }
+}`
 
 /**
- * Confere na Shopify os cupons cadastrados no Atendo: o código existe, está
- * ativo, não expirou e vale EXATAMENTE o percentual esperado. Sem a permissão
- * read_discounts devolve { permissao: false } — quem chama mostra "cupom não
- * verificado na Shopify" e bloqueia só o envio totalmente automático.
+ * Confere na Shopify (GraphQL `codeDiscountNodeByCode`) os cupons cadastrados no
+ * Atendo: o código existe NESTA loja, é um DiscountCodeBasic de percentual, está
+ * ACTIVE, já começou, não expirou e ainda tem uso disponível — e o percentual
+ * bate exatamente. Sem `read_discounts` devolve { permissao: false }: quem chama
+ * mostra "cupom não verificado na Shopify".
  *
  * `pedidos` = [{ pct, codigo }]. Nada é inventado: cada item volta com a
  * situação que a própria Shopify respondeu.
  */
-export async function verificarCuponsShopify(cx, pedidos = []) {
-  const em = new Date().toISOString()
+export async function verificarCuponsShopify(cx, pedidos = [], { agora = Date.now() } = {}) {
+  const em = new Date(agora).toISOString()
   if (!cx) return { permissao: false, erro: 'Shopify não conectada.', em, itens: [] }
-  const agora = Date.now()
   const itens = []
-  const regras = new Map() // price_rule_id → regra (evita repetir a chamada)
 
   for (const { pct, codigo } of pedidos) {
     const cod = String(codigo ?? '').trim()
     if (!cod) continue
-    const achado = await chamarComStatus(cx, `discount_codes/lookup.json?code=${encodeURIComponent(cod)}`)
-    if (achado.status === 401 || achado.status === 403) return { permissao: false, erro: SEM_PERMISSAO_DESCONTOS, em, itens: [] }
-    if (achado.status === 404) { itens.push({ pct, codigo: cod, situacao: 'inexistente', detalhe: 'nenhum cupom com esse código nesta loja' }); continue }
-    if (achado.erro) { itens.push({ pct, codigo: cod, situacao: 'erro', detalhe: achado.erro }); continue }
+    const r = await graphql(cx, CONSULTA_CUPOM, { code: cod })
+    if (r.semPermissao) return { permissao: false, erro: r.erro, em, itens: [] }
+    if (r.erro) { itens.push({ pct, codigo: cod, situacao: 'erro', detalhe: r.erro }); continue }
 
-    const dc = achado.dados?.discount_code
-    if (!dc?.price_rule_id) { itens.push({ pct, codigo: cod, situacao: 'inexistente', detalhe: 'nenhum cupom com esse código nesta loja' }); continue }
+    const no = r.dados?.codeDiscountNodeByCode
+    const d = no?.codeDiscount
+    if (!no || !d) { itens.push({ pct, codigo: cod, situacao: 'inexistente', detalhe: 'nenhum cupom com esse código nesta loja' }); continue }
 
-    let regra = regras.get(String(dc.price_rule_id))
-    if (!regra) {
-      const r = await chamarComStatus(cx, `price_rules/${dc.price_rule_id}.json`)
-      if (r.status === 401 || r.status === 403) return { permissao: false, erro: SEM_PERMISSAO_DESCONTOS, em, itens: [] }
-      if (r.erro) { itens.push({ pct, codigo: cod, situacao: 'erro', detalhe: r.erro }); continue }
-      regra = r.dados?.price_rule
-      if (regra) regras.set(String(dc.price_rule_id), regra)
+    const tipo = d.__typename
+    if (tipo !== 'DiscountCodeBasic') {
+      const nomes = { DiscountCodeBxgy: 'compre-e-leve (BXGY)', DiscountCodeFreeShipping: 'frete grátis', DiscountCodeApp: 'desconto criado por app' }
+      itens.push({ pct, codigo: cod, situacao: 'incompativel', detalhe: `na Shopify é ${nomes[tipo] ?? tipo}, não um cupom de percentual` })
+      continue
     }
-    if (!regra) { itens.push({ pct, codigo: cod, situacao: 'erro', detalhe: 'a Shopify não devolveu a regra do cupom' }); continue }
+    const valorTipo = d.customerGets?.value?.__typename
+    if (valorTipo !== 'DiscountPercentage') {
+      itens.push({ pct, codigo: cod, situacao: 'incompativel', detalhe: 'na Shopify é desconto em valor fixo, não em percentual' })
+      continue
+    }
+    // a API devolve fração (0.15 = 15%); aceitamos os dois formatos com segurança
+    const bruto = Number(d.customerGets.value.percentage ?? 0)
+    const encontrado = bruto > 0 && bruto <= 1 ? Math.round(bruto * 10000) / 100 : Math.round(bruto * 100) / 100
+    const inicio = d.startsAt ? Date.parse(d.startsAt) : null
+    const fim = d.endsAt ? Date.parse(d.endsAt) : null
+    const base = { pct, codigo: cod, valor: encontrado, inicio: d.startsAt ?? null, fim: d.endsAt ?? null, tipo }
 
-    const inicio = regra.starts_at ? Date.parse(regra.starts_at) : null
-    const fim = regra.ends_at ? Date.parse(regra.ends_at) : null
-    const valor = Math.abs(Number(regra.value ?? 0))
-    const base = { pct, codigo: cod, valor, inicio: regra.starts_at ?? null, fim: regra.ends_at ?? null }
-
-    if (regra.value_type !== 'percentage') {
-      itens.push({ ...base, situacao: 'percentual_divergente', detalhe: `na Shopify é desconto em valor fixo, não ${pct}%` })
-    } else if (Math.round(valor * 100) !== Math.round(Number(pct) * 100)) {
-      itens.push({ ...base, situacao: 'percentual_divergente', detalhe: `na Shopify vale ${valor}%, não ${pct}%` })
-    } else if (fim != null && fim < agora) {
-      itens.push({ ...base, situacao: 'expirado', detalhe: `expirou em ${String(regra.ends_at).slice(0, 10)}` })
-    } else if (inicio != null && inicio > agora) {
-      itens.push({ ...base, situacao: 'nao_iniciado', detalhe: `só começa em ${String(regra.starts_at).slice(0, 10)}` })
-    } else if (regra.usage_limit != null && Number(dc.usage_count ?? 0) >= Number(regra.usage_limit)) {
-      itens.push({ ...base, situacao: 'inativo', detalhe: 'o limite de usos do cupom já foi atingido' })
+    if (Math.round(encontrado * 100) !== Math.round(Number(pct) * 100)) {
+      itens.push({ ...base, situacao: 'percentual_divergente', detalhe: `na Shopify vale ${encontrado}%, não ${pct}%` })
+    } else if (String(d.status).toUpperCase() === 'EXPIRED' || (fim != null && fim < agora)) {
+      itens.push({ ...base, situacao: 'expirado', detalhe: `expirou em ${String(d.endsAt ?? '').slice(0, 10) || 'data não informada'}` })
+    } else if (String(d.status).toUpperCase() === 'SCHEDULED' || (inicio != null && inicio > agora)) {
+      itens.push({ ...base, situacao: 'nao_iniciado', detalhe: `só começa em ${String(d.startsAt ?? '').slice(0, 10) || 'data não informada'}` })
+    } else if (d.usageLimit != null && Number(d.asyncUsageCount ?? 0) >= Number(d.usageLimit)) {
+      itens.push({ ...base, situacao: 'esgotado', detalhe: 'o limite de usos do cupom já foi atingido' })
+    } else if (String(d.status).toUpperCase() !== 'ACTIVE') {
+      itens.push({ ...base, situacao: 'inativo', detalhe: `status na Shopify: ${d.status}` })
     } else {
-      itens.push({ ...base, situacao: 'ok', detalhe: `${valor}% ativo na Shopify` })
+      itens.push({ ...base, situacao: 'ok', detalhe: `${encontrado}% ativo na Shopify` })
     }
   }
   return { permissao: true, erro: null, em, itens }

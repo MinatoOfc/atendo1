@@ -14,6 +14,8 @@ process.env.DATA_DIR = DIR
 process.env.PORT = '8799'
 process.env.ANTHROPIC_API_KEY = 'sk-ant-teste'
 process.env.ATENDO_SIMULAR = '1'
+// a simulação de integração só vale em teste: em produção ATENDO_SIMULAR é ignorado
+process.env.NODE_ENV = 'test'
 // este arquivo testa o fluxo com o envio automático LIBERADO (fora do piloto); o piloto em si está em test/piloto.test.mjs
 process.env.ATENDO_LIBERAR_AUTOENVIO = '1'
 delete process.env.DATABASE_URL

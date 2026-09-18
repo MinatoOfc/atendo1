@@ -20,7 +20,7 @@ import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferen
 import { produtoFoiInformado } from '../shared/produto.js'
 import { dadosDoRelatorio, filtrosDoRelatorio, normalizarCaso, acharPedido, clienteDoCaso, produtosDoCaso, percentualDoTexto, tipoDoTexto } from '../shared/relatorio.js'
 import { paginaRelatorio } from './relatorio-externo.js'
-import { prontidaoDaLoja, conferirCupons, cupomParaMensagem, PCT_CUPOM_RESERVA } from '../shared/prontidao.js'
+import { prontidaoDaLoja, cupomParaMensagem, verificacaoVencida, PCT_CUPOM_RESERVA, VALIDADE_VERIFICACAO_MS } from '../shared/prontidao.js'
 import { paginaPipeline, dadosPipeline, filtrosDaConsulta } from './pipeline-externo.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
@@ -387,7 +387,7 @@ function faltaParaConcluir(estado, wsId, t, cp) {
   // cupom: percentual da fase, código DESTA loja e resultado da verificação na
   // Shopify. Sem aprovação humana (conclusão automática), só cupom verificado passa.
   if (oferta?.cupom) {
-    const c = cupomDaOferta(estado, loja, oferta.cupom, { exigirVerificado: cp?.modo === 'automatico' })
+    const c = cupomDaOferta(estado, loja, oferta.cupom)
     if (!c.ok) faltando.push(c.motivo ?? `cupom de ${oferta.cupom}% cadastrado`)
   }
   const idioma = an.idioma ?? null
@@ -399,19 +399,71 @@ function faltaParaConcluir(estado, wsId, t, cp) {
 const rotulosDoPedidoItens = pedido => (pedido?.itens ?? []).map(i => `${i.titulo}${i.variante ? ` (${i.variante})` : ''}`)
 
 /**
- * Código do cupom de uma oferta, reconferido no instante do uso: percentual da
- * fase, código cadastrado NESTA loja (nunca de outra) e resultado da última
- * verificação na Shopify. Em ensaio a verificação é dada como feita.
+ * Verificação de cupons válida para ESTA loja. Em teste a integração é
+ * simulada; em produção vale só o que a Shopify respondeu.
  */
-function cupomDaOferta(estado, loja, pct, { exigirVerificado = false } = {}) {
-  return cupomParaMensagem({
-    pct,
+function verificacaoCuponsDaLoja(loja) {
+  // uma conferência REAL gravada na loja sempre manda — inclusive nos testes,
+  // para o pipeline de ensaio exercitar exatamente o que a produção faz
+  if (loja?.verificacaoCupons) return loja.verificacaoCupons
+  // a loja JÁ teve conferência e ela foi invalidada (código trocado, Shopify
+  // reconectada/desconectada): o ensaio não pode ressuscitá-la
+  if (loja?.verificacaoCuponsAnterior) return null
+  if (integracaoSimulada()) {
+    return {
+      permissao: true, erro: null, em: new Date().toISOString(), lojaId: loja?.id ?? null,
+      itens: CUPONS_NECESSARIOS.map(pct => ({ pct, codigo: loja?.cupons?.[String(pct)], valor: pct, situacao: 'ok', detalhe: 'ensaio' })),
+    }
+  }
+  return null
+}
+
+/**
+ * TRAVA ÚNICA DO CUPOM — obrigatória em TODOS os caminhos que podem levar um
+ * código ao prompt, ao rascunho ou ao e-mail: primeira geração, regeneração,
+ * "somente o texto", aprovação manual, autoenvio, confirmação do aceite e
+ * enviarResposta (última barreira).
+ *
+ * Só passa cupom conferido na Shopify desta loja, com o percentual exato e
+ * dentro das 24 h de validade. Qualquer outra coisa devolve ok:false com o
+ * motivo exato — a fase para e o caso vai para Aprovações, sem pular oferta.
+ */
+function travaCupom(loja, faseId, an, { agora = Date.now() } = {}) {
+  const base = cupomDaFase(faseId, loja, an)
+  if (!base.precisa) return { ok: true, precisa: false, codigo: null, pct: null, motivo: null }
+  const r = cupomParaMensagem({
+    pct: base.pct,
     cupons: loja?.cupons ?? {},
     lojaId: loja?.id ?? null,
-    verificacao: integracaoSimulada()
-      ? { permissao: true, lojaId: loja?.id ?? null, itens: [{ pct, codigo: loja?.cupons?.[String(pct)], situacao: 'ok', detalhe: 'ensaio' }] }
-      : (loja?.verificacaoCupons ?? null),
-    exigirVerificado: exigirVerificado && !integracaoSimulada(),
+    verificacao: verificacaoCuponsDaLoja(loja),
+    agora,
+  })
+  return { ...r, precisa: true, pct: base.pct }
+}
+
+/**
+ * Qualquer mudança que possa invalidar a conferência anterior apaga a
+ * verificação NA HORA: trocar código, reconectar ou desconectar a Shopify.
+ */
+function invalidarVerificacaoCupons(loja, motivo) {
+  if (!loja?.verificacaoCupons) return false
+  loja.verificacaoCuponsAnterior = { em: loja.verificacaoCupons.em ?? null, motivo }
+  loja.verificacaoCupons = undefined
+  return true
+}
+
+/** Motivo pronto para o dono, com o nome da etapa. */
+const motivoCupom = (faseId, r) => `A etapa "${FASES[faseId]?.titulo ?? faseId}" usa cupom e ${r.motivo}`
+
+
+/**
+ * Código do cupom de uma oferta (fotografia do aceite). Mesma trava única: sem
+ * conferência na Shopify desta loja, dentro da validade, não há código.
+ */
+function cupomDaOferta(estado, loja, pct, { agora = Date.now() } = {}) {
+  return cupomParaMensagem({
+    pct, cupons: loja?.cupons ?? {}, lojaId: loja?.id ?? null,
+    verificacao: verificacaoCuponsDaLoja(loja), agora,
   })
 }
 
@@ -425,7 +477,7 @@ function novaConclusao(estado, t, faseAceita, status) {
     modo: exigeAprovacaoAceite(loja) ? 'manual' : 'automatico',
     aceitaEm: t.data || new Date().toISOString(), mensagemDoCliente: String(t.corpo || '').slice(0, 300),
     percentual: oferta?.pct ?? null, valor: oferta?.pct && valorPedido != null ? arredondar(valorPedido * oferta.pct / 100) : null, valorPedido, moeda: loja?.moeda ?? 'EUR',
-    cupom: oferta?.cupom ? cupomDaOferta(estado, loja, oferta.cupom, { exigirVerificado: !exigeAprovacaoAceite(loja) }).codigo : null, cupomPct: oferta?.cupom ?? null,
+    cupom: oferta?.cupom ? cupomDaOferta(estado, loja, oferta.cupom).codigo : null, cupomPct: oferta?.cupom ?? null,
     produtos: [...(an.produtosAfetados ?? [])], endereco: an.enderecoConfirmado ?? null,
     historicoFases: (an.historicoEtapas ?? []).filter(h => !h.evento).map(h => h.para),
     status,
@@ -662,15 +714,37 @@ function marcarSincronizacao(estado, lojaId, { ok, erro = null, pedidos = null }
 /** Shopify conectada NESTA loja (credenciais válidas no estado). */
 const shopifyDaLoja = (estado, lojaId) => ({ conectada: !!conexaoLoja(estado, lojaId) })
 
+/* ---------------- Simulação: só em teste, nunca em produção ---------------- */
+
 /**
- * Em ensaio/simulação (ATENDO_SIMULAR=1) não existe Shopify nem cupom real: a
- * integração é dada como conferida para os testes do motor continuarem valendo.
- * Em produção isto nunca é verdade — a variável não existe lá.
+ * Ambiente de TESTE de verdade. `ATENDO_SIMULAR=1` sozinho não basta: em
+ * produção (NODE_ENV=production) ele é ignorado para tudo que diz respeito à
+ * integração (Shopify, sincronização, cupons) e o arranque avisa.
  */
-const integracaoSimulada = () => process.env.ATENDO_SIMULAR === '1'
+const ambienteDeTeste = () => process.env.NODE_ENV === 'test'
+
+/**
+ * Integração simulada (Shopify conectada, sincronização feita, cupons conferidos)
+ * — exclusivamente em teste. Em produção isto NUNCA é verdade.
+ */
+const integracaoSimulada = () => process.env.ATENDO_SIMULAR === '1' && ambienteDeTeste()
+
+/**
+ * Rota autenticada de simulação de e-mail. Vale em teste e, no Railway, com
+ * ATENDO_SIMULAR_EMAIL=1 — que libera SÓ esta rota: não simula Shopify, não
+ * simula sincronização, não valida cupom, não libera envio automático e não
+ * impede a leitura dos e-mails reais.
+ */
+const simulacaoDeEmailLiberada = () => (process.env.ATENDO_SIMULAR === '1' && ambienteDeTeste()) || process.env.ATENDO_SIMULAR_EMAIL === '1'
+
+if (process.env.ATENDO_SIMULAR === '1' && !ambienteDeTeste()) {
+  console.warn('[atendo] AVISO: ATENDO_SIMULAR=1 está configurado FORA de NODE_ENV=test.')
+  console.warn('[atendo] A variável é IGNORADA para prontidão: Shopify, sincronização e cupons continuam sendo conferidos de verdade.')
+  console.warn('[atendo] Para injetar e-mails de teste no Railway use ATENDO_SIMULAR_EMAIL=1 (libera só a rota autenticada de simulação).')
+}
 
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
-function prontidaoModoNovo(wsId, loja) {
+function prontidaoModoNovo(wsId, loja, { agora = Date.now() } = {}) {
   const estado = workspaces.get(wsId)
   const conta = contasDe(wsId).find(c => c.id === loja.id) ?? null
   const simulado = integracaoSimulada()
@@ -678,11 +752,10 @@ function prontidaoModoNovo(wsId, loja) {
     loja,
     emailOk: !!conta && (conta.configurado || envioPorApi),
     shopify: simulado ? { conectada: true } : shopifyDaLoja(estado, loja.id),
-    sincronizacao: simulado ? { ok: true, em: null, erro: null } : (estado?.sincronizacaoPedidos?.[loja.id] ?? null),
-    verificacaoCupons: simulado
-      ? { permissao: true, em: null, lojaId: loja.id, itens: CUPONS_NECESSARIOS.map(pct => ({ pct, codigo: loja.cupons?.[String(pct)], situacao: 'ok', detalhe: 'ensaio' })) }
-      : (loja.verificacaoCupons ?? null),
+    sincronizacao: simulado ? { ok: true, em: new Date(agora).toISOString(), erro: null } : (estado?.sincronizacaoPedidos?.[loja.id] ?? null),
+    verificacaoCupons: verificacaoCuponsDaLoja(loja),
     pctsUsados: CUPONS_NECESSARIOS,
+    agora,
   })
   // compatibilidade: quem já usava { pronto, faltando } continua funcionando
   return r
@@ -1145,10 +1218,10 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   const an = t.atendimentoNovo
   const falhar = motivo => { if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo); return { ok: false, motivo } }
 
-  const cup = cupomDaFase(faseId, loja, an)
-  if (cup.precisa && !cup.codigo) {
-    return falhar(`A etapa "${FASES[faseId].titulo}" usa o cupom de ${cup.pct}%, que não está cadastrado nesta loja (Configurações → Loja)`)
-  }
+  // TRAVA ÚNICA DO CUPOM, antes de montar o prompt: sem código conferido na
+  // Shopify desta loja, a fase para aqui e o caso vai para Aprovações
+  const cup = travaCupom(loja, faseId, an)
+  if (cup.precisa && !cup.ok) return falhar(motivoCupom(faseId, cup))
 
   // idioma-alvo da conversa (última mensagem completa do cliente) — a configuração fixa da loja não vale aqui
   const idiomaAlvo = an.idioma ?? normalizarIdioma(t.idioma) ?? null
@@ -1627,6 +1700,18 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   if (modoNovo && !produtoFoiInformado(an) && !coletaDeProduto) {
     throw new Error('Produto não informado pelo cliente — nenhuma resposta sai antes; só a pergunta do produto')
   }
+  // ÚLTIMA BARREIRA do cupom: nem rascunho antigo, nem texto editado à mão, nem
+  // reenvio de fila levam um código não conferido para o e-mail
+  if (modoNovo && transicao) {
+    const lojaE = workspaces.get(wsId)?.lojas.find(l => l.id === lojaId)
+    const cupE = travaCupom(lojaE, transicao.para, an)
+    if (cupE.precisa && !cupE.ok) {
+      throw new Error(motivoCupom(transicao.para, cupE))
+    }
+    if (cupE.precisa && cupE.codigo && !String(texto ?? '').includes(cupE.codigo)) {
+      throw new Error(`O texto não traz o código do cupom conferido (${cupE.codigo}) — nada é enviado`)
+    }
+  }
   // canal simulado só nos testes (ATENDO_SIMULAR=1): 'ok' envia, 'falha' quebra
   const simulado = process.env.ATENDO_SIMULAR === '1' ? process.env.ATENDO_SMTP_FAKE : null
   let enviou = false
@@ -1733,6 +1818,16 @@ agendar(async () => {
           // continuarem válidos neste instante — senão vira aprovação manual com segurança
           if (FASES[anL.transicaoPendente.para]?.confirmacao && anL.conclusaoPendente?.modo === 'automatico' && !anL.conclusaoPendente.aprovadoEm && !podeConclusaoAutomatica(estado, wsId, lojaL)) {
             neutralizarConclusaoAutomatica(wsId, 'Conclusão automática interrompida porque a loja perdeu os pré-requisitos automáticos.', { por: 'sistema (conferência antes do envio)', lojaId: t.lojaId ?? 'loja1' })
+            continue
+          }
+          // TRAVA DO CUPOM imediatamente antes do autoenvio, com a validade de 24 h
+          // reconferida agora: verificação vencida ou inválida não sai sozinha
+          const cupL = travaCupom(lojaL, anL.transicaoPendente.para, anL, { agora })
+          if (cupL.precisa && !cupL.ok) {
+            t.enviaEm = undefined
+            anL.envioBloqueado = motivoCupom(anL.transicaoPendente.para, cupL)
+            mandarParaHumanoNovo(t, motivoCupom(anL.transicaoPendente.para, cupL))
+            salvar(wsId)
             continue
           }
           // cadência reconferida no momento do envio: nunca antes de 3 min / 5 h da mensagem mais recente do cliente
@@ -2345,8 +2440,9 @@ app.get('/api/exportar', (req, res) => {
 
 
 // Simula um e-mail recebido, passando pelo MESMO pipeline da caixa de entrada.
-// Só existe com ATENDO_SIMULAR=1 — para testes e para ensaiar o modo novo.
-if (process.env.ATENDO_SIMULAR === '1') {
+// Rota autenticada de simulação: em teste, ou no Railway com ATENDO_SIMULAR_EMAIL=1.
+// Ela injeta e-mail de ensaio e NADA mais — não toca prontidão, cupons nem envio.
+if (simulacaoDeEmailLiberada()) {
   app.post('/api/simular-email', async (req, res) => {
     const { de, nome, assunto, corpo, lojaId, ticketId, comImagem } = req.body ?? {}
     const anexos = comImagem ? [{ nome: 'foto.jpg', tipo: 'image/jpeg', dados: Buffer.from('fake') }] : []
@@ -2663,6 +2759,8 @@ app.post('/api/lojas/:id/shopify-token', async (req, res) => {
     return res.status(400).json({ erro: teste.erro || 'A Shopify recusou o token.', state: visao(req.wsId) })
   }
   loja.shopify = { loja: dominio, token, instaladoEm: new Date().toISOString() }
+  // reconexão pode trocar permissões e até a loja: a conferência anterior morre aqui
+  invalidarVerificacaoCupons(loja, 'a Shopify foi reconectada')
   loja.ativa = true
   salvar(req.wsId)
   await sincronizarLoja(req.wsId, loja.id)
@@ -2703,6 +2801,8 @@ app.post('/api/shopify/desconectar', (req, res) => {
   const loja = req.estado.lojas.find(l => l.id === lojaId)
   if (loja) {
     loja.shopify = { loja: null, token: null, instaladoEm: null }
+    invalidarVerificacaoCupons(loja, 'a Shopify foi desconectada')
+    if (req.estado.sincronizacaoPedidos) delete req.estado.sincronizacaoPedidos[lojaId]
     req.estado.pedidos = req.estado.pedidos.filter(p => (p.lojaId ?? 'loja1') !== lojaId)
     req.estado.produtos = (req.estado.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== lojaId)
     statusShopifyPorLoja.delete(`${req.wsId}:${lojaId}`)
@@ -2835,9 +2935,12 @@ app.post('/api/lojas', (req, res) => {
   }
   if (cupons && typeof cupons === 'object') {
     motivoProtecao = motivoProtecao ?? 'Conclusão automática interrompida porque os cupons obrigatórios da loja deixaram de estar cadastrados.'
+    const antes = JSON.stringify(loja.cupons ?? {})
     loja.cupons = Object.fromEntries(PERCENTUAIS_CUPOM
       .map(p => [String(p), String(cupons[p] ?? cupons[String(p)] ?? '').trim().slice(0, 40)])
       .filter(([, v]) => v))
+    // código novo nunca herda a conferência do código antigo
+    if (JSON.stringify(loja.cupons) !== antes) invalidarVerificacaoCupons(loja, 'os códigos foram alterados')
   }
   // assinatura própria da loja; vazia volta ao padrão do workspace
   if (typeof assinatura === 'string') loja.assinatura = assinatura.trim() || null
@@ -3371,6 +3474,12 @@ app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
   if (!faseId) {
     return res.status(400).json({ erro: `Não há confirmação prevista para "${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}".`, state: visao(req.wsId) })
   }
+  // a confirmação do aceite também passa pela trava única do cupom
+  const lojaC = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+  const cupC = travaCupom(lojaC, faseId, an)
+  if (cupC.precisa && !cupC.ok) {
+    return res.status(400).json({ erro: `Não confirmado — ${motivoCupom(faseId, cupC)}.`, cupom: cupC.situacao, state: visao(req.wsId) })
+  }
   // pré-condições do mapa em TODA conclusão aprovada pelo dono — inclusive quando o estado
   // anterior era "interrompida" (automática convertida) ou "aguardando_dados"
   const cpA = an.conclusaoPendente
@@ -3568,6 +3677,9 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
     const bloqueio = instrucaoAlteraOferta(instrucao, lojaR)
     if (bloqueio) return res.status(400).json({ erro: `Instrução recusada: ${bloqueio}.`, state: visao(req.wsId) })
     if (req.body.somenteTexto) {
+      // mesma trava do rascunho: "só o texto" não é atalho para um cupom não conferido
+      const cupT = travaCupom(lojaR, faseId, anR)
+      if (cupT.precisa && !cupT.ok) return res.status(400).json({ erro: `Não gerado — ${motivoCupom(faseId, cupT)}.`, cupom: cupT.situacao, state: visao(req.wsId) })
       // escreve a MESMA ação para a caixa manual, sem mexer no rascunho nem no estado
       const p = promptEscrever({ loja: lojaR, config: configDoNovo(req.estado.config), faseId, faltando: anR.transicaoPendente.faltando ?? [], an: anR, pedido: pedidoDoTicket(req.estado, t), ticket: t, instrucaoEstilo: instrucao || null, idiomaAlvo: anR.idioma ?? null })
       const e = await escreverNovo(p.system, p.user)
@@ -3703,6 +3815,11 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     if (anA?.transicaoPendente?.para) {
       const faseId = anA.transicaoPendente.para
       const lojaA = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
+      // trava do cupom TAMBÉM na aprovação manual: nem com o dono clicando
+      const cupA = travaCupom(lojaA, faseId, anA)
+      if (cupA.precisa && !cupA.ok) {
+        return res.status(400).json({ erro: `Não enviado — ${motivoCupom(faseId, cupA)}.`, cupom: cupA.situacao, state: visao(req.wsId) })
+      }
       const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t), { faltando: anA.transicaoPendente.faltando ?? [], idioma: anA.idioma ?? null })
       if (!v.ok) {
         return res.status(400).json({ erro: `Não enviado — o texto não pertence à etapa "${FASES[faseId].titulo}": ${v.motivo}.`, state: visao(req.wsId) })
