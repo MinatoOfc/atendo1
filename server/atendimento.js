@@ -14,6 +14,8 @@
 
 import { confirmacaoIndevida } from './logic.js'
 import { produtoFoiInformado } from '../shared/produto.js'
+// só o texto NOVO do cliente vale como declaração dele (o citado é referência)
+import { separarTexto } from '../shared/mensagem.js'
 
 export const MODOS_ATENDIMENTO = {
   classico: 'Clássico — o atendimento atual',
@@ -1019,6 +1021,8 @@ export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now()
     ``,
     blocoPedido(pedido, loja, agora),
     ``,
+    `REGRA DE LEITURA: só a MENSAGEM NOVA do cliente conta como fala dele. O assunto do e-mail, a notificação automática da loja e qualquer texto citado abaixo da resposta são referência — nunca declaração. Um cliente que responde ao aviso "sua entrega foi entregue" reclamando da roupa NÃO está dizendo que não recebeu: ele está com a peça na mão.`,
+    ``,
     `Como classificar "intencao":`,
     `- aceita: o cliente concorda com a oferta em aberto (ex.: "ok", "aceito", "pode ser", "quero a troca", "manda o cupom").`,
     `- recusa: rejeita a oferta em aberto sem exigir outra coisa específica.`,
@@ -1033,19 +1037,26 @@ export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now()
     `"motivo": o motivo que o CLIENTE alegou — tamanho, qualidade, nao_gostou, defeito, errado, nao_recebido, nao_informado (quando pede reembolso/devolução sem dizer por quê) ou nenhum. Nunca invente.`,
     `"produtos": os itens do pedido que o cliente citou, com o nome como aparece na lista acima (lista vazia se não citou).`,
     `"ajustes": para cada produto que o cliente disse que ficou pequeno ou grande.`,
-    `"situacaoEntrega": nao_chegou, entregue_nao_recebido (consta entregue mas ele não recebeu), voltou_remetente, recusou_na_porta, ou nenhuma.`,
+    `"situacaoEntrega": nao_chegou, entregue_nao_recebido (consta entregue mas ele não recebeu), voltou_remetente, recusou_na_porta, ou nenhuma. Só preencha quando a MENSAGEM NOVA perguntar onde está / quando chega / quantos dias faltam, ou disser explicitamente que não recebeu. Status da Shopify, assunto do e-mail e texto citado NÃO valem.`,
+    `"evidenciaEntrega": o trecho LITERAL da mensagem nova que justifica a situacaoEntrega, copiado exatamente como está lá. String vazia quando for "nenhuma". O servidor confere se esse trecho existe mesmo na mensagem nova — trecho inventado faz a situação ser descartada.`,
     `"endereco": o endereço de entrega completo, se o cliente escreveu um; senão string vazia.`,
     `"resumo": uma frase em português do que o cliente disse.`,
     `"idioma": código ISO 639-1 do idioma em que ESTA mensagem foi escrita, com região quando reconhecível (de, de-AT, nl, nl-BE, fr-BE, en, pt…). Não deduza pelo país: um cliente da Áustria pode escrever em inglês e um da Bélgica em holandês, francês ou alemão.`,
     `"idiomaConfiavel": false quando a mensagem é curta demais para saber o idioma com segurança ("ok", "sim", só um endereço, números, só uma foto).`,
     `"spam": true só se não for cliente falando da própria compra.`,
   ].join('\n')
+  // SÓ o texto novo do cliente vale como declaração. Assunto automático e texto
+  // citado (notificação da Shopify, e-mail anterior, rodapé) entram apenas como
+  // referência para localizar a conversa — nunca como fala dele.
+  const partes = separarTexto(ticket.corpo)
   const user = [
     ultimaDaLoja ? `Última mensagem da loja:\n${String(ultimaDaLoja).slice(0, 1500)}\n\n---\n` : '',
-    `Mensagem do cliente (${ticket.nome} <${ticket.de}>):`,
-    `Assunto: ${ticket.assunto}`,
-    String(ticket.corpo || '').slice(0, 4000),
+    `MENSAGEM NOVA do cliente (${ticket.nome} <${ticket.de}>) — somente isto conta como declaração dele:`,
+    partes.atual.slice(0, 4000) || '(sem texto novo)',
     ticket.anexos?.length ? `\n(O cliente anexou ${ticket.anexos.length} imagem(ns).)` : '',
+    `\n---\nREFERÊNCIA — NÃO é fala do cliente. Serve só para localizar a conversa e o número do pedido. Nunca use para intenção, motivo, situação de entrega, produtos, tamanho, aceite, recusa ou idioma:`,
+    `Assunto (automático): ${ticket.assunto}`,
+    partes.citado ? partes.citado.slice(0, 1200) : '(sem texto citado)',
   ].join('\n')
   return { system, user }
 }

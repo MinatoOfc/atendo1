@@ -16,6 +16,7 @@ import {
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase, valoresMonetarios,
 } from './atendimento.js'
 import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, checklistDaTentativa, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual, origemDoEnvio, cicloAtual, eventosDoCiclo } from '../shared/auditoria.js'
+import { separarTexto, validarSituacaoEntrega, produtosDoTextoAtual, RE_PERGUNTA_LOGISTICA, RE_NAO_RECEBIDO } from '../shared/mensagem.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { produtoFoiInformado } from '../shared/produto.js'
@@ -1786,6 +1787,40 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   somarCusto(t, c.custo); registrarGasto(estado, t.lojaId, c.custo)
   const cls = c.r
   if (cls.spam && !identificado) return { spam: true }
+
+  // TRAVA DETERMINÍSTICA DA ENTREGA. A IA propõe, o servidor confere. Nada do
+  // que está no assunto automático, no status da Shopify ou no texto citado
+  // abaixo da resposta pode, sozinho, jogar a conversa numa jornada de entrega:
+  // já aconteceu de um cliente responder ao aviso "sua entrega foi entregue"
+  // reclamando da roupa e receber "aguarde 2 dias e pergunte aos vizinhos".
+  const partesMsg = separarTexto(t.corpo)
+  const entrega = validarSituacaoEntrega({ situacao: cls.situacaoEntrega ?? null, evidencia: cls.evidenciaEntrega ?? '', textoAtual: partesMsg.atual })
+  const descartes = []
+  if (entrega.descartada) {
+    descartes.push({ campo: 'situacaoEntrega', valor: cls.situacaoEntrega, motivo: entrega.motivo })
+    cls.situacaoEntrega = null
+  }
+  // "não recebido" como MOTIVO abre a mesma jornada: exige a mesma prova
+  if (cls.motivo === 'nao_recebido' && !(RE_NAO_RECEBIDO.test(partesMsg.atual) || RE_PERGUNTA_LOGISTICA.test(partesMsg.atual))) {
+    descartes.push({ campo: 'motivo', valor: 'nao_recebido', motivo: 'o texto novo do cliente não diz que não recebeu nem pergunta sobre a entrega' })
+    cls.motivo = 'nao_informado'
+  }
+  // "só quer saber onde está" idem: sem pergunta logística no texto novo, não é status
+  if (cls.intencao === 'pergunta_status' && !RE_PERGUNTA_LOGISTICA.test(partesMsg.atual)) {
+    descartes.push({ campo: 'intencao', valor: 'pergunta_status', motivo: 'o texto novo do cliente não pergunta onde está o pedido nem quando chega' })
+    cls.intencao = 'outro'
+  }
+  // PRODUTO: o que aparece só na notificação citada ou no catálogo não conta
+  const produtosAntes = [...(cls.produtos ?? [])]
+  cls.produtos = produtosDoTextoAtual(produtosAntes, partesMsg.atual, { itensDoPedido: rotulosDoPedidoItens(pedido) })
+  if (produtosAntes.length !== cls.produtos.length) {
+    descartes.push({ campo: 'produtos', valor: produtosAntes.filter(p => !cls.produtos.includes(p)), motivo: 'produto citado só na notificação/no catálogo, não pelo cliente' })
+  }
+  // declarações conflitantes (produto em mãos + "não recebi"): decide você
+  if (entrega.conflito) {
+    mandarParaHumanoNovo(t, 'A mensagem diz que o produto está em mãos e ao mesmo tempo que não foi recebido — declarações conflitantes, decida você', 'motor')
+    return { spam: false }
+  }
   // idioma-alvo: só uma mensagem completa troca; "ok"/endereço/foto preservam o último confiável
   const idiomaAlvo = definirIdioma(an, cls, t.corpo)
   if (idiomaAlvo) t.idioma = idiomaAlvo
@@ -1798,8 +1833,17 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
     chave: `ia_classificou:${t.id}:${t.data}:${(t.historico ?? []).length}`,
     dados: {
       intencao: cls.intencao ?? null, motivo: cls.motivo ?? null,
-      produtos: cls.produtos ?? [], ajuste: cls.ajuste ?? cls.tamanho ?? null,
-      entrega: cls.entrega ?? cls.situacao_entrega ?? null,
+      produtos: cls.produtos ?? [], produtosDescartados: produtosAntes.filter(p => !(cls.produtos ?? []).includes(p)),
+      ajuste: cls.ajuste ?? cls.tamanho ?? null,
+      // PONTO CEGO CORRIGIDO: o campo do classificador é situacaoEntrega. Gravar
+      // cls.entrega/cls.situacao_entrega mostrava null justamente quando este
+      // campo era o que decidia a jornada.
+      entrega: cls.situacaoEntrega ?? null,
+      entregaProposta: entrega.descartada ? c.r.situacaoEntrega ?? null : cls.situacaoEntrega ?? null,
+      evidenciaEntrega: entrega.evidencia || null,
+      evidenciaNoTextoAtual: entrega.evidenciaNoTextoAtual,
+      descartes,
+      textoAtualCaracteres: partesMsg.atual.length, textoCitadoCaracteres: partesMsg.citado.length,
       idioma: idiomaAlvo ?? null, idiomaDeclarado: cls.idioma ?? null,
       endereco: cls.endereco ?? null, confianca: cls.confianca ?? null,
       somenteDado: !!(cls.somente_dado ?? cls.somenteDado), resumo: cls.resumo ?? null,

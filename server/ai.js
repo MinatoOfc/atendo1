@@ -582,7 +582,7 @@ export async function inferirFasesHistoricas(casos, catalogo) {
 const SCHEMA_CLASSIFICACAO_NOVO = {
   type: 'object',
   additionalProperties: false,
-  required: ['intencao', 'motivo', 'produtos', 'ajustes', 'situacaoEntrega', 'endereco', 'resumo', 'idioma', 'idiomaConfiavel', 'spam'],
+  required: ['intencao', 'motivo', 'produtos', 'ajustes', 'situacaoEntrega', 'evidenciaEntrega', 'endereco', 'resumo', 'idioma', 'idiomaConfiavel', 'spam'],
   properties: {
     intencao: { type: 'string', enum: ['aceita', 'recusa', 'pede_reembolso', 'pede_cancelamento', 'pede_troca', 'informa', 'pergunta_status', 'agradece', 'outro'] },
     motivo: { type: 'string', enum: ['tamanho', 'qualidade', 'nao_gostou', 'defeito', 'errado', 'nao_recebido', 'nao_informado', 'nenhum'] },
@@ -595,6 +595,9 @@ const SCHEMA_CLASSIFICACAO_NOVO = {
       },
     },
     situacaoEntrega: { type: 'string', enum: ['nao_chegou', 'entregue_nao_recebido', 'voltou_remetente', 'recusou_na_porta', 'nenhuma'] },
+    // trecho LITERAL da mensagem nova do cliente que prova a situação de entrega.
+    // O servidor confere se ele existe mesmo nesse texto; sem prova, descarta.
+    evidenciaEntrega: { type: 'string' },
     endereco: { type: 'string' },
     resumo: { type: 'string' },
     idioma: { type: 'string', description: 'Código ISO 639-1 do idioma da mensagem do cliente, com região quando reconhecível (de, de-AT, nl, nl-BE, fr-BE, en, pt…)' },
@@ -640,6 +643,7 @@ export async function classificarNovo(system, user) {
         ...r,
         motivo: r.motivo === 'nenhum' ? null : r.motivo,
         situacaoEntrega: r.situacaoEntrega === 'nenhuma' ? null : r.situacaoEntrega,
+        evidenciaEntrega: String(r.evidenciaEntrega || '').trim(),
         endereco: String(r.endereco || '').trim() || null,
         produtos: Array.isArray(r.produtos) ? r.produtos : [],
         ajustes: Array.isArray(r.ajustes) ? r.ajustes : [],

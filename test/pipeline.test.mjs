@@ -157,7 +157,12 @@ globalThis.fetch = async (url, opts) => {
     if (classificacaoQuebrada) { classificacaoQuebrada = false; return responder('isto não é JSON') }
     const c = fila.shift() ?? { intencao: 'outro' }
     // o cliente informa o produto (regra do mapa); um teste passa produtos: [] para exercitar a trava
-    return responder({ intencao: 'outro', motivo: 'nenhum', produtos: ['Polo Premium'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false, ...c })
+    // o classificador de verdade aponta o trecho que prova a situacao de entrega;
+    // aqui a prova e a propria mensagem nova, que o servidor confere
+    const novoTxt = String(userTxt).split('somente isto conta como declaração dele:')[1]?.split(String.fromCharCode(10) + '---')[0]?.trim() ?? ''
+    const base = { intencao: 'outro', motivo: 'nenhum', produtos: ['Polo Premium'], ajustes: [], situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false, ...c }
+    if (base.situacaoEntrega && base.situacaoEntrega !== 'nenhuma' && !base.evidenciaEntrega) base.evidenciaEntrega = novoTxt
+    return responder(base)
   }
   if (req.includes('acao_proposta')) {
     ultimoPromptEscrita = sys
@@ -1330,7 +1335,10 @@ test('aceite automático por tipo: cupom, troca (endereço antes), troca + 20%, 
     ['c119@web.de', 119, { intencao: 'pede_reembolso', motivo: 'qualidade' }, 'reemb_70', 'conf_reembolso', /70%/, false],
   ]
   for (const [de, n, cls, alvo, conf, re, precisaEndereco] of cenarios) {
-    let t = await cliente(cls, { de, nome: 'C' + n, corpo: 'Problem.', lojaId: 'loja3', agora: antes() })
+    // quem nao recebeu PRECISA dizer isso na mensagem: o servidor so abre a
+    // jornada de entrega com prova no texto novo do cliente
+    const corpoCliente = cls.situacaoEntrega ? 'Das Paket ist nicht angekommen. Problem.' : 'Problem.'
+    let t = await cliente(cls, { de, nome: 'C' + n, corpo: corpoCliente, lojaId: 'loja3', agora: antes() })
     if (an(t).transicaoPendente.para === 'tam_ajuste') { const r0 = await comEnvio('ok', () => aprovar(t)); assert.equal(r0.status, 200, r0.erro); t = await cliente({ intencao: 'informa', ajustes: cls.ajustes, resumo: 'ajuste' }, { de, corpo: 'zu klein', ticketId: t.id, agora: antes() }) }
     t = await negociarAte(t, de, alvo, { agora: antes })
     t = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de, corpo: 'Ok!', ticketId: t.id, agora: antes() })

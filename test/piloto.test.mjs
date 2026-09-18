@@ -68,7 +68,7 @@ globalThis.fetch = async (url, opts) => {
   const body = JSON.parse(opts.body)
   const responder = saida => new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'claude-haiku-4-5', content: [{ type: 'text', text: JSON.stringify(saida) }], stop_reason: 'end_turn', usage: { input_tokens: 100, output_tokens: 50 } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   const req = body.output_config?.format?.schema?.required ?? []
-  if (req.includes('intencao')) return responder({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false })
+  if (req.includes('intencao')) return responder({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium'], ajustes: [], situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false })
   if (req.includes('acao_proposta')) {
     const sys = String(body.system || '')
     const acao = sys.match(/"acao_proposta" deve ser exatamente "([^"]+)"/)?.[1] ?? '?'
