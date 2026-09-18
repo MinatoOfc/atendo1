@@ -822,7 +822,7 @@ const hashDoTexto = texto => crypto.createHash('sha256').update(String(texto ?? 
  * fase, o idioma e o Message-ID já estão gravados aqui. A configuração da loja
  * pode mudar no meio do caminho — este contexto não muda.
  */
-function contextoDeEnvio(ticket, { mensagemId, tentativaId, fase, origem, disparo, conclusao = null, texto = '' }) {
+function contextoDeEnvio(estado, wsId, ticket, { mensagemId, tentativaId, fase, origem, disparo, conclusao = null, texto = '' }) {
   const an = ticket.atendimentoNovo ?? null
   const autorizacao = autorizacaoDoDono(ticket, conclusao)
   // 1) texto do dono → manual; 2) solução aprovada por ele → aprovado_pelo_dono;
@@ -846,6 +846,24 @@ function contextoDeEnvio(ticket, { mensagemId, tentativaId, fase, origem, dispar
     hashTexto: hashDoTexto(texto),
     caracteres: String(texto ?? '').length,
     iniciadoEm: new Date().toISOString(),
+    // FOTOGRAFIA do checklist e dos fatos que o produziram, tirada AGORA — com a
+    // loja, o cupom, o pedido e o atendimento como estavam no instante do envio.
+    // Depois de uma queda ninguém recalcula nada: a verificação do cupom pode ter
+    // vencido, o código pode ter mudado, o pedido pode ter sido ressincronizado —
+    // e nada disso pode transformar um envio correto em incorreto.
+    ...fotografiaDoChecklist(estado, wsId, ticket, { faseId: fase ?? null, texto, origem }),
+  }
+}
+
+/** Checklist final + fatos que o geraram, congelados no instante do envio. */
+function fotografiaDoChecklist(estado, wsId, ticket, { faseId, texto, origem }) {
+  try {
+    if (!estado) return { checklist: null, fatos: null }
+    const fatos = fatosDaResposta(estado, wsId, ticket, { faseId, texto, enviado: true, origem })
+    return { checklist: checklistDaResposta(fatos), fatos }
+  } catch (err) {
+    console.error('[auditoria-fotografia]', err.message)
+    return { checklist: null, fatos: null }
   }
 }
 
@@ -877,6 +895,10 @@ function contextoDeReconciliacao(t, cp, faseConf) {
     caracteres: String(t.rascunho ?? t.resposta ?? '').length,
     iniciadoEm: cp?.envioIniciadoEm ?? null,
     semContextoGravado: true,
+    // sem fotografia não se inventa checklist: o envio fica comprovado, o
+    // checklist fica declarado como indisponível
+    checklist: null,
+    fatos: null,
   }
 }
 
@@ -885,26 +907,33 @@ function contextoDeReconciliacao(t, cp, faseConf) {
  * gravado antes do envio — nunca a configuração atual. Idempotente: as chaves
  * são o ticket + o Message-ID, então reiniciar duas vezes não duplica nada.
  */
-function reconstruirEnvioNaAuditoria(estado, wsId, t, ctx, texto) {
+function reconstruirEnvioNaAuditoria(t, ctx, { enviadoEm, horarioInferido, reconciliadoEm }) {
   const an = t.atendimentoNovo ?? null
   if (an && ctx.tentativaId) an.tentativaAtual = ctx.tentativaId
-  const checklist = estado
-    ? checklistDoTicket(estado, wsId, t, { faseId: ctx.fase, texto, enviado: true, origem: ctx.origem })
-    : null
+  // a fotografia manda: nada é recalculado com a configuração de agora
+  const checklist = ctx.checklist ?? null
   auditar(t, 'email_enviado', {
     resumo: 'E-mail enviado ao cliente pelo canal da loja (comprovado na caixa de enviados depois da queda)',
     situacao: 'ok', fase: ctx.fase,
+    // o evento leva o horário do ENVIO, não o do reinício
+    em: enviadoEm,
     chave: `email_enviado:${t.id}:${ctx.mensagemId}`,
     dados: {
       cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: ctx.fase, origem: ctx.origem,
       loja: ctx.lojaId, mensagemId: ctx.mensagemId, minimoEnvio: ctx.minimoEnvio, checklist,
+      fatos: ctx.fatos ?? null,
       enviado: true, canalConfirmou: true, origemEnvio: ctx.origemEnvio, autorizacao: ctx.autorizacao,
       reconciliado: true,
+      // três horários diferentes, nunca confundidos
+      enviadoEm, horarioInferido: !!horarioInferido, reconciliadoEm,
+      // estado antigo, sem fotografia: o envio está comprovado, o checklist não
+      ...(checklist ? {} : { checklistHistoricoAusente: true }),
     },
   })
   if (ctx.origem === 'manual') {
     auditar(t, 'respondido_manualmente', {
       resumo: 'Resposta escrita e enviada por você', situacao: 'informativo', fase: ctx.fase,
+      em: enviadoEm,
       chave: `respondido_manualmente:${t.id}:${ctx.mensagemId}`,
       dados: { cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: ctx.fase },
     })
@@ -921,15 +950,34 @@ function reconstruirEnvioNaAuditoria(estado, wsId, t, ctx, texto) {
 function registrarEnvioSimulado(mensagemId) {
   const arq = arquivoDeEnviosSimulados()
   if (!arq) return
-  try { fs.appendFileSync(arq, mensagemId + '\n') } catch { /* teste */ }
+  // "<id>\t<data ISO>": a data faz o papel do que o provedor devolveria
+  try { fs.appendFileSync(arq, `${mensagemId}\t${new Date().toISOString()}\n`) } catch { /* teste */ }
 }
-/** A confirmação com este Message-ID chegou a sair? true | false | null (não deu para conferir). */
+/**
+ * A confirmação com este Message-ID chegou a sair? Devolve SEMPRE um objeto
+ * { encontrado, mensagemId, data }: encontrado true (está na caixa), false (não
+ * está) ou null (não deu para conferir); data é o horário do provedor, quando ele
+ * informa. Nunca um booleano solto — quem chama precisa saber os três estados e a
+ * data real para não datar o e-mail pelo horário do reinício.
+ */
 async function confirmacaoFoiEnviada(wsId, t, mensagemId) {
+  const resposta = (encontrado, data = null) => ({ encontrado, mensagemId: mensagemId ?? null, data })
   const arq = arquivoDeEnviosSimulados()
-  if (arq) { try { return fs.readFileSync(arq, 'utf8').split('\n').includes(mensagemId) } catch { return false } }
+  if (arq) {
+    try {
+      const linha = fs.readFileSync(arq, 'utf8').split('\n').find(l => l.split('\t')[0] === mensagemId)
+      if (!linha) return resposta(false)
+      const data = linha.split('\t')[1]?.trim()
+      return resposta(true, data && Number.isFinite(Date.parse(data)) ? new Date(data).toISOString() : null)
+    } catch { return resposta(false) }
+  }
   const conta = contasDe(wsId).find(c => c.id === (t.lojaId ?? 'loja1'))
-  if (!conta?.procurarEnviado) return null
-  try { return await conta.procurarEnviado(mensagemId) } catch { return null }
+  if (!conta?.procurarEnviado) return resposta(null)
+  try {
+    const r = await conta.procurarEnviado(mensagemId)
+    if (r && typeof r === 'object') return resposta(r.encontrado ?? null, r.data ?? null)
+    return resposta(r ?? null) // conta antiga que ainda devolve booleano
+  } catch { return resposta(null) }
 }
 /**
  * Arranque: conclusão encontrada em "enviando" significa que o servidor caiu durante o
@@ -946,13 +994,18 @@ async function reconciliarEnviosInterrompidos(wsId) {
     if (!cp || cp.status !== 'enviando') continue
     const faseConf = an.transicaoPendente?.para && FASES[an.transicaoPendente.para]?.confirmacao ? an.transicaoPendente.para : faseDeConfirmacao(cp.faseAceita)
     const ctx = contextoDeReconciliacao(t, cp, faseConf)
-    const saiu = await confirmacaoFoiEnviada(wsId, t, ctx.mensagemId)
+    const conferencia = await confirmacaoFoiEnviada(wsId, t, ctx.mensagemId)
+    const saiu = conferencia.encontrado
+    const reconciliadoEm = new Date().toISOString()
+    // horário do ENVIO: o do provedor quando ele informa; senão o início do envio,
+    // declarado como aproximado. O horário do reinício nunca faz esse papel.
+    const enviadoEm = conferencia.data ?? ctx.iniciadoEm ?? reconciliadoEm
+    const horarioInferido = !conferencia.data
     t.enviaEm = undefined
     if (saiu === true) {
       // o e-mail chegou a sair: finaliza SEM reenviar (transição, conclusão e relatório idempotente)
-      const texto = t.rascunho ?? t.resposta ?? ''
       // AUDITORIA: o envio existiu de verdade — reconstrói a prova que a queda comeu
-      reconstruirEnvioNaAuditoria(estado, wsId, t, ctx, texto)
+      reconstruirEnvioNaAuditoria(t, ctx, { enviadoEm, horarioInferido, reconciliadoEm })
       if (an.transicaoPendente?.para === faseConf) {
         confirmarTransicao(an, { para: faseConf, mensagem: an.transicaoPendente.mensagem, observacao: 'confirmação reconciliada após queda do servidor' })
         an.proximoEnvioMinimo = undefined; an.rascunhoGerado = undefined
@@ -960,12 +1013,13 @@ async function reconciliarEnviosInterrompidos(wsId) {
       if (faseConf) {
         auditar(t, 'fase_confirmada', {
           resumo: `Fase confirmada depois do envio real: ${FASES[faseConf]?.titulo ?? faseConf}`,
-          situacao: 'ok', fase: faseConf,
+          situacao: 'ok', fase: faseConf, em: enviadoEm,
           chave: `fase_confirmada:${t.id}:${ctx.mensagemId}`,
-          dados: { cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: faseConf, mensagemId: ctx.mensagemId, reconciliado: true },
+          dados: { cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: faseConf, mensagemId: ctx.mensagemId, reconciliado: true, reconciliadoEm },
         })
       }
-      t.status = 'enviado'; t.resposta = t.rascunho ?? t.resposta; t.respondidoEm = t.respondidoEm || new Date().toISOString(); t.lido = true
+      // a conversa foi respondida na hora do ENVIO, não na do reinício
+      t.status = 'enviado'; t.resposta = t.rascunho ?? t.resposta; t.respondidoEm = t.respondidoEm || enviadoEm; t.lido = true
       concluirAposEnvio(estado, wsId, t, faseConf, ctx.mensagemId)
       console.log(`[reconciliação] ${wsId}/${t.id}: confirmação já estava na caixa de enviados — fechada sem reenviar`)
     } else {
@@ -986,7 +1040,7 @@ async function reconciliarEnviosInterrompidos(wsId) {
         chave: `envio_falhou:${t.id}:${ctx.mensagemId}:reconciliacao`,
         dados: {
           cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: faseConf, mensagemId: ctx.mensagemId,
-          erro: cp.motivoInterrupcao, enviado: false,
+          erro: cp.motivoInterrupcao, enviado: false, reconciliadoEm,
           conferencia: saiu === false ? 'nao_encontrado_na_caixa' : 'nao_foi_possivel_conferir',
         },
       })
@@ -1228,9 +1282,10 @@ function visao(wsId) {
   const conta1 = contas[0]
   const loja1 = estado.lojas[0]
   return {
-    // A auditoria NÃO viaja no estado geral: são centenas de eventos por conversa.
-    // Só as rotas /api/auditoria e /api/auditoria/:id devolvem esses dados.
-    tickets: estado.tickets.map(t => (t.auditoriaIA ? { ...t, auditoriaIA: undefined } : t)),
+    // A auditoria NÃO viaja no estado geral: são centenas de eventos por conversa,
+    // e a fotografia do envio (checklist + fatos) é interna. Só /api/auditoria e
+    // /api/auditoria/:id devolvem esses dados.
+    tickets: estado.tickets.map(t => (t.auditoriaIA || t.envioPendente ? { ...t, auditoriaIA: undefined, envioPendente: undefined } : t)),
     politicas: estado.politicas,
     faqs: estado.faqs,
     comportamentos: estado.comportamentos ?? [],
@@ -2251,7 +2306,7 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
   // CONTEXTO IMUTÁVEL desta tentativa: decidido AGORA, antes de o canal ser
   // chamado, e persistido junto com "enviando". Se o servidor cair depois do
   // envio, a reconciliação usa exatamente isto — nunca a configuração de então.
-  const ctxEnvio = contextoDeEnvio(ticket, {
+  const ctxEnvio = contextoDeEnvio(estado, wsId, ticket, {
     mensagemId, tentativaId: tentativaEnvio, fase: transicao?.para ?? an?.etapa ?? null,
     origem, disparo, conclusao: cpEnvio, texto,
   })
@@ -2302,16 +2357,18 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
     // origem e autorização vêm do contexto gravado ANTES do canal — o mesmo que
     // a reconciliação usaria se o servidor tivesse caído aqui
     const { origemEnvio, autorizacao } = ctxEnvio
-    const checklist = estadoA
+    // MESMA fotografia que a reconciliação usaria: tirada antes do canal
+    const checklist = ctxEnvio.checklist ?? (estadoA
       ? checklistDoTicket(estadoA, wsId, ticket, { faseId: transicao?.para ?? an?.etapa ?? null, texto, enviado: true, origem })
-      : null
+      : null)
     auditar(ticket, 'email_enviado', {
       resumo: 'E-mail enviado ao cliente pelo canal da loja', situacao: 'ok',
       fase: transicao?.para ?? null,
       chave: `email_enviado:${ticket.id}:${mensagemId}`,
       dados: {
         cicloId: ctxEnvio.cicloId, tentativaId: tentativaEnvio, fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId,
-        minimoEnvio: ctxEnvio.minimoEnvio, checklist, enviado: true,
+        minimoEnvio: ctxEnvio.minimoEnvio, checklist, fatos: ctxEnvio.fatos ?? null, enviado: true,
+        enviadoEm: new Date().toISOString(), horarioInferido: false,
         // o canal confirmou a saída: só aqui, depois de enviar de verdade
         canalConfirmou: enviou === true,
         // EVIDÊNCIA de como esta mensagem saiu, gravada no próprio evento: mudar

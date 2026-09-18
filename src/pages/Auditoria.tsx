@@ -13,7 +13,8 @@ import { useStore } from '../store'
 const CORES_SELO: Record<string, string> = {
   tudo_certo: 'var(--green, #3fb950)', revisar: 'var(--amber, #d29922)',
   aguardando: 'var(--amber, #d29922)', agendada: 'var(--blue, #388bfd)',
-  bloqueado: 'var(--red, #f85149)', aguardando_voce: 'var(--amber, #d29922)',
+  bloqueado: 'var(--red, #f85149)', revisar_historico: 'var(--amber, #d29922)',
+  aguardando_voce: 'var(--amber, #d29922)',
   encerrado: 'var(--text-2)', sem_dados: 'var(--text-3)',
 }
 const CORES_ITEM: Record<string, string> = {
@@ -169,6 +170,7 @@ export default function Auditoria() {
               <option value="todas">Todas</option>
               <option value="tudo_certo">Tudo certo</option>
               <option value="revisar">Revisar</option>
+              <option value="revisar_historico">Revisar — checklist histórico indisponível</option>
               <option value="aguardando">Aguardando aprovação</option>
               <option value="agendada">Agendada — ainda não enviada</option>
               <option value="aguardando_voce">Aguardando você</option>

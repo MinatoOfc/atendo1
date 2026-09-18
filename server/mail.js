@@ -378,13 +378,16 @@ export function criarConta(id, cfg, sufixo = '') {
   }
 
   /**
-   * A mensagem com este Message-ID está na caixa de ENVIADOS?
-   *   true  = está (o envio chegou a acontecer)
-   *   false = não está
-   *   null  = não deu para conferir (sem IMAP, pasta inacessível, erro) — quem chama decide
+   * A mensagem com este Message-ID está na caixa de ENVIADOS? Devolve SEMPRE um
+   * objeto: { encontrado, mensagemId, data }.
+   *   encontrado true  = está (o envio chegou a acontecer)
+   *   encontrado false = não está
+   *   encontrado null  = não deu para conferir (sem IMAP, pasta inacessível, erro)
+   *   data = horário informado pelo provedor, quando ele devolve; senão null.
    */
   async function procurarEnviado(messageId) {
-    if (!configurado || !messageId) return null
+    const r = (encontrado, data = null) => ({ encontrado, mensagemId: messageId ?? null, data })
+    if (!configurado || !messageId) return r(null)
     let cliente = null
     try {
       cliente = new ImapFlow({ host: cfg.imapHost, port: cfg.imapPort, secure: true, auth: { user: cfg.user, pass: cfg.pass }, logger: false })
@@ -394,12 +397,22 @@ export function criarConta(id, cfg, sufixo = '') {
           const lock = await cliente.getMailboxLock(pasta)
           try {
             const achados = await cliente.search({ header: { 'message-id': `<${messageId}@atendo>` } })
-            if (achados && achados.length) return true
+            if (achados && achados.length) {
+              // data REAL do provedor, quando ele devolve: é o horário do envio
+              let data = null
+              try {
+                for await (const msg of cliente.fetch(achados, { envelope: true, internalDate: true })) {
+                  const quando = msg.envelope?.date ?? msg.internalDate ?? null
+                  if (quando) { data = new Date(quando).toISOString(); break }
+                }
+              } catch { /* provedor sem data: o chamador usa o horário aproximado */ }
+              return r(true, data)
+            }
           } finally { lock.release() }
         } catch { /* pasta não existe neste provedor: tenta a próxima */ }
       }
-      return false
-    } catch { return null } finally { try { await cliente?.logout() } catch {} }
+      return r(false)
+    } catch { return r(null) } finally { try { await cliente?.logout() } catch {} }
   }
 
   async function enviar({ para, assunto, corpo, messageId = null }) {

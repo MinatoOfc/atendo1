@@ -67,7 +67,9 @@ const ambiente = extra => ({
   ...extra,
 })
 const estadoSalvo = () => JSON.parse(readFileSync(path.join(DIR, 'ws-queda.json'), 'utf8'))
-const envios = () => (existsSync(ENVIOS) ? readFileSync(ENVIOS, 'utf8').split('\n').filter(Boolean) : [])
+// cada linha do registro durável é "<Message-ID>\t<data ISO informada pelo provedor>"
+const linhasDeEnvio = () => (existsSync(ENVIOS) ? readFileSync(ENVIOS, 'utf8').split('\n').filter(Boolean) : [])
+const envios = () => linhasDeEnvio().map(l => l.split('\t')[0])
 const esperar = ms => new Promise(r => setTimeout(r, ms))
 let filho = null
 const subir = extra => new Promise((resolve, reject) => {

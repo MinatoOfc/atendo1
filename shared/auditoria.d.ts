@@ -1,7 +1,7 @@
 export type SituacaoAuditoria = 'ok' | 'atencao' | 'bloqueado' | 'informativo'
 export type EstadoItem = 'verde' | 'amarelo' | 'vermelho' | 'cinza'
 export type GeralChecklist = 'tudo_certo' | 'revisar' | 'bloqueado'
-export type SeloConversa = GeralChecklist | 'aguardando' | 'agendada' | 'aguardando_voce' | 'encerrado' | 'sem_dados'
+export type SeloConversa = GeralChecklist | 'aguardando' | 'agendada' | 'aguardando_voce' | 'encerrado' | 'revisar_historico' | 'sem_dados'
 /** Como a mensagem saiu, gravado no próprio evento de envio (campo fechado). */
 export type OrigemEnvio = 'automatico' | 'aprovado_pelo_dono' | 'manual'
 

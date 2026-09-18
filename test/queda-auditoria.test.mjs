@@ -6,7 +6,7 @@
 // PROCESSO FILHO de verdade. Nenhuma loja real é ativada e nenhuma mensagem real sai.
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, appendFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
@@ -34,13 +34,23 @@ const loja = extra => ({
   cupons: { ...CUPONS }, prazoEntrega: { min: 5, max: 12, processamento: 3 }, ...extra,
 })
 estado.lojas = [
-  // loja1 EXIGE aprovação: o dono aprova e o agendador só envia na cadência
-  loja({ id: 'loja1', nome: 'Loja Aprovação', novoEnvioAutomatico: false, exigirAprovacaoAceiteNovo: true }),
+  // loja1 EXIGE aprovação: o dono aprova e o agendador só envia na cadência.
+  // A conferência de cupons fica GRAVADA (e não simulada) para poder vencer no meio do caminho.
+  loja({
+    id: 'loja1', nome: 'Loja Aprovação', novoEnvioAutomatico: false, exigirAprovacaoAceiteNovo: true,
+    verificacaoCupons: {
+      permissao: true, erro: null, em: new Date().toISOString(), lojaId: 'loja1',
+      itens: Object.entries(CUPONS).map(([pct, codigo]) => ({ pct: Number(pct), codigo, valor: Number(pct), situacao: 'ok', detalhe: 'ok' })),
+    },
+  }),
   // loja2 é a única com envio realmente automático (só no ensaio)
   loja({ id: 'loja2', nome: 'Loja Automática', novoEnvioAutomatico: true, exigirAprovacaoAceiteNovo: false }),
 ]
 // um cliente e um pedido POR cenário: conversas distintas nunca se fundem
-const CENARIOS = { qa1: 'loja1', qa2: 'loja2', qa3: 'loja1', qa4: 'loja1', qa5: 'loja1', qa6: 'loja2' }
+const CENARIOS = {
+  qa1: 'loja1', qa2: 'loja2', qa3: 'loja1', qa4: 'loja1', qa5: 'loja1', qa6: 'loja2',
+  qa7: 'loja1', qa8: 'loja1', qa9: 'loja1', qa10: 'loja1', qa11: 'loja1', qa12: 'loja1',
+}
 estado.pedidos = Object.entries(CENARIOS).map(([id, lojaId], i) => ({
   id: 'p-' + id, numero: '#' + (101 + i), cliente: 'Cliente ' + id, email: `${id}@web.de`, pais: 'Germany', valor: 100,
   status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId,
@@ -64,7 +74,10 @@ const ambiente = extra => ({
 })
 const arquivo = path.join(DIR, 'ws-qa.json')
 const estadoSalvo = () => JSON.parse(readFileSync(arquivo, 'utf8'))
-const envios = () => (existsSync(ENVIOS) ? readFileSync(ENVIOS, 'utf8').split('\n').filter(Boolean) : [])
+// cada linha do registro durável é "<Message-ID>\t<data ISO informada pelo provedor>"
+const linhasDeEnvio = () => (existsSync(ENVIOS) ? readFileSync(ENVIOS, 'utf8').split('\n').filter(Boolean) : [])
+const envios = () => linhasDeEnvio().map(l => l.split('\t')[0])
+const NL = String.fromCharCode(10)
 const esperar = ms => new Promise(r => setTimeout(r, ms))
 let filho = null
 const subir = extra => new Promise((resolve, reject) => {
@@ -91,8 +104,22 @@ const verAuditoria = async (cookie, id) => (await fetch(base + `/api/auditoria/$
  * Estado salvo com um aceite de 40% pronto para a confirmação sair, já com um ciclo
  * de auditoria aberto (o cliente escreveu, a IA classificou, o motor decidiu).
  */
-function preparar(id, { lojaId = 'loja1', modo = 'manual', aprovado = true, agendado = true } = {}) {
+const CONF_CUPOM = 'Hallo! Ihr Gutschein KEEP35 (35%) ist freigegeben und gilt für jede Bestellung. Sie behalten den Artikel.'
+function preparar(id, { lojaId = 'loja1', modo = 'manual', aprovado = true, agendado = true, tipo = 'reembolso' } = {}) {
+  const cupom = tipo === 'cupom'
   const salvo = estadoSalvo()
+  // cada cenário começa com o mundo em ordem: códigos originais, conferência de
+  // cupons recém-feita e pedido no valor de origem (um teste anterior pode ter
+  // envelhecido a conferência ou trocado o código de propósito)
+  const l1 = salvo.lojas.find(x => x.id === 'loja1')
+  if (l1?.verificacaoCupons) {
+    l1.cupons = { ...CUPONS }
+    l1.verificacaoCupons.em = new Date().toISOString()
+    l1.verificacaoCupons.itens = Object.entries(CUPONS).map(([pct, codigo]) => ({ pct: Number(pct), codigo, valor: Number(pct), situacao: 'ok', detalhe: 'ok' }))
+  }
+  const pedidoOriginal = pedidoDe(id)
+  const pSalvo = (salvo.pedidos ?? []).find(x => x.id === 'p-' + id)
+  if (pSalvo && pedidoOriginal) pSalvo.valor = pedidoOriginal.valor
   const ciclo = `ciclo-${id}`
   const tentativa = `tent-${id}`
   const evento = (tipo, extra = {}) => novoEvento({
@@ -100,10 +127,14 @@ function preparar(id, { lojaId = 'loja1', modo = 'manual', aprovado = true, agen
     situacao: extra.situacao ?? 'informativo', chave: `${tipo}:${id}:semente`,
     dados: { cicloId: ciclo, ...(extra.dados ?? {}) },
   })
+  const faseAceita = cupom ? 'qual_cupom_35' : 'reemb_40'
+  const faseConf = cupom ? 'conf_cupom' : 'conf_reembolso'
+  const texto = cupom ? CONF_CUPOM : CONF
   const cp = {
-    id: `ev-${id}`, ticketId: id, faseAceita: 'reemb_40', tipo: 'reembolso', jornada: 'qualidade', modo,
-    ofertaAceita: { tipo: 'reembolso', pct: 40, cupom: null, prazo: null, semDevolucao: true },
-    aceitaEm: '2026-09-01T10:00:00.000Z', percentual: 40, valor: 40, valorPedido: 100, moeda: 'EUR', cupom: null,
+    id: `ev-${id}`, ticketId: id, faseAceita, tipo, jornada: 'qualidade', modo,
+    ofertaAceita: cupom ? { tipo: 'cupom', pct: null, cupom: 35, prazo: null, semDevolucao: true } : { tipo: 'reembolso', pct: 40, cupom: null, prazo: null, semDevolucao: true },
+    aceitaEm: '2026-09-01T10:00:00.000Z',
+    percentual: cupom ? null : 40, valor: cupom ? null : 40, valorPedido: 100, moeda: 'EUR', cupom: cupom ? 'KEEP35' : null,
     produtos: ['Polo Premium (Schwarz / L)'], endereco: null,
     historicoFases: ['qual_troca', 'qual_cupom_35', 'reemb_25', 'reemb_40'],
     mensagemConfirmacaoId: `atendo-ev-${id}`, status: 'aguardando_cadencia',
@@ -115,30 +146,43 @@ function preparar(id, { lojaId = 'loja1', modo = 'manual', aprovado = true, agen
     corpo: 'Ok, 40%.', data: '2026-09-01T10:00:00.000Z',
     lido: true, origem: 'cliente', categoria: 'reembolso', status: 'aprovacao', idioma: 'de', lojaId, historico: [],
     motor: 'novo', motorAtendimento: 'novo', primeiroEmailEm: '2026-09-01T10:00:00.000Z',
-    rascunho: CONF, geradoPorIA: true,
+    rascunho: texto, geradoPorIA: true,
     ...(agendado ? { enviaEm: Date.now() - 1000 } : {}),
     cicloAuditoria: ciclo,
     auditoriaIA: [
       evento('cliente_recebido', { resumo: 'Mensagem do cliente (Ok, 40%.)' }),
-      evento('cliente_aceitou', { situacao: 'ok', resumo: 'Cliente aceitou: Reembolso de 40%', dados: { fase: 'reemb_40' } }),
-      evento('rascunho_gerado', { dados: { tentativaId: tentativa, fase: 'conf_reembolso' } }),
+      evento('cliente_aceitou', { situacao: 'ok', resumo: 'Cliente aceitou', dados: { fase: faseAceita } }),
+      evento('rascunho_gerado', { dados: { tentativaId: tentativa, fase: faseConf } }),
     ],
     atendimentoNovo: {
-      versao: 1, fluxo: 'qualidade', etapa: 'reemb_40', produtosAfetados: ['Polo Premium (Schwarz / L)'], produtosInformados: true,
-      motivo: 'qualidade', historicoEtapas: hist(['qual_troca', 'qual_cupom_35', 'reemb_25', 'reemb_40']),
-      transicaoPendente: { para: 'conf_reembolso', mensagem: 'ok', faltando: [] }, aguardando: 'envio', acaoAceita: 'reemb_40',
-      idioma: 'de', rascunhoGerado: CONF, rascunhoIdioma: 'de', tentativaAtual: tentativa,
+      versao: 1, fluxo: 'qualidade', etapa: faseAceita, produtosAfetados: ['Polo Premium (Schwarz / L)'], produtosInformados: true,
+      motivo: 'qualidade', historicoEtapas: hist(cupom ? ['qual_troca', 'qual_cupom_35'] : ['qual_troca', 'qual_cupom_35', 'reemb_25', 'reemb_40']),
+      transicaoPendente: { para: faseConf, mensagem: 'ok', faltando: [] }, aguardando: 'envio', acaoAceita: faseAceita,
+      idioma: 'de', rascunhoGerado: texto, rascunhoIdioma: 'de', tentativaAtual: tentativa,
       conclusaoPendente: cp,
     },
   }
   salvo.tickets = [t, ...(salvo.tickets ?? []).filter(x => x.id !== id)]
   writeFileSync(arquivo, JSON.stringify(salvo))
-  return { ciclo, tentativa, mensagemId: cp.mensagemConfirmacaoId }
+  return { ciclo, tentativa, mensagemId: cp.mensagemConfirmacaoId, faseConf, faseAceita }
 }
+
+/** Mexe no estado SALVO entre a queda e o reinício (o mundo mudou enquanto o servidor estava fora). */
+function mexerNoEstadoSalvo(fn) {
+  const salvo = estadoSalvo()
+  fn(salvo)
+  writeFileSync(arquivo, JSON.stringify(salvo))
+  return salvo
+}
+/** O evento de envio reconstruído desta conversa. */
+const eventoDeEnvio = c => c.eventos.filter(e => e.tipo === 'email_enviado').at(-1)
 
 /** Sobe o servidor programado para cair depois do canal e antes da gravação final. */
 async function cairDepoisDoCanal(extra = {}) {
   const primeiro = await subir({ ATENDO_TESTE_QUEDA: 'antes', ...extra })
+  // registrado para limpeza: se a queda NÃO acontecer, este servidor não pode
+  // ficar órfão segurando a porta e pendurando a bateria inteira
+  filho = primeiro.processo
   const fim = await Promise.race([morreu(primeiro.processo), esperar(25_000).then(() => null)])
   assert.ok(fim, 'o servidor deveria cair no ponto de teste')
   assert.equal(fim.code, 7, 'queda proposital depois do envio e antes da gravação')
@@ -227,7 +271,8 @@ test('aprovação do dono + queda depois do canal: a prova é reconstruída com 
   assert.equal(t.relatorioAuto, undefined, 'conclusão manual não vira linha automática no relatório')
   assert.equal(st.tickets.filter(x => x.relatorioAuto?.eventoId === 'ev-qa1').length, 0)
   // o contexto só foi limpo depois da gravação final; a evidência ficou nos eventos
-  assert.equal(t.envioPendente, undefined, 'contexto pendente limpo depois da gravação final')
+  assert.equal(estadoSalvo().tickets.find(x => x.id === 'qa1').envioPendente, undefined, 'contexto pendente limpo depois da gravação final')
+  assert.equal(t.envioPendente, undefined, '/api/state não expõe o contexto interno')
 
   // /api/state continua sem expor a auditoria
   assert.equal(t.auditoriaIA, undefined, '/api/state nunca traz auditoriaIA')
@@ -324,8 +369,8 @@ test('Message-ID que NÃO está na caixa de enviados: nada de envio, nada de fas
   const ctx = preparar('qa4', { lojaId: 'loja1', modo: 'manual', aprovado: true })
   await cairDepoisDoCanal()
   // a caixa de enviados NÃO tem a mensagem (o canal aceitou, mas ela não saiu)
-  const restantes = envios().filter(x => x !== ctx.mensagemId)
-  writeFileSync(ENVIOS, restantes.map(x => x + '\n').join(''))
+  const restantes = linhasDeEnvio().filter(l => l.split('\t')[0] !== ctx.mensagemId)
+  writeFileSync(ENVIOS, restantes.map(l => l + '\n').join(''))
   const antes = envios().length
   const salvoAntes = estadoSalvo().tickets.find(t => t.id === 'qa4')
   assert.equal(salvoAntes.envioPendente.mensagemId, ctx.mensagemId, 'o contexto ficou gravado antes do envio')
@@ -358,7 +403,9 @@ test('Message-ID que NÃO está na caixa de enviados: nada de envio, nada de fas
   assert.equal(t.relatorioAuto, undefined, 'nenhum relatório')
   assert.equal(t.enviaEm, undefined, 'sem reenvio automático')
   assert.equal(t.atendimentoNovo.conclusaoPendente.mensagemConfirmacaoId, ctx.mensagemId, 'Message-ID preservado')
-  assert.equal(t.envioPendente.mensagemId, ctx.mensagemId, 'contexto preservado para a conferência manual')
+  // a fotografia é PRIVADA: /api/state nunca a expõe; ela fica no estado salvo
+  assert.equal(t.envioPendente, undefined, '/api/state não expõe o contexto interno')
+  assert.equal(estadoSalvo().tickets.find(x => x.id === 'qa4').envioPendente.mensagemId, ctx.mensagemId, 'contexto preservado para a conferência manual')
   await esperar(6500)
   assert.equal(envios().length, antes, 'nem o agendador reenviou')
 })
@@ -389,6 +436,181 @@ test('caixa de enviados indisponível (resultado inconclusivo): mesmo comportame
   assert.equal(t.status, 'humano')
   assert.equal(t.relatorioAuto, undefined)
   assert.equal(t.atendimentoNovo.etapa, 'reemb_40')
+})
+
+test('cupom válido no envio e VENCIDO antes do reinício: a fotografia verde é preservada', async () => {
+  await matar()
+  const ctx = preparar('qa7', { tipo: 'cupom' })
+  await cairDepoisDoCanal()
+  const salvo = estadoSalvo().tickets.find(t => t.id === 'qa7')
+  assert.equal(salvo.envioPendente.checklist.geral, 'tudo_certo', 'a fotografia nasceu verde: ' + JSON.stringify(salvo.envioPendente.checklist.itens.filter(i => i.estado !== 'verde' && i.estado !== 'cinza')))
+  assert.equal(salvo.envioPendente.checklist.itens.find(i => i.id === 'cupom').estado, 'verde')
+  assert.ok(salvo.envioPendente.fatos, 'os fatos usados no checklist também ficaram gravados')
+
+  // o servidor ficou fora do ar por mais de 24 h: a conferência do cupom venceu
+  mexerNoEstadoSalvo(st => {
+    st.lojas.find(l => l.id === 'loja1').verificacaoCupons.em = new Date(Date.now() - 48 * 3600_000).toISOString()
+  })
+  const servidor = await subir({})
+  filho = servidor.processo
+  await esperar(2500)
+  const cookie = await entrar()
+  const c = await verAuditoria(cookie, 'qa7')
+  const e = eventoDeEnvio(c)
+  assert.equal(e.dados.checklist.geral, 'tudo_certo', 'o checklist do envio continua verde')
+  assert.equal(e.dados.checklist.itens.find(i => i.id === 'cupom').estado, 'verde', 'o cupom estava válido QUANDO a mensagem saiu')
+  assert.equal(e.dados.checklistHistoricoAusente ?? false, false)
+  assert.equal(c.selo, 'tudo_certo', 'reinício depois de 24 h não transforma envio correto em incorreto')
+})
+
+test('código do cupom trocado e pedido revalorizado antes do reinício: a fotografia não muda', async () => {
+  await matar()
+  const ctxC = preparar('qa8', { tipo: 'cupom' })
+  await cairDepoisDoCanal()
+  const fotoC = estadoSalvo().tickets.find(t => t.id === 'qa8').envioPendente.checklist
+  mexerNoEstadoSalvo(st => {
+    const l = st.lojas.find(x => x.id === 'loja1')
+    l.cupons['35'] = 'OUTRO35' // o dono trocou o código depois do envio
+    l.verificacaoCupons.itens = l.verificacaoCupons.itens.map(i => (i.pct === 35 ? { ...i, codigo: 'OUTRO35' } : i))
+  })
+  const s1 = await subir({})
+  filho = s1.processo
+  await esperar(2500)
+  let cookie = await entrar()
+  let c = await verAuditoria(cookie, 'qa8')
+  assert.deepEqual(eventoDeEnvio(c).dados.checklist, fotoC, 'trocar o código não reescreve o checklist do envio')
+  assert.equal(c.selo, 'tudo_certo')
+
+  // pedido ressincronizado com outro valor: percentual e valor históricos ficam
+  await matar()
+  const ctxR = preparar('qa9')
+  await cairDepoisDoCanal()
+  const fotoR = estadoSalvo().tickets.find(t => t.id === 'qa9').envioPendente.checklist
+  assert.equal(fotoR.itens.find(i => i.id === 'valor').estado, 'verde')
+  mexerNoEstadoSalvo(st => {
+    const p = st.pedidos.find(x => x.id === 'p-qa9')
+    p.valor = 250 // 40% viraria 100,00 € — o texto enviado fala em 40,00 €
+  })
+  const s2 = await subir({})
+  filho = s2.processo
+  await esperar(2500)
+  cookie = await entrar()
+  c = await verAuditoria(cookie, 'qa9')
+  const e = eventoDeEnvio(c)
+  assert.equal(e.dados.checklist.itens.find(i => i.id === 'valor').estado, 'verde', 'o valor verificado no envio permanece')
+  assert.equal(e.dados.checklist.itens.find(i => i.id === 'percentual').estado, 'verde')
+  assert.deepEqual(e.dados.checklist, fotoR, 'a fotografia inteira é a mesma')
+  assert.equal(c.selo, 'tudo_certo')
+})
+
+test('horário do envio: data do provedor quando existe, início do envio quando não — nunca o do reinício', async () => {
+  // com data do provedor
+  await matar()
+  const ctx = preparar('qa10')
+  await cairDepoisDoCanal()
+  const dataProvedor = linhasDeEnvio().find(l => l.split(String.fromCharCode(9))[0] === ctx.mensagemId).split(String.fromCharCode(9))[1]
+  assert.ok(Date.parse(dataProvedor), 'o registro guardou a data da mensagem')
+  const s1 = await subir({})
+  filho = s1.processo
+  await esperar(2500)
+  let cookie = await entrar()
+  let c = await verAuditoria(cookie, 'qa10')
+  let e = eventoDeEnvio(c)
+  assert.equal(e.em, dataProvedor, 'o evento usa a data REAL da mensagem')
+  assert.equal(e.dados.enviadoEm, dataProvedor)
+  assert.equal(e.dados.horarioInferido, false)
+  assert.ok(Date.parse(e.dados.reconciliadoEm) > Date.parse(dataProvedor), 'reconciliadoEm é outro horário, posterior')
+  const enviada = c.mensagens.find(m => m.situacao === 'enviada')
+  assert.equal(enviada.envioReal, dataProvedor, 'a linha do tempo usa a data real')
+
+  // sem data do provedor
+  await matar()
+  const ctx2 = preparar('qa11')
+  await cairDepoisDoCanal()
+  const iniciado = estadoSalvo().tickets.find(t => t.id === 'qa11').envioPendente.iniciadoEm
+  // o provedor devolve a mensagem, mas sem data
+  writeFileSync(ENVIOS, linhasDeEnvio().map(l => (l.split(String.fromCharCode(9))[0] === ctx2.mensagemId ? ctx2.mensagemId : l)).map(l => l + NL).join(''))
+  const s2 = await subir({})
+  filho = s2.processo
+  await esperar(2500)
+  cookie = await entrar()
+  c = await verAuditoria(cookie, 'qa11')
+  e = eventoDeEnvio(c)
+  assert.equal(e.dados.horarioInferido, true, 'o horário é aproximado e está declarado')
+  assert.equal(e.dados.enviadoEm, iniciado, 'usa o início do envio, não o reinício')
+  assert.equal(e.em, iniciado)
+  assert.notEqual(e.dados.reconciliadoEm, e.dados.enviadoEm)
+  assert.equal(c.selo, 'tudo_certo')
+})
+
+test('estado legado SEM fotografia: o envio continua comprovado, o checklist aparece como histórico indisponível', async () => {
+  await matar()
+  const ctx = preparar('qa12')
+  // estado gravado por uma versão anterior: "enviando", sem envioPendente, com o
+  // e-mail realmente na caixa de enviados
+  mexerNoEstadoSalvo(st => {
+    const t = st.tickets.find(x => x.id === 'qa12')
+    t.atendimentoNovo.conclusaoPendente.status = 'enviando'
+    t.atendimentoNovo.conclusaoPendente.envioIniciadoEm = new Date(Date.now() - 3600_000).toISOString()
+    delete t.envioPendente
+    delete t.enviaEm
+  })
+  appendFileSync(ENVIOS, ctx.mensagemId + NL) // registro antigo: sem data
+  const antes = envios().length
+
+  const servidor = await subir({})
+  filho = servidor.processo
+  await esperar(2500)
+  assert.equal(envios().length, antes, 'não reenvia')
+  const cookie = await entrar()
+  const c = await verAuditoria(cookie, 'qa12')
+  const e = eventoDeEnvio(c)
+  assert.equal(e.dados.enviado, true, 'a prova de que o canal enviou continua')
+  assert.equal(e.dados.canalConfirmou, true)
+  assert.equal(e.dados.mensagemId, ctx.mensagemId)
+  assert.equal(e.dados.checklist ?? null, null, 'nenhum checklist inventado')
+  assert.equal(e.dados.checklistHistoricoAusente, true)
+  assert.equal(e.dados.horarioInferido, true)
+  assert.equal(c.selo, 'revisar_historico', 'selo: ' + c.selo)
+  assert.equal(c.checklist, null)
+  assert.equal(c.checklistConcluido, false)
+  assert.match(c.motivoChecklist, /não foi guardado/)
+  // e a fase e o relatório comprovados não são desfeitos
+  const st = await verEstado(cookie)
+  const t = st.tickets.find(x => x.id === 'qa12')
+  assert.equal(t.status, 'enviado')
+  assert.equal(t.atendimentoNovo.etapa, 'conf_reembolso')
+  assert.equal(t.atendimentoNovo.conclusaoPendente.status, 'concluida')
+  assert.equal(c.eventos.filter(x => x.tipo === 'fase_confirmada').length, 1)
+})
+
+test('dois reinícios seguidos não duplicam eventos nem alteram a fotografia', async () => {
+  await matar()
+  const inicial = await subir({})
+  filho = inicial.processo
+  await esperar(2500)
+  const cookie0 = await entrar()
+  const antesC = await verAuditoria(cookie0, 'qa7')
+  const foto = eventoDeEnvio(antesC).dados.checklist
+  const enviadoEm = eventoDeEnvio(antesC).dados.enviadoEm
+  for (const volta of [1, 2]) {
+    await matar()
+    const servidor = await subir({})
+    filho = servidor.processo
+    await esperar(2500)
+    const cookie = await entrar()
+    const c = await verAuditoria(cookie, 'qa7')
+    assert.equal(c.eventos.filter(e => e.tipo === 'email_enviado').length, 1, `volta ${volta}: um email_enviado`)
+    assert.equal(c.eventos.filter(e => e.tipo === 'fase_confirmada').length, 1, `volta ${volta}: uma fase confirmada`)
+    assert.deepEqual(eventoDeEnvio(c).dados.checklist, foto, `volta ${volta}: a fotografia não muda`)
+    assert.equal(eventoDeEnvio(c).dados.enviadoEm, enviadoEm, `volta ${volta}: o horário do envio não muda`)
+    assert.equal(c.selo, 'tudo_certo')
+    // e nada interno vaza no estado geral
+    const st = await verEstado(cookie)
+    assert.equal(JSON.stringify(st).includes('"auditoriaIA"'), false, `volta ${volta}: sem auditoria no estado`)
+    assert.equal(JSON.stringify(st).includes('"envioPendente"'), false, `volta ${volta}: sem contexto interno no estado`)
+    assert.equal(JSON.stringify(st).includes('"checklist"'), false, `volta ${volta}: sem checklist no estado`)
+  }
 })
 
 test('queda DEPOIS da gravação final: o reinício não altera nem duplica o ciclo já concluído', async () => {

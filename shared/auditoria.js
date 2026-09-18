@@ -358,6 +358,10 @@ export function seloDaConversa(eventos = []) {
     switch (e.tipo) {
       case 'email_enviado': {
         if (!naTentativa.has(e)) break
+        // envio comprovado de um registro ANTIGO, sem a fotografia do checklist:
+        // a prova do canal vale, o checklist não é inventado como verde
+        if (e.dados?.checklistHistoricoAusente === true && e.dados.enviado === true
+          && e.dados.canalConfirmou === true && !!e.dados.mensagemId) return 'revisar_historico'
         if (!envioProvado(e)) return 'revisar'
         // a mensagem SAIU: checklist com pendência pede revisão, mas nunca pode
         // virar "Bloqueada — não foi enviada", que seria mentira sobre o envio
@@ -416,6 +420,18 @@ export function checklistDaTentativa(eventos = []) {
       em: comChecklist.em,
     }
   }
+  // envio antigo comprovado, sem fotografia do checklist: diz isso em vez de
+  // deixar a impressão de que nada foi verificado
+  const antigo = [...daVez].reverse().find(e => e.tipo === 'email_enviado' && e.dados?.checklistHistoricoAusente === true)
+  if (antigo) {
+    return {
+      checklist: null,
+      concluido: false,
+      motivo: 'Envio confirmado pelo Message-ID, mas o checklist daquela tentativa não foi guardado (registro anterior à fotografia do envio).',
+      tentativaId: antigo.dados?.tentativaId ?? null,
+      em: antigo.em,
+    }
+  }
   const doCiclo = eventosDoCiclo(eventos)
   const parou = [...doCiclo].reverse().find(e => ['rascunho_bloqueado', 'envio_falhou', 'caso_para_humano', 'caso_encerrado'].includes(e.tipo))
   return {
@@ -433,6 +449,7 @@ export const ROTULO_SELO = {
   aguardando: 'Resposta validada — aguardando aprovação',
   agendada: 'Agendada — ainda não enviada',
   bloqueado: 'Bloqueada — não foi enviada',
+  revisar_historico: 'Revisar — envio confirmado, checklist histórico indisponível',
   aguardando_voce: 'Aguardando você',
   encerrado: 'Encerrado — sem resposta necessária',
   sem_dados: 'Sem registro',
@@ -440,7 +457,8 @@ export const ROTULO_SELO = {
 /** Rótulo curto para a lista lateral. */
 export const ROTULO_SELO_CURTO = {
   tudo_certo: 'Tudo certo', revisar: 'Revisar', aguardando: 'Aguardando',
-  agendada: 'Agendada', bloqueado: 'Bloqueado', aguardando_voce: 'Aguardando você',
+  agendada: 'Agendada', bloqueado: 'Bloqueado', revisar_historico: 'Revisar (histórico)',
+  aguardando_voce: 'Aguardando você',
   encerrado: 'Encerrado', sem_dados: 'Sem registro',
 }
 
@@ -493,7 +511,7 @@ export function filtrosDaAuditoria(q = {}) {
     jornada: String(q.jornada ?? 'todas'),
     fase: String(q.fase ?? 'todas'),
     idioma: String(q.idioma ?? 'todos'),
-    situacao: ['tudo_certo', 'revisar', 'aguardando', 'agendada', 'bloqueado', 'aguardando_voce', 'encerrado'].includes(String(q.situacao)) ? String(q.situacao) : 'todas',
+    situacao: ['tudo_certo', 'revisar', 'revisar_historico', 'aguardando', 'agendada', 'bloqueado', 'aguardando_voce', 'encerrado'].includes(String(q.situacao)) ? String(q.situacao) : 'todas',
     soErro: q.soErro === true || q.soErro === 'true' || q.soErro === '1',
     soAprovacao: q.soAprovacao === true || q.soAprovacao === 'true' || q.soAprovacao === '1',
     soAutomaticos: q.soAutomaticos === true || q.soAutomaticos === 'true' || q.soAutomaticos === '1',
