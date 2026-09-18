@@ -1235,14 +1235,21 @@ export function valoresPermitidos(faseId, an, pedido) {
 }
 
 const RE_CUPOM_KW = /(cupom|cup[óo]n|coupon(?:code)?|gutschein(?:code)?|rabattcode|c[óo]digo|codice|code|kortingscode|kortingsbon|tegoedbon|voucher)/gi
-/** Códigos de cupom citados no texto (token só com maiúsculas/dígitos, com ao menos uma letra). */
+/**
+ * Códigos de cupom citados no texto: token em MAIÚSCULAS/dígitos, com ao menos
+ * uma letra. Hífen e sublinhado fazem PARTE do código — a Shopify gera códigos
+ * como "V7KQ-M4XN", e ler só "V7KQ" faria o validador acusar de inventado um
+ * código que está cadastrado, travando toda etapa com cupom. O token começa e
+ * termina em letra ou dígito, então o hífen de pontuação ("Gutschein - ABC123")
+ * continua de fora.
+ */
 export function codigosCitados(texto) {
   const out = new Set()
   const s = String(texto || '')
   for (const m of s.matchAll(RE_CUPOM_KW)) {
     const resto = s.slice(m.index + m[0].length, m.index + m[0].length + 40)
-    const tok = resto.match(/^[\s:\-–—"“«'’]*([A-Za-z0-9]{4,20})\b/)?.[1]
-    if (tok && /^[A-Z0-9]+$/.test(tok) && /[A-Z]/.test(tok)) out.add(tok)
+    const tok = resto.match(/^[\s:\-–—"“«'’]*([A-Za-z0-9][A-Za-z0-9_-]{2,22}[A-Za-z0-9])/)?.[1]
+    if (tok && /^[A-Z0-9_-]+$/.test(tok) && /[A-Z]/.test(tok)) out.add(tok)
   }
   return [...out]
 }

@@ -293,6 +293,28 @@ test('exigências positivas: percentual, valor do servidor, cupom cadastrado (ne
   assert.deepEqual(codigosCitados('Gutschein: FAKE99, código postal 10115, coupon code SORRY25'), ['FAKE99', 'SORRY25'])
 })
 
+test('código de cupom com hífen é lido INTEIRO — a Shopify gera códigos assim', () => {
+  // o bug: lendo só "V7KQ" de "V7KQ-M4XN", o validador acusava de inventado um
+  // código que está cadastrado, e TODA etapa com cupom parava em Aprovações
+  assert.deepEqual(codigosCitados('Gutschein: V7KQ-M4XN (15%).'), ['V7KQ-M4XN'])
+  assert.deepEqual(codigosCitados('Ihr Gutschein M6QX-V9KD (35%) gilt für jede Bestellung.'), ['M6QX-V9KD'])
+  assert.deepEqual(codigosCitados('Coupon: AB_CD-99.'), ['AB_CD-99'])
+  // hífen de pontuação continua de fora: o código começa e termina em letra/dígito
+  assert.deepEqual(codigosCitados('Gutschein - ABC123 ist da.'), ['ABC123'])
+  assert.deepEqual(codigosCitados('Gutschein: ABCD- und dann'), ['ABCD'])
+  // e nada de código curto demais ou de palavra comum depois da palavra-chave
+  assert.deepEqual(codigosCitados('cupom: ABC'), [])
+  assert.deepEqual(codigosCitados('código postal 10115'), [])
+
+  // ponta a ponta na fase: o código CADASTRADO com hífen passa; o inventado não
+  const lojaHifen = { ...loja, cupons: { ...loja.cupons, 15: 'V7KQ-M4XN' } }
+  const texto = pct => `Wir bieten Ihnen einen kostenlosen Umtausch in einer anderen Farbe oder Größe an, ohne Rücksendung. Gutschein: ${pct} (15%). Lieferzeit 4 bis 11 Tage. Möchten Sie das annehmen?`
+  assert.equal(conferirTextoDaFase('qual_troca', texto('V7KQ-M4XN'), lojaHifen, novoEstado(), pedido1).ok, true)
+  const inventado = conferirTextoDaFase('qual_troca', texto('V7KQ-XXXX'), lojaHifen, novoEstado(), pedido1)
+  assert.equal(inventado.ok, false)
+  assert.match(inventado.motivo, /V7KQ-XXXX/, 'o motivo mostra o código inteiro, não um pedaço')
+})
+
 test('valor em dinheiro obrigatório, ação composta completa, percentual do cupom, frete e prazo da confirmação', () => {
   const an0 = novoEstado()
   const conferir = (fase, txt, extra = an0) => conferirTextoDaFase(fase, txt, loja, extra, pedido1) // pedido de 70 €
