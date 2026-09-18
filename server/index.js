@@ -20,11 +20,12 @@ import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferen
 import { produtoFoiInformado } from '../shared/produto.js'
 import { dadosDoRelatorio, filtrosDoRelatorio, normalizarCaso, acharPedido, clienteDoCaso, produtosDoCaso, percentualDoTexto, tipoDoTexto } from '../shared/relatorio.js'
 import { paginaRelatorio } from './relatorio-externo.js'
+import { prontidaoDaLoja, conferirCupons, cupomParaMensagem, PCT_CUPOM_RESERVA } from '../shared/prontidao.js'
 import { paginaPipeline, dadosPipeline, filtrosDaConsulta } from './pipeline-externo.js'
 import { numerosDePedido, emailsCitados } from './refs.js'
 import { criarConta, lerConfigEnv, montarConfig, testarConfig, envioPorApi, presetsDisponiveis } from './mail.js'
 import {
-  buscarPedidosShopify, buscarProdutosShopify, testarShopify,
+  buscarPedidosShopify, buscarProdutosShopify, testarShopify, verificarCuponsShopify,
   oauthDisponivel, credenciaisEnv, conexaoDaLoja, urlInstalacao, hmacValido,
   trocarCodigoPorToken, normalizarDominio, escoposNecessarios,
 } from './shopify.js'
@@ -383,7 +384,12 @@ function faltaParaConcluir(estado, wsId, t, cp) {
   if (fase?.requer?.includes('ajuste') && !(an.ajusteTamanho && Object.keys(an.ajusteTamanho).length)) faltando.push('tamanho: pequeno ou grande')
   if (an.fluxo === 'defeito' && an.fotoValidada !== true) faltando.push('foto do defeito validada por você')
   if (oferta && /troca|reenvio/.test(oferta.tipo) && !validarEndereco(an.enderecoConfirmado).ok) faltando.push('endereço completo (rua, número, código postal, cidade)')
-  if (oferta?.cupom && !loja?.cupons?.[String(oferta.cupom)]) faltando.push(`cupom de ${oferta.cupom}% cadastrado`)
+  // cupom: percentual da fase, código DESTA loja e resultado da verificação na
+  // Shopify. Sem aprovação humana (conclusão automática), só cupom verificado passa.
+  if (oferta?.cupom) {
+    const c = cupomDaOferta(estado, loja, oferta.cupom, { exigirVerificado: cp?.modo === 'automatico' })
+    if (!c.ok) faltando.push(c.motivo ?? `cupom de ${oferta.cupom}% cadastrado`)
+  }
   const idioma = an.idioma ?? null
   if (!idioma || !IDIOMAS_VALIDADOS.has(idioma)) faltando.push('idioma da conversa com validação local')
   const conta = contasDe(wsId).find(c => c.id === (t.lojaId ?? 'loja1'))
@@ -391,6 +397,23 @@ function faltaParaConcluir(estado, wsId, t, cp) {
   return faltando
 }
 const rotulosDoPedidoItens = pedido => (pedido?.itens ?? []).map(i => `${i.titulo}${i.variante ? ` (${i.variante})` : ''}`)
+
+/**
+ * Código do cupom de uma oferta, reconferido no instante do uso: percentual da
+ * fase, código cadastrado NESTA loja (nunca de outra) e resultado da última
+ * verificação na Shopify. Em ensaio a verificação é dada como feita.
+ */
+function cupomDaOferta(estado, loja, pct, { exigirVerificado = false } = {}) {
+  return cupomParaMensagem({
+    pct,
+    cupons: loja?.cupons ?? {},
+    lojaId: loja?.id ?? null,
+    verificacao: integracaoSimulada()
+      ? { permissao: true, lojaId: loja?.id ?? null, itens: [{ pct, codigo: loja?.cupons?.[String(pct)], situacao: 'ok', detalhe: 'ensaio' }] }
+      : (loja?.verificacaoCupons ?? null),
+    exigirVerificado: exigirVerificado && !integracaoSimulada(),
+  })
+}
 
 /** Fotografa a solução aceita no instante do aceite (modo manual/automático decidido AGORA e nunca recalculado). */
 function novaConclusao(estado, t, faseAceita, status) {
@@ -402,7 +425,7 @@ function novaConclusao(estado, t, faseAceita, status) {
     modo: exigeAprovacaoAceite(loja) ? 'manual' : 'automatico',
     aceitaEm: t.data || new Date().toISOString(), mensagemDoCliente: String(t.corpo || '').slice(0, 300),
     percentual: oferta?.pct ?? null, valor: oferta?.pct && valorPedido != null ? arredondar(valorPedido * oferta.pct / 100) : null, valorPedido, moeda: loja?.moeda ?? 'EUR',
-    cupom: oferta?.cupom ? (loja?.cupons?.[String(oferta.cupom)] ?? null) : null, cupomPct: oferta?.cupom ?? null,
+    cupom: oferta?.cupom ? cupomDaOferta(estado, loja, oferta.cupom, { exigirVerificado: !exigeAprovacaoAceite(loja) }).codigo : null, cupomPct: oferta?.cupom ?? null,
     produtos: [...(an.produtosAfetados ?? [])], endereco: an.enderecoConfirmado ?? null,
     historicoFases: (an.historicoEtapas ?? []).filter(h => !h.evento).map(h => h.para),
     status,
@@ -563,7 +586,7 @@ function conferirPreRequisitosAutomaticos(req, motivo, lojaId = null) {
 /** Pré-requisitos da conclusão automática numa loja (fora do momento de desligar a aprovação). */
 const podeConclusaoAutomatica = (estado, wsId, loja) =>
   modoDaLoja(loja) === 'novo' && loja?.novoEnvioAutomatico === true && estado.config.automacaoAtiva === true
-  && envioAutomaticoLiberado() && prontidaoModoNovo(wsId, loja).pronto
+  && envioAutomaticoLiberado() && prontidaoModoNovo(wsId, loja).automatico.pronto
 
 /**
  * SEGURANÇA: não pode existir conclusão automática numa loja sem todos os
@@ -624,16 +647,45 @@ function neutralizarConclusaoAutomatica(wsId, motivo, { por = 'sistema (seguran�
   return n
 }
 
+/**
+ * Registra o resultado da última sincronização de pedidos DESTA loja — base da
+ * prontidão real: sem sincronização concluída com sucesso, o modo novo não liga.
+ */
+function marcarSincronizacao(estado, lojaId, { ok, erro = null, pedidos = null }) {
+  estado.sincronizacaoPedidos = estado.sincronizacaoPedidos ?? {}
+  estado.sincronizacaoPedidos[lojaId] = {
+    ok: !!ok, erro: erro ?? null, em: new Date().toISOString(),
+    pedidos: pedidos ?? (estado.pedidos ?? []).filter(p => (p.lojaId ?? 'loja1') === lojaId).length,
+  }
+}
+
+/** Shopify conectada NESTA loja (credenciais válidas no estado). */
+const shopifyDaLoja = (estado, lojaId) => ({ conectada: !!conexaoLoja(estado, lojaId) })
+
+/**
+ * Em ensaio/simulação (ATENDO_SIMULAR=1) não existe Shopify nem cupom real: a
+ * integração é dada como conferida para os testes do motor continuarem valendo.
+ * Em produção isto nunca é verdade — a variável não existe lá.
+ */
+const integracaoSimulada = () => process.env.ATENDO_SIMULAR === '1'
+
 /** O que falta para uma loja poder ativar o modo novo — conferido no servidor. */
 function prontidaoModoNovo(wsId, loja) {
-  const faltando = []
-  const propria = contasDe(wsId).find(c => c.id === loja.id) ?? null
-  if (!propria || !(propria.configurado || envioPorApi)) faltando.push({ chave: 'email', texto: 'conta de e-mail própria da loja (Configurações → E-mail)' })
-  const p = loja.prazoEntrega
-  if (!p || !(Number(p.min) > 0) || !(Number(p.max) >= Number(p.min))) faltando.push({ chave: 'prazo', texto: 'prazo de entrega em dias úteis (mínimo e máximo)' })
-  const semCupom = CUPONS_NECESSARIOS.filter(pct => !String(loja.cupons?.[String(pct)] ?? '').trim())
-  if (semCupom.length) faltando.push({ chave: 'cupons', texto: `cupom de ${semCupom.map(p => p + '%').join(', ')}` })
-  return { pronto: faltando.length === 0, faltando }
+  const estado = workspaces.get(wsId)
+  const conta = contasDe(wsId).find(c => c.id === loja.id) ?? null
+  const simulado = integracaoSimulada()
+  const r = prontidaoDaLoja({
+    loja,
+    emailOk: !!conta && (conta.configurado || envioPorApi),
+    shopify: simulado ? { conectada: true } : shopifyDaLoja(estado, loja.id),
+    sincronizacao: simulado ? { ok: true, em: null, erro: null } : (estado?.sincronizacaoPedidos?.[loja.id] ?? null),
+    verificacaoCupons: simulado
+      ? { permissao: true, em: null, lojaId: loja.id, itens: CUPONS_NECESSARIOS.map(pct => ({ pct, codigo: loja.cupons?.[String(pct)], situacao: 'ok', detalhe: 'ensaio' })) }
+      : (loja.verificacaoCupons ?? null),
+    pctsUsados: CUPONS_NECESSARIOS,
+  })
+  // compatibilidade: quem já usava { pronto, faltando } continua funcionando
+  return r
 }
 
 const contaDaLoja = (wsId, lojaId) => {
@@ -713,6 +765,8 @@ function visaoLojas(wsId, estado) {
       aceiteHistorico: l.aceiteHistorico ?? [],
       prazoEntrega: l.prazoEntrega ?? null,
       cupons: l.cupons ?? {},
+      verificacaoCupons: l.verificacaoCupons ?? null,
+      sincronizacaoPedidos: estado.sincronizacaoPedidos?.[l.id] ?? null,
       assinatura: l.assinatura ?? null,
       email: {
         configurado: conta?.configurado ?? false,
@@ -1499,6 +1553,7 @@ async function sincronizar(wsId) {
       if (rprod.produtos) {
         estado.produtos = [...(estado.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== loja.id), ...rprod.produtos.map(p => ({ ...p, lojaId: loja.id }))]
       }
+      marcarSincronizacao(estado, loja.id, { ok: !rp.erro, erro: rp.erro ?? null })
     }
 
     if (process.env.ATENDO_SIMULAR === '1') {
@@ -2518,9 +2573,46 @@ async function sincronizarLoja(wsId, lojaId) {
     estado.produtos = [...(estado.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== lojaId), ...rprod.produtos.map(p => ({ ...p, lojaId }))]
   }
   statusShopifyPorLoja.get(chave).pedidos = estado.pedidos.filter(p => p.lojaId === lojaId).length
+  marcarSincronizacao(estado, lojaId, { ok: !rp.erro, erro: rp.erro ?? null })
   salvar(wsId)
   return t
 }
+
+/**
+ * "Testar cupons": confere na Shopify DESTA loja se cada código cadastrado
+ * existe, está ativo, não expirou e vale exatamente o percentual do fluxo.
+ * O resultado fica gravado na loja e vira base da prontidão automática. Sem a
+ * permissão read_discounts, grava "não verificado" — o piloto com aprovação
+ * humana continua, só o envio totalmente automático fica bloqueado.
+ */
+app.post('/api/lojas/:id/testar-cupons', async (req, res) => {
+  const estado = req.estado
+  const loja = estado.lojas.find(l => l.id === req.params.id)
+  if (!loja) return res.status(404).json({ erro: 'Loja não encontrada.' })
+  const pedidos = CUPONS_NECESSARIOS
+    .map(pct => ({ pct, codigo: String(loja.cupons?.[String(pct)] ?? '').trim() }))
+    .filter(x => x.codigo)
+  let verificacao
+  if (integracaoSimulada()) {
+    verificacao = { permissao: true, erro: null, em: new Date().toISOString(), itens: pedidos.map(x => ({ ...x, situacao: 'ok', detalhe: 'ensaio' })) }
+  } else {
+    const cx = conexaoLoja(estado, loja.id)
+    verificacao = await verificarCuponsShopify(cx, pedidos)
+  }
+  // a verificação pertence a ESTA loja: código nunca se mistura entre lojas
+  loja.verificacaoCupons = { ...verificacao, lojaId: loja.id }
+  // um cupom que deixou de valer derruba a conclusão automática na hora
+  conferirPreRequisitosAutomaticos(req, 'Conclusão automática interrompida porque a verificação dos cupons na Shopify não confirmou todos os códigos.', loja.id)
+  salvar(req.wsId)
+  const prontidao = prontidaoModoNovo(req.wsId, loja)
+  res.json({
+    ok: true,
+    verificacao: loja.verificacaoCupons,
+    cupons: prontidao.cupons,
+    prontidao,
+    state: visao(req.wsId),
+  })
+})
 
 app.get('/api/shopify/instalar', (req, res) => {
   try {
@@ -2636,7 +2728,14 @@ const IDIOMAS_RESPOSTA = ['auto', 'pt', 'en', 'es', 'fr', 'de', 'it', 'nl']
 app.get('/api/lojas/:id/modo', (req, res) => {
   const loja = req.estado.lojas.find(l => l.id === req.params.id)
   if (!loja) return res.status(404).json({ erro: 'loja não encontrada' })
-  res.json({ modo: modoDaLoja(loja), desde: loja.modoDesde ?? null, prontidao: prontidaoModoNovo(req.wsId, loja), historico: loja.modoHistorico ?? [], cuponsNecessarios: CUPONS_NECESSARIOS })
+  const prontidao = prontidaoModoNovo(req.wsId, loja)
+  res.json({
+    modo: modoDaLoja(loja), desde: loja.modoDesde ?? null, prontidao,
+    historico: loja.modoHistorico ?? [], cuponsNecessarios: CUPONS_NECESSARIOS,
+    cupomReserva: PCT_CUPOM_RESERVA,
+    verificacaoCupons: loja.verificacaoCupons ?? null,
+    sincronizacao: req.estado.sincronizacaoPedidos?.[loja.id] ?? null,
+  })
 })
 
 app.post('/api/lojas/:id/modo', (req, res) => {
@@ -2648,7 +2747,7 @@ app.post('/api/lojas/:id/modo', (req, res) => {
   if (modo === atual) return ok(req, res)
   if (modo === 'novo') {
     const pr = prontidaoModoNovo(req.wsId, loja)
-    if (!pr.pronto) return res.status(400).json({ erro: `Esta loja ainda não pode ativar o modo novo. Falta: ${pr.faltando.map(f => f.texto).join('; ')}.`, faltando: pr.faltando, state: visao(req.wsId) })
+    if (!pr.pronto) return res.status(400).json({ erro: `Esta loja ainda não pode ativar o modo novo. Falta: ${pr.faltando.map(f => f.texto).join('; ')}.`, faltando: pr.faltando, avisos: pr.avisos, cupons: pr.cupons, state: visao(req.wsId) })
   }
   if (confirmar !== true) return res.status(400).json({ erro: 'A mudança de modo precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
   const em = new Date().toISOString()
@@ -2693,6 +2792,13 @@ app.post('/api/lojas', (req, res) => {
     if (novoEnvioAutomatico) {
       if (modoDaLoja(loja) !== 'novo') return res.status(400).json({ erro: 'O envio automático só existe no atendimento novo — esta loja está no clássico.', state: visao(req.wsId) })
       if (!envioAutomaticoLiberado()) return res.status(400).json({ erro: 'Envio automático bloqueado durante o piloto: cada resposta passa pela sua aprovação.', bloqueadoPiloto: true, state: visao(req.wsId) })
+      const pr = prontidaoModoNovo(req.wsId, loja)
+      if (!pr.automatico.pronto) {
+        return res.status(400).json({
+          erro: `Esta loja ainda não pode enviar sozinha. Falta: ${pr.automatico.faltando.map(f => f.texto).join('; ')}.`,
+          faltando: pr.automatico.faltando, avisos: pr.avisos, cupons: pr.cupons, state: visao(req.wsId),
+        })
+      }
       if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'Ligar o envio automático precisa de confirmação.', precisaConfirmar: true, state: visao(req.wsId) })
     }
     loja.novoEnvioAutomatico = novoEnvioAutomatico
@@ -2708,7 +2814,12 @@ app.post('/api/lojas', (req, res) => {
       if (!req.estado.config.automacaoAtiva) return res.status(400).json({ erro: 'Ligue a automação geral antes de desligar a aprovação após o aceite.', state: visao(req.wsId) })
       if (!loja.novoEnvioAutomatico) return res.status(400).json({ erro: 'Ligue o envio automático desta loja antes de desligar a aprovação após o aceite.', state: visao(req.wsId) })
       const pr = prontidaoModoNovo(req.wsId, loja)
-      if (!pr.pronto) return res.status(400).json({ erro: `Falta: ${pr.faltando.map(f => f.texto).join('; ')}.`, faltando: pr.faltando, state: visao(req.wsId) })
+      if (!pr.automatico.pronto) {
+        return res.status(400).json({
+          erro: `Falta: ${pr.automatico.faltando.map(f => f.texto).join('; ')}.`,
+          faltando: pr.automatico.faltando, avisos: pr.avisos, cupons: pr.cupons, state: visao(req.wsId),
+        })
+      }
       if (req.body?.confirmar !== true) return res.status(400).json({ erro: 'Desligar a aprovação após o aceite precisa de confirmação: a IA continuará negociando normalmente; depois que o cliente aceitar, a confirmação será enviada automaticamente após a cadência de 5 horas e o caso será incluído no relatório diário.', precisaConfirmar: true, state: visao(req.wsId) })
     }
     if (atual !== exigirAprovacaoAceiteNovo) {
@@ -2858,6 +2969,7 @@ app.post('/api/relatorio/atualizar', async (req, res) => {
       if (rprod.produtos) {
         estado.produtos = [...(estado.produtos ?? []).filter(p => (p.lojaId ?? 'loja1') !== loja.id), ...rprod.produtos.map(p => ({ ...p, lojaId: loja.id }))]
       }
+      marcarSincronizacao(estado, loja.id, { ok: !rp.erro, erro: rp.erro ?? null })
       lojasLidas++
     }
   } catch (err) {

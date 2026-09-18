@@ -289,7 +289,15 @@ export interface Loja {
   /** auditoria das trocas de modo */
   modoHistorico?: { de: string; para: string; por: string; lojaId: string; em: string }[]
   /** o que falta para ativar o novo (conferido no servidor) */
-  prontidaoNovo?: { pronto: boolean; faltando: { chave: string; texto: string }[] }
+  prontidaoNovo?: {
+    pronto: boolean
+    faltando: { chave: string; texto: string }[]
+    avisos?: { chave: string; texto: string }[]
+    /** situação de cada cupom (o de 10% vem como reserva) */
+    cupons?: { pct: number; codigo: string | null; usadoPeloFluxo: boolean; reserva: boolean; situacao: string; detalhe: string }[]
+    /** nível do envio TOTALMENTE automático (Shopify, sincronização, moeda, cupons verificados) */
+    automatico?: { pronto: boolean; faltando: { chave: string; texto: string }[] }
+  }
   /** modo novo: rascunhos saem sozinhos na cadência (desligado no piloto) */
   novoEnvioAutomatico?: boolean
   /** modo novo: depois que o cliente aceita, o dono aprova (true, padrão) ou a confirmação sai sozinha e entra no relatório (false) */
@@ -492,6 +500,8 @@ interface Store extends ServerState {
   prepararRelatorio: (id: string) => Promise<PreparoRelatorio | null>
   /** vincula à mão o(s) pedido(s) de um caso do relatório (só pedidos da mesma loja) */
   vincularPedidosRelatorio: (id: string, pedidoIds: string[]) => void
+  /** confere na Shopify os cupons cadastrados desta loja (existe, ativo, não expirado, percentual certo) */
+  testarCupons: (lojaId: string) => Promise<{ erro?: string }>
   /** sincroniza os pedidos da Shopify e recalcula os casos do relatório (sem e-mail, sem IA) */
   atualizarRelatorio: () => Promise<{ casos: number; comPedido: number; erro?: string }>
   salvarOpcoesRelatorio: (opcoes: string[]) => void
@@ -761,6 +771,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     marcarResolvido: id => api(`/tickets/${id}/resolver`, 'POST').then(aplicar),
     alternarRelatorio: (id, adicionar, texto, detalhes) => api(`/tickets/${id}/relatorio`, 'POST', { adicionar, texto, detalhes }).then(aplicar),
     vincularPedidosRelatorio: (id, pedidoIds) => api(`/tickets/${id}/relatorio/vincular`, 'POST', { pedidoIds }).then(aplicar),
+    testarCupons: async lojaId => {
+      const r = (await api(`/lojas/${lojaId}/testar-cupons`)) as { erro?: string; state?: ServerState }
+      aplicar(r)
+      return { erro: r.erro }
+    },
     atualizarRelatorio: async () => {
       const r = (await api('/relatorio/atualizar')) as { casos?: number; comPedido?: number; erro?: string; state?: ServerState }
       aplicar(r)

@@ -102,6 +102,17 @@ const nomesProvedores: Record<string, string> = {
  */
 /** Ajustes do modo novo, por loja: envio automático, prazo em dias úteis e cupons. */
 const PERCENTUAIS_CUPOM = ['10', '15', '25', '30', '35', '40'] as const
+const ROTULO_CURTO_CUPOM: Record<string, string> = {
+  ok: '✓ confere', ausente: 'não cadastrado', nao_verificado: 'não verificado', inexistente: 'não existe',
+  percentual_divergente: 'percentual diferente', expirado: 'expirado', nao_iniciado: 'ainda não vale',
+  inativo: 'desativado', erro: 'erro ao verificar', outra_loja: 'de outra loja', reserva: 'reserva — não usado pelo fluxo',
+}
+const rotuloCurtoCupom = (situacao: string) => ROTULO_CURTO_CUPOM[situacao] ?? situacao
+const corDoCupom = (situacao: string) =>
+  situacao === 'ok' ? 'var(--green, #3fb950)'
+    : situacao === 'reserva' ? 'var(--text-3)'
+      : situacao === 'nao_verificado' ? 'var(--amber, #d29922)'
+        : 'var(--red, #f85149)'
 const fmtQuando = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
 
 /** Seletor do modo de atendimento: individual por loja, com prontidão conferida no servidor,
@@ -198,6 +209,11 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
   const salvarPrazo = () => s.atualizarLoja(lojaId, { prazoEntrega: prazo })
   const salvarCupons = () => s.atualizarLoja(lojaId, { cupons })
   const faltam = PERCENTUAIS_CUPOM.filter(p => p !== '10' && !cupons[p]?.trim())
+  // "Testar cupons": confere na Shopify se cada código existe, está ativo, não
+  // expirou e vale o percentual certo. O de 10% é reserva e não é requisito.
+  const [testandoCupons, setTestandoCupons] = useState(false)
+  const [resultadoCupons, setResultadoCupons] = useState<string | null>(null)
+  const estadoDoCupom = (pct: number) => (loja?.prontidaoNovo?.cupons ?? []).find(c => Number(c.pct) === pct) ?? null
   const numero = (v: string, atual: number) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : atual }
 
   const emNovo = loja?.modoAtendimento === 'novo'
@@ -242,8 +258,9 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
 
       {(() => {
         const exige = loja?.exigirAprovacaoAceiteNovo !== false
-        const podeDesligar = emNovo && s.envioAutomaticoLiberado && s.config.automacaoAtiva && !!loja?.novoEnvioAutomatico && (loja?.prontidaoNovo?.pronto ?? false)
-        const porque = !emNovo ? 'Só no atendimento novo' : !s.envioAutomaticoLiberado ? 'Bloqueado durante o piloto' : !s.config.automacaoAtiva ? 'Ligue a automação geral' : !loja?.novoEnvioAutomatico ? 'Ligue o envio automático desta loja' : !(loja?.prontidaoNovo?.pronto ?? false) ? 'Falta caixa própria, prazo ou cupons' : ''
+        const auto = loja?.prontidaoNovo?.automatico
+        const podeDesligar = emNovo && s.envioAutomaticoLiberado && s.config.automacaoAtiva && !!loja?.novoEnvioAutomatico && (auto?.pronto ?? false)
+        const porque = !emNovo ? 'Só no atendimento novo' : !s.envioAutomaticoLiberado ? 'Bloqueado durante o piloto' : !s.config.automacaoAtiva ? 'Ligue a automação geral' : !loja?.novoEnvioAutomatico ? 'Ligue o envio automático desta loja' : !(auto?.pronto ?? false) ? `Falta: ${(auto?.faltando ?? []).map(f => f.texto).join('; ')}` : ''
         return (
           <div className="row spread mb-12" style={{ alignItems: 'flex-start' }}>
             <button className={'switch' + (exige ? ' on' : '')} disabled={!emNovo || (exige && !podeDesligar)}
@@ -292,22 +309,47 @@ function ConfigModoNovo({ lojaId }: { lojaId: string }) {
       </div>
 
       <div className="field" style={{ marginBottom: 0 }}>
-        <label>Cupons desta loja (código por percentual)</label>
+        <div className="row spread gap-8" style={{ flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 6 }}>
+          <label style={{ margin: 0 }}>Cupons desta loja (código por percentual)</label>
+          <button className="btn btn-sm" disabled={testandoCupons}
+            title="Confere na Shopify se cada código existe, está ativo, não expirou e vale exatamente o percentual"
+            onClick={async () => {
+              setTestandoCupons(true)
+              const r = await s.testarCupons(lojaId)
+              setTestandoCupons(false)
+              setResultadoCupons(r.erro ?? null)
+            }}>
+            <Check size={13} /> {testandoCupons ? 'Conferindo na Shopify…' : 'Testar cupons'}
+          </button>
+        </div>
         <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
-          {PERCENTUAIS_CUPOM.map(p => (
-            <label key={p} className="muted-sm" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {p}%
-              <input value={cupons[p] ?? ''} placeholder={p === '10' ? '10OFF' : `CUPOM${p}`} style={{ width: 118, fontFamily: 'monospace' }}
-                onChange={e => setCupons(c => ({ ...c, [p]: e.target.value.toUpperCase() }))}
-                onBlur={salvarCupons} />
-            </label>
-          ))}
+          {PERCENTUAIS_CUPOM.map(p => {
+            const est = estadoDoCupom(Number(p))
+            return (
+              <label key={p} className="muted-sm" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {p}%{p === '10' && <span style={{ fontSize: 11 }}> (reserva)</span>}
+                <input value={cupons[p] ?? ''} placeholder={`CUPOM${p}`} style={{ width: 118, fontFamily: 'monospace' }}
+                  onChange={e => setCupons(c => ({ ...c, [p]: e.target.value.toUpperCase() }))}
+                  onBlur={salvarCupons} />
+                {est && (
+                  <span style={{ fontSize: 11, color: corDoCupom(est.situacao) }} title={est.detalhe}>
+                    {rotuloCurtoCupom(est.situacao)}
+                  </span>
+                )}
+              </label>
+            )
+          })}
         </div>
         <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
           Os códigos precisam existir na Shopify desta loja. O atendo nunca inventa cupom: se uma etapa precisa de um
-          código que não está aqui, o caso vai para o atendimento humano com o aviso.
+          código que não está aqui, o caso vai para o atendimento humano com o aviso. O de <b>10% é reserva</b> — nenhuma
+          fase do fluxo o usa, e ele não conta para a ativação.
           {faltam.length > 0 && <> <b style={{ color: 'var(--amber, #d29922)' }}>Faltam: {faltam.map(p => p + '%').join(', ')}.</b></>}
         </p>
+        {resultadoCupons && <p className="muted-sm" style={{ color: 'var(--amber, #d29922)' }}>{resultadoCupons}</p>}
+        {(loja?.prontidaoNovo?.avisos ?? []).map(a => (
+          <p key={a.chave + a.texto} className="muted-sm" style={{ color: 'var(--amber, #d29922)', lineHeight: 1.5 }}>{a.texto}</p>
+        ))}
       </div>
     </div>
   )

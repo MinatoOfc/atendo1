@@ -172,4 +172,12 @@ test.describe('Referência × Atendo — estrutura, dimensões e comportamento',
     expect(await impl.evaluate(() => localStorage.getItem('atendo-pipeline-ajustes'))).toBeNull()
     await abrirDrawer(impl, 1); expect(await impl.locator('.phase-select select').first().inputValue()).toBe(original); await impl.keyboard.press('Escape')
   })
+
+  test('cupom de 10%: o mapa mostra reserva, nunca o código fixo 10OFF', async ({ page }) => {
+    await abrir(page, ATENDO)
+    const texto = await page.locator(`body`).innerText()
+    expect(texto).not.toContain('10OFF')
+    expect(texto).toContain('Cupom de 10% — reserva')
+    expect(texto).toContain('não utilizado pelo fluxo')
+  })
 })

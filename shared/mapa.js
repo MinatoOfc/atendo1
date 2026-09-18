@@ -62,7 +62,9 @@ export const MAPA_VISUAL = [
   e('entry-confirm-refund', 'Confirmação enviada', 'todos', 'Confirmação de reembolso', 'Aprovado: valor em dinheiro e 3–14 dias para voltar ao método de pagamento.', 'confirmacao', 'conf_reembolso', []),
   e('entry-confirm-coupon', 'Confirmação enviada', 'todos', 'Confirmação de cupom', 'Código liberado, válido para qualquer pedido.', 'confirmacao', 'conf_cupom', []),
   e('entry-confirm-cancel', 'Confirmação enviada', 'todos', 'Confirmação de cancelamento', 'Pedido cancelado como direito do cliente; 3–14 dias para o dinheiro voltar.', 'confirmacao', 'conf_cancelamento', []),
-  e('rule-coupon-10', 'Cupons padronizados', 'todos', 'Cupom 10OFF = 10% de desconto', 'Usar o código 10OFF para a oferta de 10%.', 'regra', null, []),
+  // o Miro cita o cupom de 10% como observação, mas NENHUMA fase do fluxo o usa:
+  // fica como reserva e não entra nos requisitos de ativação
+  e('rule-coupon-10', 'Cupons padronizados', 'todos', 'Cupom de 10% — reserva', 'Reserva — não utilizado pelo fluxo: nenhuma fase oferece 10%. O código fica cadastrado na loja, sem virar requisito de ativação.', 'regra', null, []),
   e('rule-coupon-standard', 'Cupons padronizados', 'todos', 'Mesmo código em todas as lojas', 'Criar os cupons do fluxo (10, 15, 25, 30, 35, 40%) com códigos cadastrados por loja e disponibilizá-los para a IA.', 'regra', null, []),
 
   /* ---------------- Tamanho / caimento ---------------- */

@@ -133,3 +133,47 @@ test('mensagem nova numa loja do novo (que dizia automático=true) não ganha en
   const l = await api('/api/lojas', { id: 'loja1', novoEnvioAutomatico: true, confirmar: true })
   assert.equal(l.status, 400); assert.equal(l.bloqueadoPiloto, true)
 })
+test('prontidão real: a loja informa os dois níveis, a lista de cupons e o de 10% como reserva', async () => {
+  const st = (await api('/api/state', null, 'GET')).state
+  const pr = st.lojas.find(l => l.id === 'loja1').prontidaoNovo
+  assert.ok(pr, 'a loja leva a prontidão para a interface')
+  assert.ok(Array.isArray(pr.faltando))
+  assert.ok(pr.automatico, 'existe o nível do envio TOTALMENTE automático')
+  assert.ok(Array.isArray(pr.cupons) && pr.cupons.length, 'a situação de cada cupom vem junto')
+  const reserva = pr.cupons.find(c => c.pct === 10)
+  assert.ok(reserva, 'o cupom de 10% aparece')
+  assert.equal(reserva.usadoPeloFluxo, false)
+  assert.equal(reserva.situacao, 'reserva')
+  assert.equal(reserva.detalhe, 'reserva — não utilizado pelo fluxo')
+  // e ele nunca entra na lista do que falta
+  assert.ok(!JSON.stringify(pr.faltando).includes('10%'))
+  assert.ok(!JSON.stringify(pr.automatico.faltando).includes('10%'))
+})
+
+test('rota do modo: cupons necessários são os das fases (sem o de 10%) e o reserva vem identificado', async () => {
+  const r = await api('/api/lojas/loja1/modo', null, 'GET')
+  assert.deepEqual(r.cuponsNecessarios, [15, 25, 30, 35, 40])
+  assert.equal(r.cupomReserva, 10)
+  assert.ok('verificacaoCupons' in r)
+  assert.ok('sincronizacao' in r)
+})
+
+test('"Testar cupons" grava a verificação NA LOJA e devolve a situação de cada código', async () => {
+  const r = await api('/api/lojas/loja1/testar-cupons', {})
+  assert.equal(r.status, 200)
+  assert.equal(r.verificacao.lojaId, 'loja1', 'a verificação pertence a esta loja — nunca se mistura')
+  assert.ok(r.verificacao.em)
+  assert.ok(Array.isArray(r.cupons))
+  assert.equal(r.cupons.find(c => c.pct === 10).situacao, 'reserva')
+  for (const pct of [15, 25, 30, 35, 40]) {
+    assert.ok(r.cupons.find(c => c.pct === pct), 'cupom de ' + pct + '% na lista')
+  }
+  // a loja guarda o resultado para a próxima leitura da prontidão
+  const st = (await api('/api/state', null, 'GET')).state
+  assert.equal(st.lojas.find(l => l.id === 'loja1').verificacaoCupons.lojaId, 'loja1')
+})
+
+test('testar cupons de loja inexistente não inventa nada', async () => {
+  const r = await api('/api/lojas/loja-que-nao-existe/testar-cupons', {})
+  assert.equal(r.status, 404)
+})

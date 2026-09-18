@@ -240,6 +240,87 @@ export async function buscarProdutosShopify(cx) {
   return { produtos: r.itens.map(p => mapearProduto(p, cx.loja)) }
 }
 
+/** Chamada que devolve o STATUS junto: o 404 do cupom ("não existe") não pode
+ *  ser confundido com o 404 de loja/versão da API. */
+async function chamarComStatus(cx, caminho) {
+  if (!cx) return { status: 0, erro: 'Shopify não conectada.' }
+  try {
+    const resp = await fetch(`https://${cx.loja}/admin/api/${versao}/${caminho}`, {
+      headers: { 'X-Shopify-Access-Token': cx.token },
+    })
+    if (resp.status === 429) {
+      const espera = Math.min(10, Number(resp.headers.get('Retry-After') || 2))
+      await new Promise(r => setTimeout(r, espera * 1000))
+      return chamarComStatus(cx, caminho)
+    }
+    if (!resp.ok) return { status: resp.status, erro: traduzirErro(resp.status, await resp.text().catch(() => ''), cx) }
+    return { status: resp.status, dados: await resp.json() }
+  } catch (err) {
+    return { status: 0, erro: `Não foi possível alcançar ${cx.loja}: ${err.message}` }
+  }
+}
+
+const SEM_PERMISSAO_DESCONTOS = 'Faltou a permissão de leitura de descontos. Adicione o escopo read_discounts no app da Shopify, libere uma nova versão e reconecte.'
+
+/**
+ * Confere na Shopify os cupons cadastrados no Atendo: o código existe, está
+ * ativo, não expirou e vale EXATAMENTE o percentual esperado. Sem a permissão
+ * read_discounts devolve { permissao: false } — quem chama mostra "cupom não
+ * verificado na Shopify" e bloqueia só o envio totalmente automático.
+ *
+ * `pedidos` = [{ pct, codigo }]. Nada é inventado: cada item volta com a
+ * situação que a própria Shopify respondeu.
+ */
+export async function verificarCuponsShopify(cx, pedidos = []) {
+  const em = new Date().toISOString()
+  if (!cx) return { permissao: false, erro: 'Shopify não conectada.', em, itens: [] }
+  const agora = Date.now()
+  const itens = []
+  const regras = new Map() // price_rule_id → regra (evita repetir a chamada)
+
+  for (const { pct, codigo } of pedidos) {
+    const cod = String(codigo ?? '').trim()
+    if (!cod) continue
+    const achado = await chamarComStatus(cx, `discount_codes/lookup.json?code=${encodeURIComponent(cod)}`)
+    if (achado.status === 401 || achado.status === 403) return { permissao: false, erro: SEM_PERMISSAO_DESCONTOS, em, itens: [] }
+    if (achado.status === 404) { itens.push({ pct, codigo: cod, situacao: 'inexistente', detalhe: 'nenhum cupom com esse código nesta loja' }); continue }
+    if (achado.erro) { itens.push({ pct, codigo: cod, situacao: 'erro', detalhe: achado.erro }); continue }
+
+    const dc = achado.dados?.discount_code
+    if (!dc?.price_rule_id) { itens.push({ pct, codigo: cod, situacao: 'inexistente', detalhe: 'nenhum cupom com esse código nesta loja' }); continue }
+
+    let regra = regras.get(String(dc.price_rule_id))
+    if (!regra) {
+      const r = await chamarComStatus(cx, `price_rules/${dc.price_rule_id}.json`)
+      if (r.status === 401 || r.status === 403) return { permissao: false, erro: SEM_PERMISSAO_DESCONTOS, em, itens: [] }
+      if (r.erro) { itens.push({ pct, codigo: cod, situacao: 'erro', detalhe: r.erro }); continue }
+      regra = r.dados?.price_rule
+      if (regra) regras.set(String(dc.price_rule_id), regra)
+    }
+    if (!regra) { itens.push({ pct, codigo: cod, situacao: 'erro', detalhe: 'a Shopify não devolveu a regra do cupom' }); continue }
+
+    const inicio = regra.starts_at ? Date.parse(regra.starts_at) : null
+    const fim = regra.ends_at ? Date.parse(regra.ends_at) : null
+    const valor = Math.abs(Number(regra.value ?? 0))
+    const base = { pct, codigo: cod, valor, inicio: regra.starts_at ?? null, fim: regra.ends_at ?? null }
+
+    if (regra.value_type !== 'percentage') {
+      itens.push({ ...base, situacao: 'percentual_divergente', detalhe: `na Shopify é desconto em valor fixo, não ${pct}%` })
+    } else if (Math.round(valor * 100) !== Math.round(Number(pct) * 100)) {
+      itens.push({ ...base, situacao: 'percentual_divergente', detalhe: `na Shopify vale ${valor}%, não ${pct}%` })
+    } else if (fim != null && fim < agora) {
+      itens.push({ ...base, situacao: 'expirado', detalhe: `expirou em ${String(regra.ends_at).slice(0, 10)}` })
+    } else if (inicio != null && inicio > agora) {
+      itens.push({ ...base, situacao: 'nao_iniciado', detalhe: `só começa em ${String(regra.starts_at).slice(0, 10)}` })
+    } else if (regra.usage_limit != null && Number(dc.usage_count ?? 0) >= Number(regra.usage_limit)) {
+      itens.push({ ...base, situacao: 'inativo', detalhe: 'o limite de usos do cupom já foi atingido' })
+    } else {
+      itens.push({ ...base, situacao: 'ok', detalhe: `${valor}% ativo na Shopify` })
+    }
+  }
+  return { permissao: true, erro: null, em, itens }
+}
+
 /** Chamada leve para validar loja, token e permissões; devolve também a moeda. */
 export async function testarShopify(cx) {
   const { dados, erro } = await chamar(cx, 'shop.json?fields=name,domain,currency')
