@@ -12,6 +12,19 @@ export function extrairImagens(parsed) {
     .map(a => ({ tipo: a.contentType, nome: a.filename || 'imagem', dados: a.content }))
 }
 
+/**
+ * Horário de uma mensagem da caixa, em ISO. `internalDate` é a data que o
+ * PROVEDOR registrou ao guardar a mensagem; `envelope.date` é só o cabeçalho
+ * Date, escrito por quem enviou e fácil de estar errado ou ausente. Por isso o
+ * internalDate manda e o cabeçalho fica como reserva.
+ */
+export function dataDaCaixa(msg) {
+  const quando = msg?.internalDate ?? msg?.envelope?.date ?? null
+  if (!quando) return null
+  const t = Date.parse(quando instanceof Date ? quando.toISOString() : String(quando))
+  return Number.isFinite(t) ? new Date(t).toISOString() : null
+}
+
 const presets = {
   gmail: { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com' },
   outlook: { imap: 'outlook.office365.com', smtp: 'smtp-mail.outlook.com' },
@@ -402,8 +415,8 @@ export function criarConta(id, cfg, sufixo = '') {
               let data = null
               try {
                 for await (const msg of cliente.fetch(achados, { envelope: true, internalDate: true })) {
-                  const quando = msg.envelope?.date ?? msg.internalDate ?? null
-                  if (quando) { data = new Date(quando).toISOString(); break }
+                  const quando = dataDaCaixa(msg)
+                  if (quando) { data = quando; break }
                 }
               } catch { /* provedor sem data: o chamador usa o horário aproximado */ }
               return r(true, data)

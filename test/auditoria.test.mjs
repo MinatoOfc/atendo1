@@ -404,6 +404,38 @@ test('registro antigo sem cicloId continua valendo como um ciclo só', () => {
   assert.equal(seloDaConversa(antigos), 'tudo_certo')
 })
 
+test('envio com checklist histórico indisponível: entra em "somente com erro" e nos passos', () => {
+  const ev = (tipo, dados, extra = {}) => novoEvento({ tipo, ticketId: 't1', lojaId: 'loja1', em: EM, resumo: extra.resumo ?? tipo, situacao: extra.situacao ?? 'informativo', dados })
+  // registro antigo reconstruído: o canal enviou, mas a fotografia do checklist não existe
+  const eventos = [
+    ev('cliente_recebido', { cicloId: 'c1' }),
+    ev('rascunho_gerado', { cicloId: 'c1', tentativaId: 'c1-t1' }),
+    ev('email_enviado', {
+      cicloId: 'c1', tentativaId: 'c1-t1', mensagemId: 'm1', enviado: true, canalConfirmou: true,
+      checklist: null, checklistHistoricoAusente: true, reconciliado: true,
+    }, { situacao: 'ok' }),
+  ]
+  assert.equal(seloDaConversa(eventos), 'revisar_historico')
+  assert.equal(ROTULO_SELO.revisar_historico, 'Revisar — envio confirmado, checklist histórico indisponível')
+  // os passos compactos explicam POR QUE pede revisão
+  const passos = passosCompactos(eventos)
+  assert.match(passos, /checklist histórico indisponível/)
+  assert.match(passos, /enviada/, 'e continuam dizendo que a mensagem saiu: ' + passos)
+
+  const lista = [
+    { ticketId: 'hist', motor: 'novo', selo: 'revisar_historico', cliente: 'Hist', email: 'h@web.de', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'de', aguardandoAprovacao: false, envioAutomatico: false, origemEnvio: 'automatico' },
+    { ticketId: 'bloq', motor: 'novo', selo: 'bloqueado', cliente: 'Bloq', email: 'b@web.de', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'de', aguardandoAprovacao: false, envioAutomatico: false, origemEnvio: null },
+    { ticketId: 'rev', motor: 'novo', selo: 'revisar', cliente: 'Rev', email: 'r@web.de', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'de', aguardandoAprovacao: false, envioAutomatico: false, origemEnvio: null },
+    { ticketId: 'ok', motor: 'novo', selo: 'tudo_certo', cliente: 'Ok', email: 'o@web.de', pedido: null, lojaId: 'l1', jornada: null, fase: null, idioma: 'de', aguardandoAprovacao: false, envioAutomatico: false, origemEnvio: null },
+  ]
+  // "somente com erro" não pode esconder o que precisa ser revisado
+  assert.deepEqual(filtrarConversas(lista, filtrosDaAuditoria({ soErro: true })).map(c => c.ticketId), ['hist', 'bloq', 'rev'])
+  // e o filtro específico continua isolando só esse estado
+  assert.equal(filtrosDaAuditoria({ situacao: 'revisar_historico' }).situacao, 'revisar_historico')
+  assert.deepEqual(filtrarConversas(lista, filtrosDaAuditoria({ situacao: 'revisar_historico' })).map(c => c.ticketId), ['hist'])
+  assert.deepEqual(filtrarConversas(lista, filtrosDaAuditoria({ situacao: 'revisar' })).map(c => c.ticketId), ['rev'], 'os dois estados não se misturam')
+})
+
 test('conversa sem auditoria detalhada não ganha classificação inventada', () => {
   const t = {
     id: 'velho', historico: [{ autor: 'cliente', corpo: 'oi', data: '2026-09-01T10:00:00.000Z' }],

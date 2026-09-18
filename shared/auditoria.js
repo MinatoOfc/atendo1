@@ -477,6 +477,7 @@ export function passosCompactos(eventos = []) {
   const passos = houve.map(t2 => nomes[t2])
   const selo = seloDaConversa(eventos)
   if (selo === 'bloqueado') passos.push('bloqueada — não foi enviada')
+  else if (selo === 'revisar_historico') passos.push('checklist histórico indisponível')
   else if (selo === 'aguardando_voce') passos.push('aguardando você')
   else if (selo === 'encerrado') passos.push('encerrado — sem resposta necessária')
   else if (selo === 'aguardando' && !passos.includes('agendada')) passos.push('aguardando sua aprovação')
@@ -533,7 +534,9 @@ export function filtrarConversas(lista, f) {
     && (f.fase === 'todas' || c.fase === f.fase)
     && (f.idioma === 'todos' || c.idioma === f.idioma)
     && (f.situacao === 'todas' || c.selo === f.situacao)
-    && (!f.soErro || c.selo === 'bloqueado' || c.selo === 'revisar')
+    // "somente com erro" tem de mostrar TUDO o que pede revisão — inclusive o
+    // envio comprovado cujo checklist histórico não existe
+    && (!f.soErro || ['bloqueado', 'revisar', 'revisar_historico'].includes(c.selo))
     && (!f.soAprovacao || c.aguardandoAprovacao === true)
     && (!f.soAutomaticos || c.origemEnvio === 'automatico')
     && (f.classico ? true : c.motor === 'novo'))
