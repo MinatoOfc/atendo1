@@ -46,6 +46,8 @@ function cartaoCaso(c) {
   // de onde saiu o pedido — e, quando não saiu, quantos candidatos existem
   const diagnostico = c.rotuloOrigemPedido
     ?? (c.candidatos?.length ? `${c.candidatos.length} pedido(s) candidato(s) — escolha no Atendo` : 'nenhum pedido encontrado')
+    // explica o caso do cliente que escreve de outro endereço
+  const diagnosticoCompleto = diagnostico + (c.emailDiferenteDoPedido ? ' · pedido em outro e-mail' : '')
   return `<article class="caso${c.processado ? ' processado' : ''}" data-caso="${escapar(c.ticketId)}">
     <span class="marca">
       <input type="checkbox" data-id="${escapar(c.ticketId)}"${c.processado ? ' checked' : ''} aria-label="Marcar como processado" title="Marcar como processado">
@@ -86,7 +88,7 @@ function cartaoCaso(c) {
         <div><dt>Percentual</dt><dd>${c.percentual != null ? c.percentual + '%' : '—'}</dd></div>
         <div><dt>Valor reembolsado</dt><dd>${escapar(valorTexto)}</dd></div>
         ${c.cupom ? `<div><dt>Cupom</dt><dd>${escapar(c.cupom)}</dd></div>` : ''}
-        <div><dt>Associação</dt><dd>${escapar(diagnostico)}</dd></div>
+        <div><dt>Associação</dt><dd>${escapar(diagnosticoCompleto)}</dd></div>
         <div><dt>Origem</dt><dd>${c.origem === 'motor_novo_automatico' ? 'conclusão automática do motor novo' : 'manual'}${c.faseTitulo ? ` · ${escapar(c.faseTitulo)}` : ''}</dd></div>
         <div><dt>Incluído em</dt><dd>${c.incluidoEm ? escapar(quando(c.incluidoEm)) : '—'}</dd></div>
         <div><dt>Confirmação</dt><dd>${c.confirmadoEm ? escapar(quando(c.confirmadoEm)) : '—'}</dd></div>

@@ -48,6 +48,11 @@ export interface PreparoRelatorio {
   /** pedidos DESTA loja, para o dono confirmar/corrigir o vínculo */
   pedidosDaLoja: { id: string; numero: string; cliente: string | null; email: string | null; valor: number | null; criadoEm: string | null }[]
   cliente: { nome: string | null; email: string | null }
+  /** e-mail de quem escreveu (canônico) e aviso de que o pedido está em outro */
+  emailRemetente: string | null
+  emailDiferenteDoPedido: boolean
+  /** pedidos possíveis quando nada foi provado — já aparecem prontos no popup */
+  candidatos: { id: string; numero: string; valor: number | null; moeda: string | null; cliente: string | null; email: string | null; criadoEm: string | null }[]
   produtosDoPedido: ProdutoRelatorio[]
   sugestao: {
     tipo: string

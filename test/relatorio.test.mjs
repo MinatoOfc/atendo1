@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import {
   acharPedido, clienteDoCaso, imagemDoItem, produtosDoCaso, percentualDoTexto, tipoDoTexto,
   normalizarCaso, filtrarCasos, filtrosDoRelatorio, indicadoresDoRelatorio, agruparPorDia,
-  acharPedidos, numerosDePedidoNoTexto,
+  acharPedidos, numerosDePedidoNoTexto, numerosCitados,
   precisaVinculo, buscaInicialVinculo,
   emailCanonico,
   dadosDoRelatorio, dinheiro, textoParaCopiar,
@@ -610,4 +610,65 @@ test('relatório antigo se corrige sozinho quando os pedidos chegam da Shopify',
   assert.equal(t.relatorioDetalhes, undefined)
   assert.equal(t.atendimentoNovo, undefined)
   assert.equal(t.relatorioTexto, 'REEMBOLSO 40%')
+})
+/* ====================================================================
+   Caso real: "Bestellung #2206", endereço com CEP e data 02.08.2026 —
+   e a loja tem MESMO um pedido #2026. A data não pode roubar a
+   associação, e o pedido pode estar num e-mail diferente do remetente.
+   ==================================================================== */
+
+const CONVERSA_2206 = [
+  'Rückgabe Bestellung #2206',
+  'Sehr geehrte Damen und Herren, ich benötige eine andere Größe für Bestellung #2206.',
+  'Senden Sie mir die Polos der Bestellung #2206 seiner Zeit.',
+  'Bestellt am 02.08.2026 / Anschrift des Verbrauchers: Andreas Ossenkop, Am Garten 15, 36208 Wildeck',
+  'Gesendet 14:23:04',
+].join('\n')
+const pedidosOssen = [
+  { id: 'o2206', numero: '#2206', cliente: 'Ossenkop Ossenkop', email: '8gauntlet8@gmail.com', valor: 114, lojaId: 'l1', criadoEm: '2026-08-02', itens: [itemV('Premium-Poloshirt Capri', { variante: 'Bleu Nuit / 2XL', quantidade: 2 })] },
+  { id: 'o2026', numero: '#2026', cliente: 'Outro Cliente', email: 'outro@web.de', valor: 50, lojaId: 'l1', criadoEm: '2026-07-01', itens: [itemV('Hemd Classic')] },
+  { id: 'o36208', numero: '#36208', cliente: 'Terceiro', email: 'terceiro@web.de', valor: 30, lojaId: 'l1', criadoEm: '2026-07-02', itens: [itemV('Chino Slim')] },
+]
+const ossen = (extra = {}) => ({
+  id: 'ossen', nome: 'Andreas Ossenkop', de: 'Andreas Ossenkop <8gauntlet8@googlemail.com>',
+  assunto: 'Rückgabe Bestellung #2206', corpo: CONVERSA_2206, historico: [], lojaId: 'l1', relatorioDia: '2026-09-18', ...extra,
+})
+
+test('data, hora e CEP não viram número de pedido — nem quando existe um pedido com esse número', () => {
+  const citados = [...numerosCitados(CONVERSA_2206)]
+  assert.ok(citados.includes('2206'))
+  assert.ok(!citados.includes('2026'), 'a data 02.08.2026 não é o pedido 2026')
+  assert.ok(!citados.includes('1423'), 'a hora não vira pedido')
+  // o CEP ainda é um número solto, mas perde para o número escrito com "Bestellung"
+  assert.deepEqual(numerosDePedidoNoTexto(CONVERSA_2206), ['2206'])
+})
+
+test('"Bestellung #2206" localiza o pedido mesmo com o cliente escrevendo de outro e-mail', () => {
+  const c = normalizarCaso(ossen(), { pedidos: pedidosOssen, lojas: lojasV, produtos: [] })
+  assert.equal(c.pedidoTitulo, 'Pedido #2206')
+  assert.equal(c.pedidoId, 'o2206')
+  assert.equal(c.origemPedido, 'conversa')
+  assert.equal(c.clienteNome, 'Ossenkop Ossenkop')
+  assert.equal(c.clienteEmail, '8gauntlet8@gmail.com')
+  assert.equal(c.emailRemetente, '8gauntlet8@googlemail.com')
+  assert.equal(c.emailDiferenteDoPedido, true, 'o popup avisa que o pedido está em outro e-mail')
+  assert.equal(c.valorPedido, 114)
+  assert.equal(c.produtos[0].titulo, 'Premium-Poloshirt Capri')
+  assert.equal(c.produtos[0].quantidade, 2)
+  // e o valor do reembolso sai do total realmente pago
+  const comPct = normalizarCaso(ossen({ relatorioTexto: 'REEMBOLSO 60%' }), { pedidos: pedidosOssen, lojas: lojasV, produtos: [] })
+  assert.equal(comPct.percentual, 60)
+  assert.equal(comPct.valor, 68.4)
+  assert.equal(dinheiro(comPct.valor, comPct.moeda), '€ 68,40')
+})
+
+test('a página externa mostra o pedido e o aviso de e-mail diferente no detalhe', async () => {
+  const { paginaRelatorio } = await import('../server/relatorio-externo.js')
+  const t = ossen({ relatorioTexto: 'REEMBOLSO 60%' })
+  const html = paginaRelatorio(dadosDoRelatorio({ tickets: [t], pedidos: pedidosOssen, lojas: lojasV, filtros: filtrosDoRelatorio({}) }))
+  assert.ok(html.includes('Pedido #2206'))
+  assert.ok(html.includes('€ 68,40'))
+  assert.ok(html.includes('pedido: € 114,00'))
+  assert.ok(html.includes('pedido em outro e-mail'))
+  assert.ok(!html.includes('Sem pedido informado'))
 })

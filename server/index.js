@@ -2829,6 +2829,8 @@ app.get('/api/tickets/:id/relatorio/preparar', (req, res) => {
     // só para escolher o vínculo à mão: sempre pedidos DESTA loja
     pedidosDaLoja: daLoja.map(p => ({ id: p.id, numero: String(p.numero).replace(/\D/g, ''), cliente: p.cliente ?? null, email: p.email ?? null, valor: p.valor ?? null, criadoEm: p.criadoEm ?? null })),
     cliente: { nome: caso.clienteNome, email: caso.clienteEmail },
+    emailRemetente: caso.emailRemetente,
+    emailDiferenteDoPedido: caso.emailDiferenteDoPedido,
     produtosDoPedido: produtosDoCaso({ ...t, relatorioDetalhes: undefined, relatorioAuto: undefined, atendimentoNovo: undefined }, localizados, req.estado.produtos ?? []),
     sugestao: {
       tipo: caso.tipo, percentual: caso.percentual, valor: caso.valor, moeda: caso.moeda,

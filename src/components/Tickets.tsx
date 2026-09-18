@@ -563,6 +563,11 @@ function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
       setPct(d.sugestao.percentual == null ? '' : String(d.sugestao.percentual))
       setMarcados((d.sugestao.produtos ?? []).map(chaveProduto))
       setPedidosMarcados(d.pedidos.filter(p => p.id).map(p => p.id as string))
+      // sem pedido provado: a lista já abre preenchida — nada de procurar à mão
+      if (!d.pedidos.some(p => p.localizado)) {
+        setEscolhendo(!d.candidatos.length)
+        setBuscaPedido(d.pedidoNumeros[0] ?? d.cliente.email ?? d.cliente.nome ?? '')
+      }
     })
     return () => { vivo = false }
   }, [t.id])
@@ -621,9 +626,29 @@ function ModalRelatorio({ t, onClose }: { t: Ticket; onClose: () => void }) {
             <div className="row gap-8" style={{ color: 'var(--amber)', alignItems: 'flex-start' }}>
               <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
               <span className="muted-sm" style={{ color: 'inherit' }}>
-                Nenhum pedido foi localizado com segurança para esta conversa. Dá para incluir no relatório assim mesmo:
-                o caso aparece sem número de pedido e sem valor calculado.
+                {dados.candidatos.length
+                  ? `Nenhum pedido foi provado para esta conversa — escolha abaixo entre os ${dados.candidatos.length} pedidos deste cliente.`
+                  : 'Nenhum pedido foi localizado com segurança para esta conversa. Escolha abaixo o pedido certo desta loja, ou inclua assim mesmo: o caso aparece sem número e sem valor calculado.'}
               </span>
+            </div>
+          )}
+          {dados.emailDiferenteDoPedido && (
+            <span className="muted-sm">
+              O pedido está em outro e-mail ({dados.cliente.email}) — quem escreveu foi {dados.emailRemetente}.
+            </span>
+          )}
+          {!!dados.candidatos.length && (
+            <div style={{ display: 'grid', gap: 6 }}>
+              {dados.candidatos.map(p => (
+                <label key={p.id} className="card row gap-8" style={{ padding: 8, alignItems: 'center', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={pedidosMarcados.includes(p.id)}
+                    onChange={() => setPedidosMarcados(m => (m.includes(p.id) ? m.filter(x => x !== p.id) : [...m, p.id]))} />
+                  <span className="muted-sm" style={{ flex: 1, minWidth: 0 }}>
+                    <b>#{p.numero}</b>{p.valor != null ? ` · ${dinheiroRel(p.valor, p.moeda)}` : ''}{p.criadoEm ? ` · ${p.criadoEm}` : ''}
+                    <span style={{ display: 'block' }}>{p.cliente ?? '—'}{p.email ? ` · ${p.email}` : ''}</span>
+                  </span>
+                </label>
+              ))}
             </div>
           )}
           {escolhendo && (

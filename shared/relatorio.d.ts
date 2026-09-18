@@ -34,6 +34,10 @@ export interface CasoRelatorio {
   candidatos: { id: string; numero: string; valor: number | null; moeda: string | null; cliente: string | null; email: string | null; criadoEm: string | null }[]
   clienteNome: string | null
   clienteEmail: string | null
+  /** e-mail canônico de quem escreveu */
+  emailRemetente: string | null
+  /** o pedido está num e-mail diferente do remetente (gmail x googlemail) */
+  emailDiferenteDoPedido: boolean
   tipo: string
   acoes: string[]
   descricao: string

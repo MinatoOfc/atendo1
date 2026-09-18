@@ -37,7 +37,12 @@ const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ
  * nunca aceita percentual (100%), dinheiro (103,50) nem tamanho (4XL).
  */
 export function numerosCitados(txt) {
+  // 02.08.2026, 2/8/26, 2026-08-02 e 14:23:04 não são pedidos — e "2026" batia
+  // com um pedido real da loja, derrubando a associação como se fosse ambígua
   const s = String(txt ?? '')
+    .replace(/\b\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}\b/g, ' ')
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, ' ')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ')
   const achados = new Set()
   for (const m of s.matchAll(/#?\b(\d{3,8})\b/g)) {
     if (numeroLimpo(s.slice(m.index + m[0].length))) achados.add(m[1])
@@ -265,7 +270,15 @@ export function acharPedidos(t, pedidos = []) {
   // 5) texto escolhido no popup
   const doTexto = deNumeros(numerosDePedidoNoTexto(t.relatorioTexto), 'texto')
   if (doTexto) return doTexto
-  // 6) números citados na conversa (só quando um único pedido bate)
+  // 6) números citados na conversa. Primeiro os ESCRITOS com palavra de pedido ou
+  // "#" ("Bestellung #2206"): endereço, CEP e data não competem com eles.
+  const escritos = numerosDePedidoNoTexto(conversa)
+  if (escritos.length) {
+    const achados = daLoja.filter(p => escritos.includes(soDigitos(p.numero)))
+    if (achados.length === 1) return um(achados[0], 'conversa')
+    if (achados.length > 1) return vazio(achados)
+  }
+  // depois qualquer número solto, que só vale se um único pedido bater
   const citadosNaConversa = numerosCitados(conversa)
   if (citadosNaConversa.size) {
     const achados = daLoja.filter(p => citadosNaConversa.has(soDigitos(p.numero)))
@@ -492,6 +505,9 @@ export function normalizarCaso(t, { pedidos = [], lojas = [], produtos = [], fas
     pedidos: encontro.itens.map(i => ({ id: i.pedido?.id ?? null, numero: i.numero, valor: numero(i.pedido?.valor), moeda, localizado: !!i.pedido })),
     pedidoNumeros: encontro.numeros,
     pedidosSemDados: encontro.itens.filter(i => !i.pedido).map(i => i.numero),
+    // o pedido pode estar num e-mail diferente do remetente (gmail x googlemail)
+    emailRemetente: emailCanonico(t.de),
+    emailDiferenteDoPedido: !!(pedido?.email && emailCanonico(t.de) && emailCanonico(pedido.email) !== emailCanonico(t.de)),
     pedidoTitulo: tituloDoPedido(encontro.itens),
     rotuloPedido: rotuloDoPedido(encontro.itens),
     origemPedido: encontro.origem,

@@ -206,6 +206,23 @@ estado.tickets.push(
   doRelatorio(5009, 'loja1', HOJE_REL, { nome: 'Sem Pedido', de: 'Sem Pedido <sem-pedido@web.de>', assunto: 'Frage', corpo: 'Nur eine Frage.', relatorioTexto: 'REEMBOLSO 20%' }),
 )
 
+/* ---------- caso real: número na conversa x data que parece pedido ----------
+   A loja tem o pedido #2026 e a conversa cita "Bestellung #2206" com a data
+   02.08.2026. A data não pode roubar a associação, e o pedido está num e-mail
+   diferente do remetente (gmail x googlemail). */
+estado.pedidos.push(
+  { ...pedido(2206, 'loja1', 114), email: 'ossen@gmail.com', cliente: 'Ossenkop Ossenkop', criadoEm: '2026-08-02', itens: [{ ...itemRel('Polo Premium', 'Bleu Nuit / 2XL', 'prod-polo', 'var-polo-l', 57), quantidade: 2 }] },
+  { ...pedido(2026, 'loja1', 50), email: 'outro-cliente@web.de', cliente: 'Outro Cliente', criadoEm: '2026-07-01', itens: [itemRel('Hemd Classic', 'Weiß / M', 'prod-hemd', null, 50)] },
+)
+estado.tickets.push(
+  doRelatorio(2206, 'loja1', HOJE_REL, {
+    nome: 'Andreas Ossenkop', de: 'Andreas Ossenkop <ossen@googlemail.com>',
+    assunto: 'Rückgabe Bestellung #2206',
+    corpo: 'Ich benötige eine andere Größe für Bestellung #2206. Bestellt am 02.08.2026 / Anschrift: Am Garten 15, 36208 Wildeck.',
+    relatorioTexto: 'REEMBOLSO 60%',
+  }),
+)
+
 // o caso 1015 (cancelamento) está com o dono: fase pendente de decisão
 estado.tickets[14].atendimentoNovo.acaoAceita = 'cancel_nao_processado'
 estado.tickets[14].motivoEscalada = 'Cancelamento de pedido não processado — decisão sua'

@@ -261,4 +261,20 @@ test.describe('Relatório diário externo', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'sem rolagem horizontal').toBe(true)
     await expect(page.locator('.caso[data-caso="r3085"] .pedido strong')).toHaveText('Pedidos #3085 e #3086')
   })
+
+  test('número citado na conversa vence a data parecida com pedido, mesmo com o cliente em outro e-mail', async ({ page }) => {
+    await abrir(page, RELATORIO)
+    const caso = page.locator('.caso[data-caso="r2206"]')
+    // a loja tem o pedido #2026 e a conversa tem a data 02.08.2026: vale o #2206
+    await expect(caso.locator('.pedido strong')).toHaveText('Pedido #2206')
+    await expect(caso.locator('.cliente strong')).toHaveText('Ossenkop Ossenkop')
+    await expect(caso.locator('.cliente .mini')).toHaveText('ossen@gmail.com')
+    await expect(caso.locator('.valores .pct')).toHaveText('60%')
+    await expect(caso.locator('.valores .valor')).toHaveText('€ 68,40')
+    await expect(caso.locator('.valores .mini')).toHaveText('pedido: € 114,00')
+    await caso.locator('.abrir').click()
+    const detalhes = await caso.locator('.detalhes').innerText()
+    expect(detalhes.toLowerCase()).toContain('número citado na conversa')
+    expect(detalhes.toLowerCase()).toContain('pedido em outro e-mail')
+  })
 })

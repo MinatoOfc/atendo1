@@ -97,6 +97,10 @@ test('o popup recebe pedido, cliente e produtos prontos do servidor — e o moto
   assert.equal(classico.cliente.email, 'carla@uk.co')
   assert.equal(classico.produtosDoPedido.length, 1)
   assert.equal(classico.produtosDoPedido[0].titulo, 'Shirt')
+  // o popup sabe dizer quando o pedido está num e-mail diferente do remetente
+  assert.equal(classico.emailRemetente, 'carla@uk.co')
+  assert.equal(classico.emailDiferenteDoPedido, false)
+  assert.deepEqual(classico.candidatos, [])
 
   const novo = await api('/api/tickets/t-auto/relatorio/preparar', null, 'GET')
   assert.equal(novo.travado, true, 'motor novo: a solução aceita manda')
