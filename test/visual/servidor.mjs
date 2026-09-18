@@ -245,9 +245,12 @@ const checklistCheio = (patch = {}) => {
   return { itens, geral, enviado: patch.enviado ?? geral === 'tudo_certo' }
 }
 const eventoAud = (tipo, min, extra = {}) => ({
-  id: `aud-${tipo}-${min}`, em: emAud(min), tipo, lojaId: 'loja1', ticketId: extra.ticketId ?? null,
+  id: `aud-${tipo}-${extra.ticketId ?? ''}-${min}`, em: emAud(min), tipo, lojaId: 'loja1', ticketId: extra.ticketId ?? null,
   fase: extra.fase ?? null, jornada: extra.jornada ?? 'qualidade', resumo: extra.resumo ?? tipo,
-  situacao: extra.situacao ?? 'informativo', dados: extra.dados ?? {}, chave: `${tipo}:${extra.ticketId}:${min}`,
+  situacao: extra.situacao ?? 'informativo',
+  // tentativaId: o selo olha só o ciclo ATUAL (bloqueio antigo não marca para sempre)
+  dados: { ...(extra.tentativa ? { tentativaId: extra.tentativa } : {}), ...(extra.dados ?? {}) },
+  chave: `${tipo}:${extra.ticketId}:${min}`,
 })
 const ticketAud = (id, extra = {}) => ({
   id, nome: extra.nome ?? 'Cliente Auditoria', de: extra.de ?? `${id}@web.de`, assunto: 'Bestellung #1001',
@@ -260,7 +263,7 @@ estado.tickets.push(
   // 1) tudo certo: classificou, decidiu, validou, agendou e ENVIOU
   ticketAud('aud-ok', {
     nome: 'Ana Correta', resposta: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 bis 11 Tage.',
-    respondidoEm: emAud(5), respostaOrigem: 'ia',
+    respondidoEm: emAud(5), respostaOrigem: 'ia', respostaMensagemId: 'atendo-ok-1', respostaFase: 'qual_troca', respostaIdioma: 'de',
     atendimentoNovo: {
       versao: 1, fluxo: 'qualidade', etapa: 'qual_troca', produtosAfetados: ['Polo Premium (Schwarz / L)'],
       produtosInformados: true, motivo: 'qualidade', historicoEtapas: [{ de: null, para: 'qual_troca', em: emAud(5) }],
@@ -271,12 +274,12 @@ estado.tickets.push(
       eventoAud('cliente_recebido', 0, { ticketId: 'aud-ok', resumo: 'Mensagem do cliente' }),
       eventoAud('ia_classificou', 1, { ticketId: 'aud-ok', resumo: 'IA entendeu: reclamacao — qualidade', dados: { intencao: 'reclamacao', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], idioma: 'de', confianca: 0.93, somenteDado: false, resumo: 'não gostou da qualidade' } }),
       eventoAud('motor_decidiu', 1, { ticketId: 'aud-ok', fase: 'qual_troca', situacao: 'ok', resumo: 'Fase permitida pelo mapa: Troca por outra cor/tamanho/modelo + cupom de 15%', dados: { jornada: 'qualidade', faseAnterior: null, faseUnicaPermitida: 'qual_troca', acaoPermitida: 'troca', aoAceitar: 'endereco', aoRecusar: 'qual_cupom_35', faltando: [], explicacao: 'Próxima fase permitida pelo mapa: Troca por outra cor/tamanho/modelo + cupom de 15%.' } }),
-      eventoAud('rascunho_gerado', 2, { ticketId: 'aud-ok', fase: 'qual_troca' }),
-      eventoAud('rascunho_validado', 2, { ticketId: 'aud-ok', fase: 'qual_troca', situacao: 'ok', resumo: 'Resposta validada para "Troca + cupom de 15%" — tudo certo', dados: { checklist: checklistCheio({ envio_confirmado: 'cinza', enviado: false }) } }),
-      eventoAud('envio_agendado', 3, { ticketId: 'aud-ok', fase: 'qual_troca', situacao: 'ok', dados: { minimoEnvio: emAud(3), enviaEm: emAud(3) } }),
-      eventoAud('envio_iniciado', 5, { ticketId: 'aud-ok', fase: 'qual_troca' }),
-      eventoAud('email_enviado', 5, { ticketId: 'aud-ok', fase: 'qual_troca', situacao: 'ok', resumo: 'E-mail enviado ao cliente pelo canal da loja', dados: { minimoEnvio: emAud(3), enviado: true, checklist: checklistCheio({ enviado: true }) } }),
-      eventoAud('fase_confirmada', 5, { ticketId: 'aud-ok', fase: 'qual_troca', situacao: 'ok', resumo: 'Fase confirmada depois do envio real' }),
+      eventoAud('rascunho_gerado', 2, { ticketId: 'aud-ok', fase: 'qual_troca', tentativa: 'tent-ok' }),
+      eventoAud('rascunho_validado', 2, { ticketId: 'aud-ok', fase: 'qual_troca', tentativa: 'tent-ok', situacao: 'ok', resumo: 'Resposta validada para "Troca + cupom de 15%" — tudo certo', dados: { checklist: checklistCheio({ envio_confirmado: 'cinza', enviado: false }) } }),
+      eventoAud('envio_agendado', 3, { ticketId: 'aud-ok', fase: 'qual_troca', tentativa: 'tent-ok', situacao: 'ok', dados: { minimoEnvio: emAud(3), enviaEm: emAud(3) } }),
+      eventoAud('envio_iniciado', 5, { ticketId: 'aud-ok', fase: 'qual_troca', tentativa: 'tent-ok' }),
+      eventoAud('email_enviado', 5, { ticketId: 'aud-ok', fase: 'qual_troca', tentativa: 'tent-ok', situacao: 'ok', resumo: 'E-mail enviado ao cliente pelo canal da loja', dados: { mensagemId: 'atendo-ok-1', canalConfirmou: true, minimoEnvio: emAud(3), enviado: true, checklist: checklistCheio({ enviado: true }) } }),
+      eventoAud('fase_confirmada', 5, { ticketId: 'aud-ok', fase: 'qual_troca', tentativa: 'tent-ok', situacao: 'ok', resumo: 'Fase confirmada depois do envio real' }),
     ],
   }),
   // 2) bloqueada: o rascunho existe, mas NÃO foi enviado
@@ -294,7 +297,35 @@ estado.tickets.push(
       eventoAud('cliente_recebido', 0, { ticketId: 'aud-bloqueada' }),
       eventoAud('ia_classificou', 1, { ticketId: 'aud-bloqueada', dados: { intencao: 'reclamacao', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], idioma: 'de', confianca: 0.9, somenteDado: false, resumo: 'quer solução' } }),
       eventoAud('motor_decidiu', 1, { ticketId: 'aud-bloqueada', fase: 'qual_troca', situacao: 'ok', dados: { jornada: 'qualidade', faseAnterior: null, faseUnicaPermitida: 'qual_troca', acaoPermitida: 'troca', faltando: [], explicacao: 'Próxima fase permitida pelo mapa: Troca + cupom de 15%.' } }),
-      eventoAud('rascunho_bloqueado', 2, { ticketId: 'aud-bloqueada', fase: 'qual_troca', situacao: 'bloqueado', resumo: 'A etapa "Troca + cupom de 15%" usa cupom e o cupom de 15% ainda não foi conferido na Shopify', dados: { checklist: checklistCheio({ cupom: 'vermelho', cupom_detalhe: 'o cupom de 15% ainda não foi conferido na Shopify', envio_confirmado: 'vermelho', enviado: false }), enviado: false } }),
+      eventoAud('rascunho_bloqueado', 2, { ticketId: 'aud-bloqueada', fase: 'qual_troca', tentativa: 'tent-bloq', situacao: 'bloqueado', resumo: 'A etapa "Troca + cupom de 15%" usa cupom e o cupom de 15% ainda não foi conferido na Shopify', dados: { checklist: checklistCheio({ cupom: 'vermelho', cupom_detalhe: 'o cupom de 15% ainda não foi conferido na Shopify', envio_confirmado: 'vermelho', enviado: false }), enviado: false } }),
+    ],
+  }),
+  // 4) corrigida DEPOIS de um bloqueio: o bloqueio antigo continua na linha do
+  //    tempo, mas o selo vale pela tentativa atual (enviada e confirmada)
+  ticketAud('aud-corrigida', {
+    nome: 'Diego Corrigido',
+    resposta: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 bis 11 Tage.',
+    respondidoEm: emAud(20), respostaOrigem: 'ia', respostaMensagemId: 'atendo-corr-2', respostaFase: 'qual_troca', respostaIdioma: 'de',
+    atendimentoNovo: {
+      versao: 1, fluxo: 'qualidade', etapa: 'qual_troca', produtosAfetados: ['Polo Premium (Schwarz / L)'],
+      produtosInformados: true, motivo: 'qualidade', historicoEtapas: [{ de: null, para: 'qual_troca', em: emAud(20) }],
+      transicaoPendente: null, aguardando: 'cliente', acaoAceita: null, idioma: 'de', rascunhoIdioma: 'de',
+      proximoEnvioMinimo: emAud(18), tentativaAtual: 'tent-corr-2',
+    },
+    auditoriaIA: [
+      eventoAud('cliente_recebido', 0, { ticketId: 'aud-corrigida' }),
+      eventoAud('ia_classificou', 1, { ticketId: 'aud-corrigida', dados: { intencao: 'reclamacao', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], idioma: 'de', confianca: 0.91, somenteDado: false, resumo: 'quer solução' } }),
+      eventoAud('motor_decidiu', 1, { ticketId: 'aud-corrigida', fase: 'qual_troca', situacao: 'ok', dados: { jornada: 'qualidade', faseAnterior: null, faseUnicaPermitida: 'qual_troca', acaoPermitida: 'troca', faltando: [], explicacao: 'Próxima fase permitida pelo mapa: Troca + cupom de 15%.' } }),
+      // tentativa 1: bloqueada pelo cupom não conferido
+      eventoAud('rascunho_gerado', 2, { ticketId: 'aud-corrigida', fase: 'qual_troca', tentativa: 'tent-corr-1' }),
+      eventoAud('rascunho_bloqueado', 2, { ticketId: 'aud-corrigida', fase: 'qual_troca', tentativa: 'tent-corr-1', situacao: 'bloqueado', resumo: 'A etapa usa cupom e o cupom de 15% ainda não foi conferido na Shopify', dados: { checklist: checklistCheio({ cupom: 'vermelho', cupom_detalhe: 'cupom não conferido na Shopify', envio_confirmado: 'vermelho', enviado: false }), enviado: false } }),
+      // tentativa 2: cupom conferido, resposta validada e ENVIADA
+      eventoAud('rascunho_gerado', 15, { ticketId: 'aud-corrigida', fase: 'qual_troca', tentativa: 'tent-corr-2' }),
+      eventoAud('rascunho_validado', 15, { ticketId: 'aud-corrigida', fase: 'qual_troca', tentativa: 'tent-corr-2', situacao: 'ok', resumo: 'Resposta validada para "Troca + cupom de 15%" — tudo certo', dados: { checklist: checklistCheio({ envio_confirmado: 'cinza', enviado: false }) } }),
+      eventoAud('envio_agendado', 18, { ticketId: 'aud-corrigida', fase: 'qual_troca', tentativa: 'tent-corr-2', situacao: 'ok', dados: { minimoEnvio: emAud(18), enviaEm: emAud(18) } }),
+      eventoAud('envio_iniciado', 20, { ticketId: 'aud-corrigida', fase: 'qual_troca', tentativa: 'tent-corr-2' }),
+      eventoAud('email_enviado', 20, { ticketId: 'aud-corrigida', fase: 'qual_troca', tentativa: 'tent-corr-2', situacao: 'ok', resumo: 'E-mail enviado ao cliente pelo canal da loja', dados: { mensagemId: 'atendo-corr-2', canalConfirmou: true, minimoEnvio: emAud(18), enviado: true, checklist: checklistCheio({ enviado: true }) } }),
+      eventoAud('fase_confirmada', 20, { ticketId: 'aud-corrigida', fase: 'qual_troca', tentativa: 'tent-corr-2', situacao: 'ok', resumo: 'Fase confirmada depois do envio real' }),
     ],
   }),
   // 3) aguardando aprovação: rascunho pronto, sem envio automático
@@ -312,9 +343,9 @@ estado.tickets.push(
       eventoAud('ia_classificou', 1, { ticketId: 'aud-aprovacao', dados: { intencao: 'recusa', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], idioma: 'de', confianca: 0.88, somenteDado: false, resumo: 'recusou o cupom' } }),
       eventoAud('cliente_recusou', 1, { ticketId: 'aud-aprovacao', fase: 'qual_cupom_35', resumo: 'Cliente recusou: Cupom de 35%' }),
       eventoAud('motor_decidiu', 1, { ticketId: 'aud-aprovacao', fase: 'reemb_25', situacao: 'ok', dados: { jornada: 'qualidade', faseAnterior: 'qual_cupom_35', faseUnicaPermitida: 'reemb_25', acaoPermitida: 'reembolso', faltando: [], explicacao: 'Cliente recusou o cupom de 35%. Próxima fase permitida pelo mapa: reembolso de 25%.' } }),
-      eventoAud('rascunho_gerado', 2, { ticketId: 'aud-aprovacao', fase: 'reemb_25' }),
-      eventoAud('rascunho_validado', 2, { ticketId: 'aud-aprovacao', fase: 'reemb_25', situacao: 'atencao', resumo: 'Resposta validada para "Reembolso de 25%" — revisar', dados: { checklist: checklistCheio({ foto: 'amarelo', foto_detalhe: 'foto do defeito ainda não validada por você', envio_confirmado: 'cinza', enviado: false }) } }),
-      eventoAud('aguardando_aprovacao', 2, { ticketId: 'aud-aprovacao', fase: 'reemb_25', situacao: 'atencao', resumo: 'Rascunho pronto, aguardando sua aprovação', dados: { minimoEnvio: emAud(300) } }),
+      eventoAud('rascunho_gerado', 2, { ticketId: 'aud-aprovacao', fase: 'reemb_25', tentativa: 'tent-apr' }),
+      eventoAud('rascunho_validado', 2, { ticketId: 'aud-aprovacao', fase: 'reemb_25', tentativa: 'tent-apr', situacao: 'atencao', resumo: 'Resposta validada para "Reembolso de 25%" — revisar', dados: { checklist: checklistCheio({ foto: 'amarelo', foto_detalhe: 'foto do defeito ainda não validada por você', envio_confirmado: 'cinza', enviado: false }) } }),
+      eventoAud('aguardando_aprovacao', 2, { ticketId: 'aud-aprovacao', fase: 'reemb_25', tentativa: 'tent-apr', situacao: 'atencao', resumo: 'Rascunho pronto, aguardando sua aprovação', dados: { minimoEnvio: emAud(300) } }),
     ],
   }),
 )

@@ -3,7 +3,7 @@ import {
   RefreshCw, Search, MessageSquare, Bot, User, AlertTriangle, Check, Clock, ExternalLink, ShieldCheck,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { ROTULO_GERAL, ROTULO_SELO, ROTULO_TIPO_AUDITORIA } from '../../shared/auditoria.js'
+import { ROTULO_GERAL, ROTULO_SELO, ROTULO_SELO_CURTO } from '../../shared/auditoria.js'
 import type { ConversaAuditoria, ResumoConversaAuditoria, MensagemAuditoria, ItemChecklist } from '../../shared/auditoria.js'
 import { useStore } from '../store'
 
@@ -12,6 +12,7 @@ import { useStore } from '../store'
 
 const CORES_SELO: Record<string, string> = {
   tudo_certo: 'var(--green, #3fb950)', revisar: 'var(--amber, #d29922)',
+  aguardando: 'var(--amber, #d29922)', agendada: 'var(--blue, #388bfd)',
   bloqueado: 'var(--red, #f85149)', sem_dados: 'var(--text-3)',
 }
 const CORES_ITEM: Record<string, string> = {
@@ -201,7 +202,7 @@ export default function Auditoria() {
                 onClick={() => abrirConversa(c.ticketId)}>
                 <span className="row spread gap-8">
                   <b style={{ fontSize: 13 }}>{c.cliente}</b>
-                  <span className="tag" style={{ color: CORES_SELO[c.selo], borderColor: CORES_SELO[c.selo] }}>{ROTULO_SELO[c.selo] ?? c.selo}</span>
+                  <span className="tag" style={{ color: CORES_SELO[c.selo], borderColor: CORES_SELO[c.selo] }} title={ROTULO_SELO[c.selo] ?? c.selo}>{ROTULO_SELO_CURTO[c.selo] ?? c.selo}</span>
                 </span>
                 <span className="muted-sm" style={{ display: 'block' }}>
                   {c.pedido ? `Pedido #${c.pedido}` : 'sem pedido'} · {c.loja}
@@ -232,6 +233,15 @@ export default function Auditoria() {
                 </div>
               )}
               {conversa.passos && <div className="muted-sm passos-auditoria">{conversa.passos}</div>}
+              <div className="muted-sm" style={{ color: CORES_SELO[conversa.selo], fontWeight: 700 }}>
+                {ROTULO_SELO[conversa.selo] ?? conversa.selo}
+              </div>
+              {conversa.retencao && conversa.retencao.omitidos > 0 && (
+                <div className="muted-sm" style={{ color: 'var(--amber, #d29922)' }}>
+                  Histórico anterior omitido por retenção: {conversa.retencao.omitidos} evento(s) até
+                  {' '}{hora(conversa.retencao.ultimoOmitidoEm)} — a lista abaixo começa em {hora(conversa.retencao.primeiroDisponivelEm)}.
+                </div>
+              )}
               {conversa.mensagens.map((m: MensagemAuditoria) => {
                 const sit = SITUACAO_MENSAGEM[m.situacao] ?? SITUACAO_MENSAGEM.recebida
                 return (
@@ -251,6 +261,7 @@ export default function Auditoria() {
                       {m.minimoEnvio && <span>mínimo: {hora(m.minimoEnvio)}</span>}
                       {m.envioReal && <span>enviado: {hora(m.envioReal)}</span>}
                       {duracao(m.atrasoMs) && <span>{duracao(m.atrasoMs)}</span>}
+                      {m.vinculo === 'inferido' && <span title="registro antigo, sem Message-ID">associação inferida</span>}
                     </div>
                     {m.motivo && <div className="muted-sm" style={{ color: sit.cor }}>{m.motivo}</div>}
                   </article>

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import {
   TIPOS_AUDITORIA, novoEvento, registrarEvento, checklistDaResposta, ITENS_CHECKLIST,
   linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, ROTULO_GERAL,
+  ROTULO_SELO, tentativaAtual, eventosDaTentativa,
 } from '../shared/auditoria.js'
 
 const EM = '2026-09-18T12:00:00.000Z'
@@ -144,13 +145,22 @@ test('passos compactos mostram a sequência e avisam quando foi bloqueada', () =
   assert.match(passosCompactos(bloqueado), /bloqueada — não foi enviada$/)
 })
 
-test('selo da conversa vem do último checklist registrado', () => {
-  const eventos = [
+test('selo sem tentativa registrada: só vira "tudo certo" com a prova do envio', () => {
+  // eventos antigos, sem tentativaId: o selo ainda exige prova do envio
+  const semProva = [
     ev('rascunho_validado', { dados: { checklist: { geral: 'revisar', itens: [], enviado: false } } }),
     ev('email_enviado', { dados: { checklist: { geral: 'tudo_certo', itens: [], enviado: true } } }),
   ]
-  assert.equal(seloDaConversa(eventos), 'tudo_certo')
+  assert.equal(seloDaConversa(semProva), 'revisar', 'sem Message-ID não há comprovação')
+  const comProva = [
+    ev('rascunho_validado', { dados: { checklist: { geral: 'tudo_certo', itens: [], enviado: false } } }),
+    ev('email_enviado', { dados: { mensagemId: 'atendo-1', enviado: true, canalConfirmou: true, checklist: { geral: 'tudo_certo', itens: [], enviado: true } } }),
+  ]
+  assert.equal(seloDaConversa(comProva), 'tudo_certo')
   assert.equal(seloDaConversa([]), 'sem_dados')
+  // sem tentativaId, eventosDaTentativa cai para os eventos de ciclo
+  assert.equal(eventosDaTentativa(comProva).length, 2)
+  assert.equal(tentativaAtual(comProva), null)
 })
 
 test('filtros: período 7/30/90, situação e os três "somente"', () => {
@@ -199,4 +209,181 @@ test('o corpo do cliente é devolvido como TEXTO — nada de HTML executável', 
   assert.match(m.corpo, /<script>/, 'o texto original é preservado como dado')
   // a auditoria nunca entrega HTML pronto para injetar: é string, a tela escapa
   assert.ok(!('html' in m))
+})
+/* ====================================================================
+   Selo pela tentativa ATUAL, vínculo pelo Message-ID e prova de envio.
+   ==================================================================== */
+
+const evT = (tipo, tentativaId, extra = {}, minutos = 0) => novoEvento({
+  tipo, ticketId: 't1', lojaId: 'loja1', em: new Date(Date.parse(EM) + minutos * 60_000).toISOString(),
+  ...extra, dados: { tentativaId, ...(extra.dados ?? {}) },
+})
+const checklistOk = (geral = 'tudo_certo') => ({
+  geral, enviado: geral === 'tudo_certo',
+  itens: ITENS_CHECKLIST.map(([id, rotulo]) => ({ id, rotulo, estado: geral === 'tudo_certo' ? 'verde' : 'amarelo', detalhe: null })),
+})
+const envioProvado = (tentativa, minutos, mensagemId = 'atendo-1') => evT('email_enviado', tentativa, {
+  situacao: 'ok',
+  dados: { enviado: true, canalConfirmou: true, mensagemId, checklist: checklistOk(), minimoEnvio: EM },
+}, minutos)
+
+test('bloqueado → regenerado → validado → enviado: o selo final é "Tudo certo"', () => {
+  const eventos = [
+    evT('rascunho_gerado', 'tent-1', {}, 0),
+    evT('rascunho_bloqueado', 'tent-1', { situacao: 'bloqueado', resumo: 'cupom não conferido' }, 1),
+    // o dono corrige e o ciclo recomeça: OUTRA tentativa
+    evT('rascunho_gerado', 'tent-2', {}, 5),
+    evT('rascunho_validado', 'tent-2', { dados: { checklist: checklistOk('tudo_certo') } }, 5),
+    evT('envio_agendado', 'tent-2', {}, 6),
+    envioProvado('tent-2', 7),
+    evT('fase_confirmada', 'tent-2', {}, 7),
+  ]
+  assert.equal(tentativaAtual(eventos), 'tent-2')
+  assert.equal(seloDaConversa(eventos), 'tudo_certo')
+  assert.equal(ROTULO_SELO.tudo_certo, 'Tudo certo — enviada e confirmada')
+  // o bloqueio antigo continua registrado (linha do tempo), mas não marca mais a conversa
+  assert.ok(eventos.some(e => e.tipo === 'rascunho_bloqueado'))
+  assert.equal(passosCompactos(eventos).includes('bloqueada'), false)
+})
+
+test('bloqueio antigo + nova tentativa ainda pendente: nem bloqueado, nem tudo certo', () => {
+  const eventos = [
+    evT('rascunho_bloqueado', 'tent-1', { situacao: 'bloqueado' }, 1),
+    evT('rascunho_gerado', 'tent-2', {}, 5),
+    evT('rascunho_validado', 'tent-2', { dados: { checklist: checklistOk('tudo_certo') } }, 5),
+    evT('aguardando_aprovacao', 'tent-2', { situacao: 'atencao' }, 5),
+  ]
+  const selo = seloDaConversa(eventos)
+  assert.equal(selo, 'aguardando')
+  assert.notEqual(selo, 'bloqueado')
+  assert.notEqual(selo, 'tudo_certo')
+  assert.equal(ROTULO_SELO.aguardando, 'Resposta validada — aguardando aprovação')
+  assert.match(passosCompactos(eventos), /aguardando sua aprovação$/)
+})
+
+test('a tentativa ATUAL bloqueada continua vermelha e nunca aparece como enviada', () => {
+  const eventos = [
+    envioProvado('tent-1', 0),
+    evT('rascunho_gerado', 'tent-2', {}, 10),
+    evT('rascunho_bloqueado', 'tent-2', { situacao: 'bloqueado', resumo: 'idioma errado' }, 10),
+  ]
+  assert.equal(seloDaConversa(eventos), 'bloqueado')
+  assert.equal(ROTULO_SELO.bloqueado, 'Bloqueada — não foi enviada')
+  assert.match(passosCompactos(eventos), /bloqueada — não foi enviada$/)
+})
+
+test('falha de envio depois do e-mail da MESMA tentativa manda no selo', () => {
+  const eventos = [envioProvado('tent-1', 0), evT('envio_falhou', 'tent-1', { situacao: 'bloqueado' }, 1)]
+  assert.equal(seloDaConversa(eventos), 'bloqueado')
+})
+
+test('"Tudo certo" exige prova: enviado + canal + Message-ID + checklist final', () => {
+  const base = tentativa => [evT('rascunho_validado', tentativa, { dados: { checklist: checklistOk() } }, 0)]
+  // sem Message-ID não há prova
+  const semId = [...base('t'), evT('email_enviado', 't', { dados: { enviado: true, checklist: checklistOk() } }, 1)]
+  assert.equal(seloDaConversa(semId), 'revisar')
+  // sem checklist da mensagem enviada também não
+  const semChecklist = [...base('t'), evT('email_enviado', 't', { dados: { enviado: true, mensagemId: 'x' } }, 1)]
+  assert.equal(seloDaConversa(semChecklist), 'revisar')
+  // com tudo: tudo certo
+  assert.equal(seloDaConversa([...base('t'), envioProvado('t', 1)]), 'tudo_certo')
+})
+
+test('rascunho válido aguardando aprovação NUNCA é "Tudo certo"', () => {
+  const eventos = [
+    evT('rascunho_gerado', 't', {}, 0),
+    evT('rascunho_validado', 't', { dados: { checklist: checklistOk('tudo_certo') } }, 0),
+    evT('aguardando_aprovacao', 't', {}, 0),
+  ]
+  assert.equal(seloDaConversa(eventos), 'aguardando')
+  const agendado = [...eventos.slice(0, 2), evT('envio_agendado', 't', {}, 1)]
+  assert.equal(seloDaConversa(agendado), 'agendada')
+  assert.equal(ROTULO_SELO.agendada, 'Agendada — ainda não enviada')
+})
+
+test('vínculo EXATO pelo Message-ID: dois envios em menos de 2 minutos não se confundem', () => {
+  const t = {
+    id: 't1',
+    historico: [
+      { autor: 'cliente', corpo: 'oi', data: '2026-09-18T11:58:00.000Z' },
+      { autor: 'atendo', corpo: 'primeira', data: '2026-09-18T12:00:00.000Z', origem: 'ia', mensagemId: 'atendo-A', fase: 'qual_troca' },
+      { autor: 'atendo', corpo: 'segunda', data: '2026-09-18T12:01:00.000Z', origem: 'manual', mensagemId: 'atendo-B', fase: 'reemb_25' },
+    ],
+    auditoriaIA: [
+      novoEvento({ tipo: 'email_enviado', em: '2026-09-18T12:00:00.000Z', fase: 'qual_troca', dados: { mensagemId: 'atendo-A', minimoEnvio: '2026-09-18T11:59:00.000Z', enviado: true, tentativaId: 'a' } }),
+      novoEvento({ tipo: 'email_enviado', em: '2026-09-18T12:01:00.000Z', fase: 'reemb_25', dados: { mensagemId: 'atendo-B', minimoEnvio: '2026-09-18T11:30:00.000Z', enviado: true, tentativaId: 'b' } }),
+    ],
+  }
+  const linha = linhaDoTempo(t)
+  const primeira = linha.find(m => m.corpo === 'primeira')
+  const segunda = linha.find(m => m.corpo === 'segunda')
+  assert.equal(primeira.vinculo, 'exato')
+  assert.equal(primeira.mensagemId, 'atendo-A')
+  assert.equal(primeira.minimoEnvio, '2026-09-18T11:59:00.000Z')
+  assert.equal(primeira.atrasoMs, 60_000)
+  assert.equal(primeira.fase, 'qual_troca')
+  assert.equal(segunda.vinculo, 'exato')
+  assert.equal(segunda.mensagemId, 'atendo-B')
+  assert.equal(segunda.minimoEnvio, '2026-09-18T11:30:00.000Z')
+  assert.equal(segunda.atrasoMs, 31 * 60_000)
+  assert.equal(segunda.rotuloOrigem, 'Você')
+})
+
+test('registro antigo sem Message-ID: a associação é marcada como INFERIDA', () => {
+  const t = {
+    id: 't2',
+    historico: [{ autor: 'atendo', corpo: 'antiga', data: '2026-09-18T12:00:00.000Z', origem: 'ia' }],
+    auditoriaIA: [novoEvento({ tipo: 'email_enviado', em: '2026-09-18T12:00:30.000Z', dados: { minimoEnvio: '2026-09-18T11:59:00.000Z', enviado: true } })],
+  }
+  const m = linhaDoTempo(t).find(x => x.corpo === 'antiga')
+  assert.equal(m.vinculo, 'inferido')
+  assert.equal(m.mensagemId, null)
+  assert.ok(m.envioReal, 'ainda mostra o horário, mas sem alegar prova')
+})
+test('retenção: passar do teto não apaga em silêncio — o que sai fica contado e datado', async () => {
+  const { aplicarRetencao, LIMITE_AUDITORIA } = await import('../shared/auditoria.js')
+  const base = new Date('2026-09-18T00:00:00.000Z').getTime()
+  let lista = []
+  for (let i = 0; i < LIMITE_AUDITORIA + 5; i++) {
+    lista = registrarEvento(lista, novoEvento({ tipo: 'cliente_recebido', ticketId: 't1', em: new Date(base + i * 60_000).toISOString(), chave: 'k' + i }))
+  }
+  const r = aplicarRetencao(lista)
+  assert.equal(r.lista.length, LIMITE_AUDITORIA, 'a lista fica no teto')
+  assert.equal(r.retencao.omitidos, 5, 'os 5 que saíram estão contados')
+  assert.equal(r.retencao.primeiroOmitidoEm, new Date(base).toISOString())
+  assert.equal(r.retencao.ultimoOmitidoEm, new Date(base + 4 * 60_000).toISOString())
+  assert.equal(r.retencao.primeiroDisponivelEm, new Date(base + 5 * 60_000).toISOString())
+  assert.equal(r.retencao.limite, LIMITE_AUDITORIA)
+
+  // um segundo corte SOMA ao anterior e mantém a data do primeiro omitido
+  let maior = r.lista
+  for (let i = 0; i < 3; i++) {
+    maior = registrarEvento(maior, novoEvento({ tipo: 'cliente_recebido', ticketId: 't1', em: new Date(base + 10_000_000 + i).toISOString(), chave: 'z' + i }))
+  }
+  const r2 = aplicarRetencao(maior, { anterior: r.retencao })
+  assert.equal(r2.retencao.omitidos, 8)
+  assert.equal(r2.retencao.primeiroOmitidoEm, r.retencao.primeiroOmitidoEm)
+
+  // abaixo do teto nada é cortado e não se inventa retenção
+  const pequeno = aplicarRetencao(lista.slice(0, 10))
+  assert.equal(pequeno.lista.length, 10)
+  assert.equal(pequeno.retencao, null)
+})
+
+test('leitor de valores: formatos europeu, americano e suíço (o mesmo do motor)', async () => {
+  const { valoresMonetarios } = await import('../server/atendimento.js')
+  assert.deepEqual(valoresMonetarios('€ 40,00'), [40])
+  assert.deepEqual(valoresMonetarios('40.00 €'), [40])
+  assert.deepEqual(valoresMonetarios('€ 1.234,50'), [1234.5])
+  assert.deepEqual(valoresMonetarios('€ 1,234.50'), [1234.5])
+  assert.deepEqual(valoresMonetarios('CHF 1’234.50'), [1234.5])
+  assert.deepEqual(valoresMonetarios("CHF 1'234.50"), [1234.5])
+  // texto com total do pedido, reembolso e percentual ao mesmo tempo
+  const misto = 'Ihre Bestellung von € 1.234,50: wir erstatten 40% = € 493,80 zurück.'
+  assert.deepEqual(valoresMonetarios(misto), [1234.5, 493.8])
+  // o valor do reembolso é encontrado sem confundir com o total
+  const esperado = Math.round(1234.5 * 40) / 100
+  assert.equal(esperado, 493.8)
+  assert.ok(valoresMonetarios(misto).some(v => Math.abs(v - esperado) < 0.011))
+  assert.ok(!valoresMonetarios('40%').length, 'percentual sozinho não é dinheiro')
 })

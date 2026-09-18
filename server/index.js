@@ -13,9 +13,9 @@ import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
   horarioMinimoEnvio, promptClassificar, promptEscrever, configDoNovo, FASES, JORNADAS, PERCENTUAIS_CUPOM, validarEndereco,
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
-  definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase,
+  definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase, valoresMonetarios,
 } from './atendimento.js'
-import { novoEvento, registrarEvento, checklistDaResposta, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas } from '../shared/auditoria.js'
+import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual } from '../shared/auditoria.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { produtoFoiInformado } from '../shared/produto.js'
@@ -517,9 +517,10 @@ function auditar(t, tipo, { resumo = '', situacao = 'informativo', dados = {}, f
       jornada: an?.fluxo ?? null,
       resumo, situacao, dados, em, chave,
     })
-    t.auditoriaIA = registrarEvento(t.auditoriaIA, evento)
-    // o histórico é longo por natureza; o teto evita crescer sem fim no JSONB
-    if (t.auditoriaIA.length > 400) t.auditoriaIA = t.auditoriaIA.slice(-400)
+    // RETENÇÃO honesta (função pura): o que sai do teto fica contado e datado
+    const r = aplicarRetencao(registrarEvento(t.auditoriaIA, evento), { anterior: t.auditoriaRetencao ?? null })
+    t.auditoriaIA = r.lista
+    if (r.retencao) t.auditoriaRetencao = r.retencao
     return evento
   } catch (err) {
     console.error('[auditoria]', err.message)
@@ -532,7 +533,7 @@ function auditar(t, tipo, { resumo = '', situacao = 'informativo', dados = {}, f
  * IA): cada item do checklist vira true (verde), false (vermelho), 'atencao'
  * (amarelo) ou null (cinza, não se aplica).
  */
-function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false, motivo = null, agora = Date.now() } = {}) {
+function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false, motivo = null, origem = 'ia', agora = Date.now() } = {}) {
   const f = {}; const detalhes = {}
   try {
     const an = t.atendimentoNovo ?? null
@@ -547,34 +548,39 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
     f.idioma = idiomaAlvo ? vi.ok : null
     if (!vi.ok) detalhes.idioma = vi.motivo
 
-    // produto informado pelo cliente e pertencente ao pedido
-    f.produto_informado = produtoFoiInformado(an)
-    if (!f.produto_informado) detalhes.produto_informado = 'o cliente ainda não disse qual produto'
+    // produto informado pelo cliente e pertencente ao pedido. Numa fase SEM oferta
+    // (a coleta que justamente pergunta qual é o produto) o item não se aplica.
+    f.produto_informado = oferta ? produtoFoiInformado(an) : null
+    if (f.produto_informado === false) detalhes.produto_informado = 'o cliente ainda não disse qual produto'
     const rotulos = rotulosDoPedidoItens(pedido)
     const citados = an?.produtosAfetados ?? []
     f.produto_do_pedido = !pedido || !citados.length ? null : citados.every(p => rotulos.includes(p))
     if (f.produto_do_pedido === false) detalhes.produto_do_pedido = 'produto citado não está no pedido localizado'
 
     // fase e escada do mapa
-    const conferencia = fase ? conferirTextoDaFase(faseId, texto, loja, an, pedido, { faltando: an?.transicaoPendente?.faltando ?? [], idioma: idiomaAlvo }) : { ok: false, motivo: 'fase desconhecida' }
-    f.fase_correta = fase ? conferencia.ok : false
-    if (!conferencia.ok) detalhes.fase_correta = conferencia.motivo
+    const conferencia = fase
+      ? conferirTextoDaFase(faseId, texto, loja, an, pedido, { faltando: an?.transicaoPendente?.faltando ?? [], idioma: idiomaAlvo })
+      : { ok: null, motivo: 'resposta escrita por você, fora das etapas do mapa' }
+    f.fase_correta = fase ? conferencia.ok : null
+    if (conferencia.ok === false) detalhes.fase_correta = conferencia.motivo
+    else if (!fase) detalhes.fase_correta = conferencia.motivo
     const anterior = an?.etapa ?? null
     const permitidas = anterior ? [FASES[anterior]?.aoAceitar, FASES[anterior]?.aoRecusar].filter(Boolean) : null
     f.sem_pulo = !anterior || !permitidas?.length ? null : (permitidas.includes(faseId) || FASES[faseId]?.confirmacao === true || faseId === 'coleta' || faseId === 'endereco')
     if (f.sem_pulo === false) detalhes.sem_pulo = `de "${FASES[anterior]?.titulo ?? anterior}" o mapa só permite: ${permitidas.map(p => FASES[p]?.titulo ?? p).join(' ou ')}`
 
     // ação, percentual e valor
-    f.acao_correta = fase ? conferencia.ok : false
+    f.acao_correta = fase ? conferencia.ok : null
     const pct = oferta?.pct ?? null
     f.percentual = pct == null ? null : new RegExp(`\\b${pct}\\s?%`).test(String(texto))
     if (f.percentual === false) detalhes.percentual = `o texto não traz ${pct}%`
     const valorPedido = pedido?.valor != null ? Number(pedido.valor) : null
     if (pct != null && valorPedido != null) {
+      // MESMO leitor do motor (€ 40,00 · 40.00 € · € 1.234,50 · € 1,234.50 · CHF 1’234.50)
       const esperado = Math.round(valorPedido * pct) / 100
-      const numeros = String(texto).match(/\d+[.,]\d{2}/g) ?? []
-      f.valor = numeros.some(n => Math.abs(Number(n.replace('.', '').replace(',', '.')) - esperado) < 0.02)
-      if (!f.valor) detalhes.valor = `esperado ${esperado.toFixed(2)} (${pct}% de ${valorPedido.toFixed(2)})`
+      const citados = valoresMonetarios(String(texto))
+      f.valor = citados.some(v => Math.abs(v - esperado) < 0.011)
+      if (!f.valor) detalhes.valor = `esperado ${esperado.toFixed(2)} (${pct}% de ${valorPedido.toFixed(2)}); no texto: ${citados.length ? citados.map(v => v.toFixed(2)).join(' / ') : 'nenhum valor'}`
     } else f.valor = null
 
     // cupom: mesma trava única do envio
@@ -585,7 +591,9 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
 
     // prazo, endereço e foto
     f.prazo = oferta?.prazo ? conferencia.ok : null
-    const precisaEndereco = !!(oferta && /troca|reenvio/.test(oferta.tipo ?? ''))
+    // o endereço só é exigido onde o mapa pede: na coleta do endereço e na
+    // confirmação da troca/reenvio — na hora da OFERTA ele ainda nem foi pedido
+    const precisaEndereco = !!(oferta && /troca|reenvio/.test(oferta.tipo ?? '')) && (faseId === 'endereco' || fase?.confirmacao === true)
     f.endereco = !precisaEndereco ? null : validarEndereco(an?.enderecoConfirmado).ok
     if (f.endereco === false) detalhes.endereco = 'endereço incompleto (rua, número, código postal, cidade)'
     const precisaFoto = an?.fluxo === 'defeito'
@@ -593,7 +601,7 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
     if (f.foto === 'atencao') detalhes.foto = 'foto do defeito ainda não validada por você'
 
     // nenhuma oferta indevida: o texto não pode citar percentual fora da fase
-    f.sem_oferta_indevida = fase ? conferencia.ok : false
+    f.sem_oferta_indevida = fase ? conferencia.ok : null
     if (!conferencia.ok && /percentual|oferta|cupom/i.test(conferencia.motivo ?? '')) detalhes.sem_oferta_indevida = conferencia.motivo
 
     // canal: conta da própria loja
@@ -601,10 +609,13 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
     f.conta_propria = !!conta && (conta.configurado || envioPorApi)
     if (!f.conta_propria) detalhes.conta_propria = 'a loja não tem caixa de e-mail própria configurada'
 
-    // cadência: 3 min na primeira resposta, 5 h depois
+    // cadência: 3 min na primeira resposta, 5 h depois. É regra do envio da IA —
+    // quando o dono responde à mão, o item não se aplica.
     const minimo = horarioMinimoEnvio(t, agora)
-    f.cadencia = enviado ? (agora >= minimo) : (t.enviaEm ? t.enviaEm >= minimo : null)
-    detalhes.cadencia = `mínimo ${new Date(minimo).toISOString()}`
+    f.cadencia = origem === 'manual' ? null : (enviado ? (agora >= minimo) : (t.enviaEm ? t.enviaEm >= minimo : null))
+    detalhes.cadencia = origem === 'manual'
+      ? 'resposta escrita por você — a cadência vale para o envio automático'
+      : `mínimo ${Number.isFinite(minimo) ? new Date(minimo).toISOString() : 'não calculado'}`
 
     // envio confirmado pelo canal
     f.envio_confirmado = enviado ? true : (motivo ? false : null)
@@ -623,7 +634,7 @@ const auditarFalhaEnvio = (t, transicao, erro, texto) => auditar(t, 'envio_falho
   situacao: 'bloqueado',
   fase: transicao?.para ?? null,
   chave: `envio_falhou:${t.id}:${transicao?.para ?? 'sem-fase'}:${Date.now()}`,
-  dados: { fase: transicao?.para ?? null, erro: String(erro).slice(0, 200), texto: String(texto ?? '').slice(0, 2000), enviado: false },
+  dados: { tentativaId: t.atendimentoNovo?.tentativaAtual ?? null, fase: transicao?.para ?? null, erro: String(erro).slice(0, 200), texto: String(texto ?? '').slice(0, 2000), enviado: false },
 })
 /** wsId a partir do objeto de estado (o checklist precisa das contas da loja). */
 const wsIdAtual = estado => { for (const [id, e] of workspaces) if (e === estado) return id; return null }
@@ -1025,7 +1036,9 @@ function visao(wsId) {
   const conta1 = contas[0]
   const loja1 = estado.lojas[0]
   return {
-    tickets: estado.tickets,
+    // A auditoria NÃO viaja no estado geral: são centenas de eventos por conversa.
+    // Só as rotas /api/auditoria e /api/auditoria/:id devolvem esses dados.
+    tickets: estado.tickets.map(t => (t.auditoriaIA ? { ...t, auditoriaIA: undefined } : t)),
     politicas: estado.politicas,
     faqs: estado.faqs,
     comportamentos: estado.comportamentos ?? [],
@@ -1377,7 +1390,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
     auditar(t, 'rascunho_bloqueado', {
       resumo: motivo, situacao: 'bloqueado', fase: faseId,
       chave: `rascunho_bloqueado:${t.id}:${faseId}:${Date.now()}`,
-      dados: { motivo, fase: faseId, enviado: false, checklist: { geral: 'bloqueado', enviado: false, itens: [] } },
+      dados: { tentativaId: t.atendimentoNovo?.tentativaAtual ?? null, motivo, fase: faseId, enviado: false, checklist: { geral: 'bloqueado', enviado: false, itens: [] } },
     })
     if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo)
     return { ok: false, motivo }
@@ -1385,6 +1398,10 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
 
   // TRAVA ÚNICA DO CUPOM, antes de montar o prompt: sem código conferido na
   // Shopify desta loja, a fase para aqui e o caso vai para Aprovações
+  // TENTATIVA: cada ciclo (gerar → validar → agendar/enviar) tem id próprio, para
+  // o selo olhar só a tentativa ATUAL — um bloqueio antigo não marca a conversa para sempre
+  const tentativaId = `tent-${t.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  an.tentativaAtual = tentativaId
   const cup = travaCupom(loja, faseId, an)
   if (cup.precisa && !cup.ok) return falhar(motivoCupom(faseId, cup))
 
@@ -1421,7 +1438,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   auditar(t, 'rascunho_gerado', {
     resumo: `Rascunho escrito para a fase "${FASES[faseId].titulo}"`, situacao: 'informativo', fase: faseId,
     chave: `rascunho_gerado:${t.id}:${faseId}:${Date.now()}`,
-    dados: { fase: faseId, idioma: an.rascunhoIdioma ?? idiomaAlvo ?? null, caracteres: t.rascunho.length },
+    dados: { tentativaId, fase: faseId, idioma: an.rascunhoIdioma ?? idiomaAlvo ?? null, caracteres: t.rascunho.length },
   })
   t.rascunhoTraducao = undefined
   t.geradoPorIA = true
@@ -1454,20 +1471,20 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
     situacao: checklist.geral === 'tudo_certo' ? 'ok' : checklist.geral === 'revisar' ? 'atencao' : 'bloqueado',
     fase: faseId,
     chave: `rascunho_validado:${t.id}:${faseId}:${Date.now()}`,
-    dados: { fase: faseId, checklist, enviado: false },
+    dados: { tentativaId, fase: faseId, checklist, enviado: false },
   })
   if (t.enviaEm) {
     auditar(t, 'envio_agendado', {
       resumo: `Envio agendado para ${new Date(t.enviaEm).toISOString()}`, situacao: 'ok', fase: faseId,
       chave: `envio_agendado:${t.id}:${faseId}:${t.enviaEm}`,
-      dados: { fase: faseId, enviaEm: new Date(t.enviaEm).toISOString(), minimoEnvio: an.proximoEnvioMinimo ?? null, automatico: !!loja?.novoEnvioAutomatico },
+      dados: { tentativaId, fase: faseId, enviaEm: new Date(t.enviaEm).toISOString(), minimoEnvio: an.proximoEnvioMinimo ?? null, automatico: !!loja?.novoEnvioAutomatico },
     })
   } else {
     auditar(t, 'aguardando_aprovacao', {
       resumo: an.aprovacaoObrigatoria ?? 'Rascunho pronto, aguardando sua aprovação',
       situacao: 'atencao', fase: faseId,
       chave: `aguardando_aprovacao:${t.id}:${faseId}:${Date.now()}`,
-      dados: { fase: faseId, minimoEnvio: an.proximoEnvioMinimo ?? null, motivo: an.aprovacaoObrigatoria ?? an.envioBloqueado ?? null },
+      dados: { tentativaId, fase: faseId, minimoEnvio: an.proximoEnvioMinimo ?? null, motivo: an.aprovacaoObrigatoria ?? an.envioBloqueado ?? null },
     })
   }
   return { ok: true, motivo: null }
@@ -1820,7 +1837,14 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, ago
 
   t.historico = t.historico || []
   if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao, anexos: t.anexos })
-  if (t.resposta) t.historico.push({ autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data, traducao: t.respostaTraducao, origem: t.respostaOrigem })
+  if (t.resposta) {
+    t.historico.push({
+      autor: 'atendo', corpo: t.resposta, data: t.respondidoEm || t.data, traducao: t.respostaTraducao,
+      origem: t.respostaOrigem,
+      // preserva o vínculo com o evento de auditoria (nunca mais por horário)
+      mensagemId: t.respostaMensagemId ?? null, fase: t.respostaFase ?? null, idioma: t.respostaIdioma ?? null,
+    })
+  }
 
   t.anexos = !viraSpam && wsId && anexos?.length ? await guardarAnexos(wsId, anexos) : undefined
   t.corpo = corpo
@@ -1828,6 +1852,9 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, ago
   t.lido = false
   t.resposta = undefined
   t.respostaOrigem = undefined
+  t.respostaMensagemId = undefined
+  t.respostaFase = undefined
+  t.respostaIdioma = undefined
   t.marcadoRespondido = undefined // cliente falou de novo: a conversa volta a ser pendente
   t.respostaTraducao = undefined
   t.respondidoEm = undefined
@@ -1981,12 +2008,13 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
       throw new Error(`O texto não traz o código do cupom conferido (${cupE.codigo}) — nada é enviado`)
     }
   }
-  auditar(ticket, 'envio_iniciado', {
-    resumo: 'Envio iniciado pelo canal da loja', situacao: 'informativo',
-    fase: transicao?.para ?? null,
-    chave: `envio_iniciado:${ticket.id}:${transicao?.para ?? 'sem-fase'}:${Date.now()}`,
-    dados: { fase: transicao?.para ?? null, origem, loja: lojaId },
-  })
+  // tentativa do ciclo. Uma tentativa já bloqueada ou que falhou está encerrada:
+  // o envio seguinte (manual, por exemplo) abre OUTRA, para o selo não misturar ciclos.
+  const encerrada = tipo => (ticket.auditoriaIA ?? []).some(e => e.tipo === tipo && e.dados?.tentativaId === an?.tentativaAtual)
+  const tentativaEnvio = (an?.tentativaAtual && !encerrada('rascunho_bloqueado') && !encerrada('envio_falhou'))
+    ? an.tentativaAtual
+    : `tent-${ticket.id}-envio-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  if (an) an.tentativaAtual = tentativaEnvio
   // canal simulado SÓ em teste (ATENDO_SIMULAR=1 + NODE_ENV=test): 'ok' envia, 'falha' quebra.
   // Em produção é sempre null: o envio passa obrigatoriamente pelo canal real.
   const simulado = canalSimulado()
@@ -1999,6 +2027,13 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   let finalizarConfirmacao = null // fase conf_* a fechar no fim (estado final atômico)
   if (cpEnvio && !cpEnvio.mensagemConfirmacaoId) cpEnvio.mensagemConfirmacaoId = `atendo-${cpEnvio.id}`
   const mensagemId = cpEnvio?.mensagemConfirmacaoId ?? `atendo-${crypto.randomUUID()}`
+  auditar(ticket, 'envio_iniciado', {
+    resumo: 'Envio iniciado pelo canal da loja', situacao: 'informativo',
+    fase: transicao?.para ?? null,
+    chave: `envio_iniciado:${ticket.id}:${tentativaEnvio}:${Date.now()}`,
+    dados: { tentativaId: tentativaEnvio, fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId },
+  })
+
   if (cpEnvio && cpEnvio.status !== 'concluida') {
     // JANELA CRÍTICA: "enviando" + Message-ID precisam estar PERSISTIDOS antes de qualquer
     // canal ser chamado. Se a gravação falhar, nada é enviado (falha fechada) e o estado
@@ -2035,16 +2070,17 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   if (enviou) {
     // AUDITORIA: e-mail REALMENTE enviado, com o checklist final e os horários
     const estadoA = workspaces.get(wsId)
-    const checklist = transicao && estadoA
-      ? checklistDoTicket(estadoA, wsId, ticket, { faseId: transicao.para, texto, enviado: true })
+    const checklist = estadoA
+      ? checklistDoTicket(estadoA, wsId, ticket, { faseId: transicao?.para ?? an?.etapa ?? null, texto, enviado: true, origem })
       : null
     auditar(ticket, 'email_enviado', {
       resumo: 'E-mail enviado ao cliente pelo canal da loja', situacao: 'ok',
       fase: transicao?.para ?? null,
       chave: `email_enviado:${ticket.id}:${mensagemId}`,
       dados: {
-        fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId,
+        tentativaId: tentativaEnvio, fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId,
         minimoEnvio: an?.proximoEnvioMinimo ?? null, checklist, enviado: true,
+        canalConfirmou: true,
       },
     })
     if (origem === 'manual') {
@@ -2052,7 +2088,7 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
         resumo: 'Resposta escrita e enviada por você', situacao: 'informativo',
         fase: transicao?.para ?? null,
         chave: `respondido_manualmente:${ticket.id}:${mensagemId}`,
-        dados: { fase: transicao?.para ?? null },
+        dados: { tentativaId: tentativaEnvio, fase: transicao?.para ?? null },
       })
     }
   }
@@ -2063,7 +2099,7 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
       resumo: `Fase confirmada depois do envio real: ${FASES[transicao.para]?.titulo ?? transicao.para}`,
       situacao: 'ok', fase: transicao.para,
       chave: `fase_confirmada:${ticket.id}:${mensagemId}`,
-      dados: { fase: transicao.para, mensagemId },
+      dados: { tentativaId: tentativaEnvio, fase: transicao.para, mensagemId },
     })
     an.proximoEnvioMinimo = undefined
     an.rascunhoGerado = undefined
@@ -2091,6 +2127,10 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
   }
   ticket.status = 'enviado'
   ticket.resposta = texto
+  // vínculo EXATO da mensagem enviada com o evento de auditoria
+  ticket.respostaMensagemId = mensagemId
+  ticket.respostaFase = transicao?.para ?? ticket.atendimentoNovo?.etapa ?? null
+  ticket.respostaIdioma = ticket.atendimentoNovo?.rascunhoIdioma ?? ticket.idioma ?? null
   ticket.respostaOrigem = origem // quem escreveu: 'ia' ou 'manual'
   ticket.rascunho = texto
   ticket.rascunhoTraducao = undefined
@@ -3442,6 +3482,8 @@ function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
     selo: motor === 'novo' ? seloDaConversa(eventos) : 'sem_dados',
     semAuditoriaDetalhada: motor === 'novo' && eventos.length === 0,
     revisao: t.auditoriaRevisao ?? null,
+    // retenção: nada some em silêncio — o que saiu fica contado e datado
+    retencao: t.auditoriaRetencao ?? null,
   }
   if (!completo) return base
   return {
@@ -3452,6 +3494,8 @@ function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
     mensagens: linhaDoTempo(t, { eventos }),
     passos: passosCompactos(eventos),
     eventos: eventos.map(e => ({ ...e, dados: e.dados ?? {} })),
+    tentativaAtual: tentativaAtual(eventos),
+    historicoCompleto: !t.auditoriaRetencao?.omitidos,
     classificacao: classificou?.dados ?? null,
     decisao: decidiu?.dados ?? null,
     checklist: motor === 'novo' ? (comChecklist?.dados?.checklist ?? null) : null,

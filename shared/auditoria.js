@@ -78,6 +78,36 @@ export function registrarEvento(lista, evento) {
   return [...atual, evento]
 }
 
+/** Teto de eventos guardados por conversa. */
+export const LIMITE_AUDITORIA = 400
+
+/**
+ * Retenção HONESTA: quando passa do teto, os eventos mais antigos saem da lista
+ * — mas ficam CONTADOS e datados. Nada some em silêncio, e a interface sabe que
+ * o histórico não está completo.
+ */
+export function aplicarRetencao(lista = [], { limite = LIMITE_AUDITORIA, anterior = null } = {}) {
+  if (lista.length <= limite) {
+    return {
+      lista,
+      retencao: anterior ? { ...anterior, primeiroDisponivelEm: lista[0]?.em ?? null } : null,
+    }
+  }
+  const sobra = lista.length - limite
+  const removidos = lista.slice(0, sobra)
+  const restante = lista.slice(sobra)
+  return {
+    lista: restante,
+    retencao: {
+      omitidos: (anterior?.omitidos ?? 0) + removidos.length,
+      primeiroOmitidoEm: anterior?.primeiroOmitidoEm ?? removidos[0]?.em ?? null,
+      ultimoOmitidoEm: removidos.at(-1)?.em ?? anterior?.ultimoOmitidoEm ?? null,
+      primeiroDisponivelEm: restante[0]?.em ?? null,
+      limite,
+    },
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Comprovação da resposta                                             */
 /* ------------------------------------------------------------------ */
@@ -153,6 +183,7 @@ export function linhaDoTempo(t, { eventos = null } = {}) {
       idioma: m.idioma ?? (m.autor === 'cliente' ? t?.idioma ?? null : an?.rascunhoIdioma ?? null),
       fase: m.fase ?? null,
       situacao: m.autor === 'cliente' ? 'recebida' : 'enviada',
+      mensagemId: m.mensagemId ?? null,
       minimoEnvio: null, envioReal: m.data ?? null, atrasoMs: null,
     })
   }
@@ -170,8 +201,11 @@ export function linhaDoTempo(t, { eventos = null } = {}) {
     const origem = t.respostaOrigem === 'manual' ? 'manual' : 'ia'
     mensagens.push({
       chave: 'atual-resposta', lado: 'direita', origem, rotuloOrigem: ORIGENS[origem],
-      corpo: String(t.resposta), em: t.respondidoEm, idioma: an?.rascunhoIdioma ?? null,
-      fase: an?.etapa ?? null, situacao: 'enviada', minimoEnvio: null, envioReal: t.respondidoEm, atrasoMs: null,
+      corpo: String(t.resposta), em: t.respondidoEm,
+      idioma: t.respostaIdioma ?? an?.rascunhoIdioma ?? null,
+      fase: t.respostaFase ?? an?.etapa ?? null, situacao: 'enviada',
+      mensagemId: t.respostaMensagemId ?? null,
+      minimoEnvio: null, envioReal: t.respondidoEm, atrasoMs: null,
     })
   }
 
@@ -206,16 +240,30 @@ export function linhaDoTempo(t, { eventos = null } = {}) {
     })
   }
 
-  // horários: mínimo permitido × real, e a diferença
+  // VÍNCULO EXATO pelo Message-ID: duas respostas no mesmo minuto continuam
+  // ligadas ao evento certo. Sem Message-ID (registro antigo), o vínculo por
+  // horário aparece como "associação inferida" — nunca como comprovação.
   const enviados = aud.filter(e => e.tipo === 'email_enviado')
+  const usados = new Set()
   for (const m of mensagens) {
-    if (m.situacao !== 'enviada' || !m.em) continue
-    const perto = enviados.find(e => Math.abs(Date.parse(e.em) - Date.parse(m.em)) < 120_000)
-    if (!perto) continue
-    m.minimoEnvio = perto.dados?.minimoEnvio ?? null
-    m.envioReal = perto.em
-    m.fase = m.fase ?? perto.fase ?? null
-    if (m.minimoEnvio) m.atrasoMs = Date.parse(perto.em) - Date.parse(m.minimoEnvio)
+    if (m.situacao !== 'enviada') continue
+    let evento = null
+    if (m.mensagemId) {
+      evento = enviados.find(e => e.dados?.mensagemId === m.mensagemId) ?? null
+      if (evento) m.vinculo = 'exato'
+    }
+    if (!evento && m.em) {
+      evento = enviados.find(e => !usados.has(e.id) && !e.dados?.mensagemId && Math.abs(Date.parse(e.em) - Date.parse(m.em)) < 120_000)
+        ?? enviados.find(e => !usados.has(e.id) && Math.abs(Date.parse(e.em) - Date.parse(m.em)) < 120_000)
+      if (evento) m.vinculo = 'inferido'
+    }
+    if (!evento) { m.vinculo = m.vinculo ?? 'sem_evento'; continue }
+    usados.add(evento.id)
+    m.minimoEnvio = evento.dados?.minimoEnvio ?? null
+    m.envioReal = evento.em
+    m.fase = m.fase ?? evento.fase ?? null
+    m.tentativaId = evento.dados?.tentativaId ?? null
+    if (m.minimoEnvio) m.atrasoMs = Date.parse(evento.em) - Date.parse(m.minimoEnvio)
   }
 
   mensagens.sort((a, b) => {
@@ -226,32 +274,104 @@ export function linhaDoTempo(t, { eventos = null } = {}) {
   return mensagens
 }
 
+/* ------------------------------------------------------------------ */
+/* Tentativa atual                                                     */
+/* ------------------------------------------------------------------ */
+
+/** Eventos que pertencem a um ciclo de resposta (têm tentativaId). */
+const TIPOS_DA_TENTATIVA = [
+  'rascunho_gerado', 'rascunho_validado', 'rascunho_bloqueado', 'envio_agendado', 'envio_reagendado',
+  'aguardando_aprovacao', 'envio_iniciado', 'email_enviado', 'envio_falhou', 'fase_confirmada',
+]
+
+/**
+ * Id da tentativa MAIS RECENTE. Um bloqueio antigo não pode marcar a conversa
+ * para sempre: o que vale é o ciclo atual (rascunho → validação → envio).
+ */
+export function tentativaAtual(eventos = []) {
+  for (let i = eventos.length - 1; i >= 0; i--) {
+    const id = eventos[i]?.dados?.tentativaId
+    if (id) return id
+  }
+  return null
+}
+
+/** Eventos da tentativa atual (ou os sem tentativa, quando não há nenhuma). */
+export function eventosDaTentativa(eventos = [], tentativaId = null) {
+  const alvo = tentativaId ?? tentativaAtual(eventos)
+  if (!alvo) return eventos.filter(e => TIPOS_DA_TENTATIVA.includes(e.tipo))
+  return eventos.filter(e => e?.dados?.tentativaId === alvo)
+}
+
+/**
+ * Situação da conversa pela tentativa ATUAL. "Tudo certo" exige prova: e-mail
+ * enviado nesta tentativa, confirmação do canal, Message-ID, checklist final da
+ * mensagem enviada e nenhuma falha ou bloqueio depois disso.
+ */
+export function seloDaConversa(eventos = []) {
+  if (!eventos.length) return 'sem_dados'
+  const daVez = eventosDaTentativa(eventos)
+  if (!daVez.length) return 'sem_dados'
+  const ultimo = tipo => [...daVez].reverse().find(e => e.tipo === tipo) ?? null
+  const enviado = ultimo('email_enviado')
+  const bloqueio = ultimo('rascunho_bloqueado')
+  const falha = ultimo('envio_falhou')
+  const quando = e => (e ? Date.parse(e.em) : -1)
+
+  // bloqueio ou falha DEPOIS do último envio desta tentativa manda
+  if (Math.max(quando(bloqueio), quando(falha)) > quando(enviado)) return 'bloqueado'
+
+  if (enviado) {
+    const d = enviado.dados ?? {}
+    const provado = d.enviado === true && !!d.mensagemId && !!d.checklist
+    if (!provado) return 'revisar' // enviou, mas sem a prova completa: o dono olha
+    if (d.checklist.geral === 'bloqueado') return 'bloqueado'
+    if (d.checklist.geral === 'revisar') return 'revisar'
+    return 'tudo_certo'
+  }
+
+  const validado = ultimo('rascunho_validado')
+  const geral = validado?.dados?.checklist?.geral ?? null
+  if (geral === 'bloqueado') return 'bloqueado'
+  if (geral === 'revisar') return 'revisar'
+  if (ultimo('aguardando_aprovacao')) return 'aguardando'
+  if (ultimo('envio_agendado')) return 'agendada'
+  if (validado) return 'aguardando'
+  return 'sem_dados'
+}
+
+export const ROTULO_SELO = {
+  tudo_certo: 'Tudo certo — enviada e confirmada',
+  revisar: 'Revisar',
+  aguardando: 'Resposta validada — aguardando aprovação',
+  agendada: 'Agendada — ainda não enviada',
+  bloqueado: 'Bloqueada — não foi enviada',
+  sem_dados: 'Sem registro',
+}
+/** Rótulo curto para a lista lateral. */
+export const ROTULO_SELO_CURTO = {
+  tudo_certo: 'Tudo certo', revisar: 'Revisar', aguardando: 'Aguardando',
+  agendada: 'Agendada', bloqueado: 'Bloqueado', sem_dados: 'Sem registro',
+}
+
 /** "IA classificou → servidor escolheu a fase → resposta validada → agendada → enviada." */
 export function passosCompactos(eventos = []) {
+  const daVez = eventosDaTentativa(eventos)
+  // a classificação e a decisão são do ciclo, mesmo sem tentativaId
+  const antes = eventos.filter(e => ['ia_classificou', 'motor_decidiu'].includes(e.tipo))
+  const lista = [...antes, ...daVez]
   const ordem = ['ia_classificou', 'motor_decidiu', 'rascunho_validado', 'envio_agendado', 'email_enviado']
   const nomes = {
     ia_classificou: 'IA classificou', motor_decidiu: 'servidor escolheu a fase',
     rascunho_validado: 'resposta validada', envio_agendado: 'agendada', email_enviado: 'enviada',
   }
-  const houve = ordem.filter(tipo => eventos.some(e => e.tipo === tipo))
-  const bloqueado = eventos.some(e => e.tipo === 'rascunho_bloqueado')
-  if (bloqueado) return [...houve.map(t2 => nomes[t2]), 'bloqueada — não foi enviada'].join(' → ')
-  return houve.map(t2 => nomes[t2]).join(' → ')
+  const houve = ordem.filter(tipo => lista.some(e => e.tipo === tipo))
+  const passos = houve.map(t2 => nomes[t2])
+  const selo = seloDaConversa(eventos)
+  if (selo === 'bloqueado') passos.push('bloqueada — não foi enviada')
+  else if (selo === 'aguardando' && !passos.includes('agendada')) passos.push('aguardando sua aprovação')
+  return passos.join(' → ')
 }
-
-/* ------------------------------------------------------------------ */
-/* Lista de conversas e filtros                                        */
-/* ------------------------------------------------------------------ */
-
-/** Selo da conversa a partir do último checklist registrado. */
-export function seloDaConversa(eventos = []) {
-  const ultimo = [...eventos].reverse().find(e => e.dados?.checklist)
-  if (eventos.some(e => e.tipo === 'rascunho_bloqueado')) return 'bloqueado'
-  if (!ultimo) return 'sem_dados'
-  return ultimo.dados.checklist.geral ?? 'sem_dados'
-}
-
-export const ROTULO_SELO = { tudo_certo: 'Tudo certo', revisar: 'Revisar', bloqueado: 'Bloqueado', sem_dados: 'Sem registro' }
 
 /** Filtros da página (validados; o resto cai no padrão). */
 export function filtrosDaAuditoria(q = {}) {

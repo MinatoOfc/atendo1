@@ -34,16 +34,20 @@ test.describe('Auditoria da IA', () => {
     await expect(lista.filter({ hasText: 'Ana Correta' })).toHaveCount(1)
     await expect(lista.filter({ hasText: 'Bruno Bloqueado' })).toHaveCount(1)
     await expect(lista.filter({ hasText: 'Carla Aprovação' })).toHaveCount(1)
+    await expect(lista.filter({ hasText: 'Diego Corrigido' })).toHaveCount(1)
     // selos
     await expect(lista.filter({ hasText: 'Ana Correta' })).toContainText('Tudo certo')
     await expect(lista.filter({ hasText: 'Bruno Bloqueado' })).toContainText('Bloqueado')
     await expect(lista.filter({ hasText: 'Carla Aprovação' })).toContainText('Revisar')
+    // corrigida depois de um bloqueio: o selo vale pela tentativa ATUAL
+    await expect(lista.filter({ hasText: 'Diego Corrigido' })).toContainText('Tudo certo')
 
     // conversa correta: passos compactos + mensagem enviada + checklist verde
     await lista.filter({ hasText: 'Ana Correta' }).click()
     await expect(page.locator('.passos-auditoria')).toContainText('IA classificou → servidor escolheu a fase')
     await expect(page.locator('.msg-auditoria.sit-enviada').first()).toBeVisible()
     await expect(page.locator('[data-coluna="painel"]')).toContainText('Tudo certo')
+    await expect(page.locator('[data-coluna="conversa"]')).toContainText('Tudo certo — enviada e confirmada')
     await expect(page.locator('[data-coluna="painel"]')).toContainText('Cupom correto e verificado na Shopify')
     await expect(page.locator('[data-coluna="painel"]')).toContainText('Próxima fase permitida pelo mapa')
     await expect(page).toHaveScreenshot('auditoria-correta-1280.png', { mask: [page.locator('.muted-sm').filter({ hasText: 'Atualizado' })] })
@@ -62,6 +66,10 @@ test.describe('Auditoria da IA', () => {
     const pendente = page.locator('.msg-auditoria.sit-rascunho, .msg-auditoria.sit-agendada')
     await expect(pendente.first()).toBeVisible()
     await expect(pendente.first()).toContainText('não enviado')
+    // esta conversa tem um item amarelo (foto não validada): o selo é Revisar,
+    // e em nenhuma hipótese aparece como enviada ou concluída
+    await expect(page.locator('[data-coluna="conversa"]')).toContainText('Revisar')
+    await expect(page.locator('[data-coluna="conversa"]')).not.toContainText('Tudo certo')
     await expect(page.locator('[data-coluna="painel"]')).toContainText('Revisar')
     await expect(page).toHaveScreenshot('auditoria-aprovacao-1280.png', { mask: [page.locator('.muted-sm').filter({ hasText: 'Atualizado' })] })
   })
@@ -94,5 +102,16 @@ test.describe('Auditoria da IA', () => {
     const invadido = await page.evaluate(() => window.__invadido)
     expect(invadido).toBeUndefined()
     expect(await page.locator('.corpo-auditoria script').count()).toBe(0)
+  })
+
+  test('bloqueio antigo + correção: o selo vale pela tentativa atual e o bloqueio continua na linha do tempo', async ({ page }) => {
+    await entrar(page)
+    await page.locator('.item-auditoria').filter({ hasText: 'Diego Corrigido' }).click()
+    // a mensagem enviada aparece; o bloqueio antigo continua registrado nos eventos
+    await expect(page.locator('.msg-auditoria.sit-enviada')).toHaveCount(1)
+    await expect(page.locator('[data-coluna="conversa"]')).toContainText('Tudo certo — enviada e confirmada')
+    const passos = await page.locator('.passos-auditoria').innerText()
+    expect(passos).not.toContain('bloqueada')
+    await expect(page).toHaveScreenshot('auditoria-corrigida-1280.png', { mask: [page.locator('.muted-sm').filter({ hasText: 'Atualizado' })] })
   })
 })

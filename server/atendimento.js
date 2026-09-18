@@ -1199,13 +1199,14 @@ const RE_ACAO = {
 const acaoPrincipal = tipo => /troca/.test(tipo ?? '') ? 'troca' : /reenvio/.test(tipo ?? '') ? 'reenvio' : tipo ?? null
 const NOME_ACAO = { troca: 'troca', reenvio: 'reenvio', reembolso: 'reembolso', cupom: 'cupom', cancelamento: 'cancelamento' }
 
-const RE_DINHEIRO = /(?:(€|R\$|US\$|\$|£|EUR|BRL|USD|GBP)\s?(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?))|(?:(\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s?(€|R\$|US\$|\$|£|EUR|BRL|USD|GBP|euros?)(?![a-z]))/gi
+const RE_DINHEIRO = /(?:(€|R\$|US\$|\$|£|EUR|BRL|USD|GBP|CHF)\s?(\d{1,3}(?:[.,'’]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?))|(?:(\d{1,3}(?:[.,'’]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s?(€|R\$|US\$|\$|£|EUR|BRL|USD|GBP|CHF|euros?)(?![a-z]))/gi
 
-/** Números com moeda citados no texto (17,50 € · €17.50 · EUR 1.500,00 · 1,500.00 USD). */
+/** Números com moeda citados no texto (17,50 € · €17.50 · EUR 1.500,00 · 1,500.00 USD · CHF 1’234.50). */
 export function valoresMonetarios(texto) {
   const out = []
   for (const m of String(texto || '').matchAll(RE_DINHEIRO)) {
-    const bruto = (m[2] ?? m[3] ?? '').trim()
+    // apóstrofo suíço (1’234.50) é sempre milhar — sai antes da análise
+    const bruto = (m[2] ?? m[3] ?? '').trim().replace(/['’]/g, '')
     const seps = bruto.match(/[.,]/g) ?? []
     let n
     if (seps.length === 0) n = Number(bruto)

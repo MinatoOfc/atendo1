@@ -1,6 +1,7 @@
 export type SituacaoAuditoria = 'ok' | 'atencao' | 'bloqueado' | 'informativo'
 export type EstadoItem = 'verde' | 'amarelo' | 'vermelho' | 'cinza'
 export type GeralChecklist = 'tudo_certo' | 'revisar' | 'bloqueado'
+export type SeloConversa = GeralChecklist | 'aguardando' | 'agendada' | 'sem_dados'
 
 export interface EventoAuditoria {
   id: string
@@ -34,6 +35,10 @@ export interface MensagemAuditoria {
   envioReal: string | null
   atrasoMs: number | null
   naoEnviado?: boolean
+  mensagemId?: string | null
+  /** exato = pelo Message-ID; inferido = registro antigo, ligado por horário */
+  vinculo?: 'exato' | 'inferido' | 'sem_evento'
+  tentativaId?: string | null
 }
 
 export interface ResumoConversaAuditoria {
@@ -52,7 +57,8 @@ export interface ResumoConversaAuditoria {
   ultimaAtividade: string | null
   aguardandoAprovacao: boolean
   envioAutomatico: boolean
-  selo: GeralChecklist | 'sem_dados'
+  selo: SeloConversa
+  retencao: { omitidos: number; primeiroOmitidoEm: string | null; ultimoOmitidoEm: string | null; primeiroDisponivelEm: string | null; limite: number } | null
   semAuditoriaDetalhada: boolean
   revisao: { resultado: string; por: string; em: string; observacao: string | null } | null
 }
@@ -75,6 +81,8 @@ export interface ConversaAuditoria extends ResumoConversaAuditoria {
   valor: number | null
   cupom: string | null
   cadencia: { minimo: string | null; agendado: string | null; primeiraResposta: boolean }
+  tentativaAtual: string | null
+  historicoCompleto: boolean
 }
 
 export declare const TIPOS_AUDITORIA: string[]
@@ -83,11 +91,14 @@ export declare const SITUACOES_AUDITORIA: SituacaoAuditoria[]
 export declare const ITENS_CHECKLIST: [string, string][]
 export declare const ROTULO_GERAL: Record<GeralChecklist, string>
 export declare const ROTULO_SELO: Record<string, string>
+export declare const ROTULO_SELO_CURTO: Record<string, string>
+export declare function tentativaAtual(eventos?: EventoAuditoria[]): string | null
+export declare function eventosDaTentativa(eventos?: EventoAuditoria[], tentativaId?: string | null): EventoAuditoria[]
 export declare function novoEvento(dados: Partial<EventoAuditoria> & { tipo: string }): EventoAuditoria
 export declare function registrarEvento(lista: EventoAuditoria[] | null, evento: EventoAuditoria): EventoAuditoria[]
 export declare function checklistDaResposta(fatos: Record<string, unknown>): Checklist
 export declare function linhaDoTempo(t: unknown, opcoes?: { eventos?: EventoAuditoria[] | null }): MensagemAuditoria[]
 export declare function passosCompactos(eventos?: EventoAuditoria[]): string
-export declare function seloDaConversa(eventos?: EventoAuditoria[]): string
+export declare function seloDaConversa(eventos?: EventoAuditoria[]): SeloConversa
 export declare function filtrosDaAuditoria(q?: Record<string, unknown>): Record<string, unknown>
 export declare function filtrarConversas<T>(lista: T[], f: Record<string, unknown>): T[]

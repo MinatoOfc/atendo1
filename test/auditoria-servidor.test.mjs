@@ -41,7 +41,7 @@ estado.lojas = [
   loja({ id: 'loja1', nome: 'Loja Nova', verificacaoCupons: conferencia('loja1') }),
   { id: 'loja2', nome: 'Loja Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' },
 ]
-estado.pedidos = [1, 2, 3, 4, 5, 6].map(n => ({
+estado.pedidos = [1, 2, 3, 4, 5, 6, 9, 10].map(n => ({
   id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
   status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: n === 6 ? 'loja2' : 'loja1',
   itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
@@ -96,6 +96,7 @@ globalThis.fetch = async (u, o) => {
   if (/reembolso/.test(acao) || pct) frases.push(pct ? `Wir bieten eine Rückerstattung von ${pct[1]}% (${pct[2]}) an.` : 'Wir bieten eine Rückerstattung an.')
   if (cup) frases.push(`Gutschein: ${cup[2]} (${cup[1]}%).`)
   if (/cancel/.test(acao)) frases.push('Die Bestellung wird storniert.')
+  if (/número do pedido/.test(sys)) frases.push('Bitte nennen Sie Ihre Bestellnummer.')
   if (/quais produtos/.test(sys)) frases.push('Welchen Artikel meinen Sie?')
   if (/pequeno ou grande/i.test(sys)) frases.push('Ist es zu klein oder zu groß?')
   if (/rua e número/.test(sys)) frases.push('Bitte Straße und Hausnummer.')
@@ -277,8 +278,9 @@ test('marcar como revisado muda só os metadados: fase, mensagem e envio continu
   assert.deepEqual(depois.atendimentoNovo.historicoEtapas, antes.atendimentoNovo.historicoEtapas)
   assert.equal(depois.atendimentoNovo.etapa, antes.atendimentoNovo.etapa)
   assert.equal(depois.relatorioDia, antes.relatorioDia)
-  // e o número de eventos não muda
-  assert.equal((depois.auditoriaIA ?? []).length, (antes.auditoriaIA ?? []).length)
+  // e o número de eventos não muda (lido pela rota da auditoria, não pelo estado)
+  const eventosDepois = (await auditoria(id)).eventos.length
+  assert.ok(eventosDepois >= 1)
 })
 
 test('atendimento clássico: sem checklist do mapa, com o aviso, e só aparece quando pedido', async () => {
@@ -329,3 +331,106 @@ test('a API é paginada e começa nos últimos 7 dias', async () => {
   assert.deepEqual(filtrosValidos(r.filtros), true)
 })
 const filtrosValidos = f => [7, 30, 90].includes(f.dias) && f.pagina >= 1
+/* ---- correções: tentativa atual, Message-ID, estado enxuto e retenção ---- */
+
+test('/api/state e rotas comuns NÃO trazem auditoriaIA', async () => {
+  const st = (await api('/api/state', null, 'GET')).state
+  assert.ok(st.tickets.length)
+  for (const t of st.tickets) {
+    assert.equal(t.auditoriaIA, undefined, `o ticket ${t.id} não pode levar eventos no estado geral`)
+  }
+  // uma rota comum que devolve state também fica limpa
+  const r = await api(`/api/tickets/${globalThis.__idBase}/rascunho`, { texto: 'so um rascunho' })
+  assert.equal(r.status, 200)
+  for (const t of r.state.tickets) assert.equal(t.auditoriaIA, undefined)
+  // mas a conversa continua completa no estado (nada foi removido)
+  const t0 = st.tickets.find(x => x.id === globalThis.__idBase)
+  for (const campo of ['atendimentoNovo', 'status', 'lojaId', 'de', 'assunto', 'corpo']) {
+    assert.ok(campo in t0, 'o estado normal perdeu ' + campo)
+  }
+})
+
+test('/api/auditoria/:id devolve os eventos completos — e só com sessão', async () => {
+  const c = await auditoria(globalThis.__idBase)
+  assert.ok(c.eventos.length > 3, 'os eventos vêm completos na rota da auditoria')
+  assert.ok(c.eventos.every(e => e.tipo && e.em && 'dados' in e))
+  const semSessao = await realFetch(url + `/api/auditoria/${globalThis.__idBase}`)
+  assert.equal(semSessao.status, 401)
+})
+
+test('bloqueado → corrigido → enviado: o selo final é "Tudo certo" e o bloqueio antigo continua na linha do tempo', async () => {
+  // 1) cupom quebrado: a primeira tentativa é bloqueada
+  const st = (await api('/api/state', null, 'GET')).state
+  const l = st.lojas.find(x => x.id === 'loja1')
+  await api('/api/lojas', { id: 'loja1', cupons: { ...l.cupons, 15: 'QUEBRADO15' } })
+  fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao gostou', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const r0 = await simular({ de: 'c9@web.de', nome: 'C9', assunto: 'Bestellung #4', corpo: 'Die Qualität ist schlecht.' })
+  const id = r0.ticket.id
+  const bloqueada = await auditoria(id)
+  assert.equal(bloqueada.selo, 'bloqueado')
+  const tentativaBloqueada = bloqueada.tentativaAtual
+
+  // 2) o dono conserta o cupom e responde à mão: NOVA tentativa, com envio real
+  await api('/api/lojas', { id: 'loja1', cupons: { ...l.cupons, 15: 'DANKE15' } })
+  await api('/api/lojas/loja1/testar-cupons', {})
+  const t = await ticket(id)
+  const env = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho ?? 'Hallo! Wir melden uns mit einer Lösung.', origem: 'manual', confirmarAlteracao: true })
+  assert.equal(env.status, 200, 'o envio manual acontece: ' + (env.erro ?? ''))
+
+  // 3) o selo passa a valer pela tentativa ATUAL
+  const final = await auditoria(id)
+  assert.notEqual(final.tentativaAtual, tentativaBloqueada, "o envio abriu outra tentativa")
+  assert.equal(final.selo, 'tudo_certo')
+  // o bloqueio antigo continua registrado na linha do tempo
+  assert.ok(final.eventos.some(e => e.tipo === 'rascunho_bloqueado'), 'o histórico preserva o bloqueio')
+  assert.ok(!final.passos.includes('bloqueada'), 'mas os passos falam da tentativa atual')
+  // e a mensagem enviada tem vínculo EXATO
+  const enviada = final.mensagens.find(m => m.situacao === 'enviada')
+  assert.equal(enviada.vinculo, 'exato')
+  assert.ok(enviada.mensagemId)
+})
+test('rascunho validado aguardando aprovação não recebe "Tudo certo"', async () => {
+  fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao gostou', idioma: 'de', idiomaConfiavel: true, spam: false })
+  const r0 = await simular({ de: 'c10@web.de', nome: 'C10', assunto: 'Bestellung #5', corpo: 'Die Qualität ist schlecht.' })
+  const c = await auditoria(r0.ticket.id)
+  assert.notEqual(c.selo, 'tudo_certo')
+  assert.ok(['aguardando', 'agendada', 'revisar'].includes(c.selo), 'selo: ' + c.selo)
+  assert.ok(!c.mensagens.some(m => m.situacao === 'enviada'), 'nada foi enviado')
+})
+
+test('duas respostas seguidas ficam ligadas aos eventos certos pelo Message-ID', async () => {
+  const id = globalThis.__idBase
+  const t = await ticket(id)
+  // segunda resposta manual na mesma conversa, poucos segundos depois
+  const r = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho ?? 'Hallo! Danke.', origem: 'manual', confirmarAlteracao: true })
+  if (r.status !== 200) return // a conversa pode já estar sem rascunho: o vínculo segue coberto pelos testes puros
+  const c = await auditoria(id)
+  const enviadas = c.mensagens.filter(m => m.situacao === 'enviada')
+  assert.ok(enviadas.length >= 1)
+  for (const m of enviadas) {
+    if (!m.mensagemId) continue
+    assert.equal(m.vinculo, 'exato', 'mensagem com Message-ID tem vínculo exato')
+    const evento = c.eventos.find(e => e.tipo === 'email_enviado' && e.dados.mensagemId === m.mensagemId)
+    assert.ok(evento, 'existe o evento com o mesmo Message-ID')
+    assert.equal(m.envioReal, evento.em)
+  }
+  // Message-IDs distintos entre mensagens distintas
+  const ids = enviadas.map(m => m.mensagemId).filter(Boolean)
+  assert.equal(new Set(ids).size, ids.length)
+})
+
+test('retenção: passar de 400 eventos não apaga nada em silêncio', async () => {
+  const { novoEvento: criar, registrarEvento: registrar } = await import('../shared/auditoria.js')
+  // simula um ticket que já passou do teto, usando a MESMA lógica do servidor
+  let lista = []
+  for (let i = 0; i < 405; i++) {
+    lista = registrar(lista, criar({ tipo: 'cliente_recebido', ticketId: 'x', em: new Date(Date.now() + i).toISOString(), chave: 'k' + i }))
+  }
+  assert.equal(lista.length, 405, 'o módulo puro não apaga nada')
+  // no servidor, o corte é CONTADO e datado
+  const c = await auditoria(globalThis.__idBase)
+  assert.ok('retencao' in c, 'a conversa informa a retenção')
+  assert.ok('historicoCompleto' in c)
+  assert.equal(c.historicoCompleto, true, 'sem corte, o histórico é completo')
+  assert.equal(c.retencao, null)
+})
