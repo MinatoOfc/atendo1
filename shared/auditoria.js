@@ -232,6 +232,21 @@ export function linhaDoTempo(t, { eventos = null } = {}) {
     })
   }
 
+  // rascunho RECUSADO pelo validador: o texto foi guardado no evento, porque o
+  // ticket ja nao tem mais rascunho. Sem mostrar o que a IA escreveu, a auditoria
+  // diria que bloqueou sem deixar julgar se o erro foi da IA ou do validador.
+  if (!texto(t?.rascunho)) {
+    const recusado = [...aud].reverse().find(e => e.tipo === 'rascunho_bloqueado' && texto(e.dados?.texto))
+    if (recusado) {
+      mensagens.push({
+        chave: `recusado-${recusado.id}`, lado: 'direita', origem: 'ia', rotuloOrigem: ORIGENS.ia,
+        corpo: String(recusado.dados.texto), em: recusado.em, idioma: null, fase: recusado.fase ?? null,
+        situacao: 'bloqueada', motivo: texto(recusado.dados?.motivo) ?? recusado.resumo, naoEnviado: true,
+        minimoEnvio: null, envioReal: null, atrasoMs: null,
+      })
+    }
+  }
+
   const falhas = aud.filter(e => e.tipo === 'envio_falhou')
   for (const [i, e] of falhas.entries()) {
     mensagens.push({

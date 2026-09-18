@@ -51,7 +51,7 @@ estado.pedidos = [1, 2, 3, 4, 5, 6, 9, 10].map(n => ({
   itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
 }))
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -93,6 +93,7 @@ const esperar = ms => new Promise(r => setTimeout(r, ms))
 
 /* ---------- IA simulada: classificação roteirizada + escritor que OBEDECE ao prompt ---------- */
 const fila = []
+let escritaRuim = false
 globalThis.fetch = async (u, o) => {
   const alvo = String(u)
   if (!/anthropic/.test(alvo)) return realFetch(u, o)
@@ -112,7 +113,10 @@ globalThis.fetch = async (u, o) => {
       endereco: '', resumo: 'produto ficou pequeno', idioma: 'de', idiomaConfiavel: true, spam: false,
     })
   }
-  // escritor: monta o texto com o que o PROMPT exige (prazo, cupom, percentual, ação)
+  // escritor: monta o texto com o que o PROMPT exige (prazo, cupom, percentual, ação).
+  // Com escritaRuim ligado ele devolve um texto que NÃO nomeia a ação da etapa —
+  // é assim que se reproduz um erro de redação da IA, que o validador recusa.
+  if (escritaRuim) return responder({ resposta: 'Hallo! Wir haben Ihre Nachricht erhalten und melden uns bald.', acao_proposta: sys.match(/"acao_proposta" deve ser exatamente "([^"]+)"/)?.[1] ?? null, idioma: 'de' })
   const titulo = sys.match(/AÇÃO DESTA RESPOSTA — ([^\n]+):/)?.[1] ?? ''
   const aceita = sys.match(/Opção aceita pelo cliente e aprovada pelo lojista: ([^\n]+)/)?.[1] ?? ''
   const acao = (aceita || titulo).toLowerCase()
@@ -755,6 +759,75 @@ test('confirmação APROVADA pelo dono e enviada pelo agendador continua "aprova
   assert.equal(depoisD.origemEnvio, 'aprovado_pelo_dono', 'o passado não muda')
   const lista2 = await api('/api/auditoria?dias=90&soAutomaticos=true&porPagina=100', null, 'GET')
   assert.ok(lista2.conversas.map(x => x.ticketId).includes(rA.ticket.id), 'o filtro continua achando pelo que foi gravado')
+})
+
+test('rascunho recusado guarda o texto e a fase — e "gerar de novo" recupera o caso', async () => {
+  // 1) a IA erra a redação: o texto não nomeia a ação da etapa
+  escritaRuim = true
+  fila.push(CLS({}))
+  const r0 = await simular({ de: 'c70@web.de', nome: 'C70', assunto: 'Bestellung #70' })
+  escritaRuim = false
+  const id = r0.ticket.id
+  const t1 = await ticket(id)
+  assert.equal(t1.status, 'humano', 'um rascunho recusado devolve o caso para o dono')
+  assert.match(t1.motivoEscalada, /saiu da etapa permitida/)
+  assert.equal(t1.rascunho, undefined, 'o rascunho recusado não fica no ticket')
+
+  // a FASE recusada fica guardada (é ela que permite tentar de novo)
+  const fase = t1.atendimentoNovo.faseRecusada
+  assert.ok(fase?.para, 'a fase recusada ficou guardada')
+  assert.equal(t1.atendimentoNovo.transicaoPendente, null, 'mas fora de transicaoPendente: a sua resposta manual continua livre')
+  assert.match(fase.motivo, /saiu da etapa permitida/)
+  assert.ok(Date.parse(fase.em) > 0)
+
+  // e o TEXTO recusado ficou no evento, com o motivo
+  const c1 = await auditoria(id)
+  const bloq = c1.eventos.filter(e => e.tipo === 'rascunho_bloqueado')
+  assert.equal(bloq.length, 1)
+  assert.match(bloq[0].dados.texto, /melden uns bald/, 'o texto que a IA escreveu ficou guardado')
+  assert.match(bloq[0].dados.motivo, /saiu da etapa permitida/)
+  assert.equal(bloq[0].dados.enviado, false)
+  assert.equal(c1.selo, 'bloqueado')
+  // e aparece na linha do tempo, como bloqueada e nunca como enviada
+  const recusada = c1.mensagens.find(m => m.situacao === 'bloqueada')
+  assert.ok(recusada, 'o texto recusado aparece na linha do tempo')
+  assert.match(recusada.corpo, /melden uns bald/)
+  assert.equal(c1.mensagens.filter(m => m.situacao === 'enviada').length, 0)
+
+  // 2) "Gerar nova resposta": agora a IA escreve certo e o caso volta sozinho
+  const reg = await api(`/api/tickets/${id}/regenerar`, {})
+  assert.equal(reg.status, 200, 'regenerar aceita a fase recusada: ' + (reg.erro ?? ''))
+  const t2 = await ticket(id)
+  assert.equal(t2.status, 'aprovacao', 'o caso volta para Aprovações')
+  assert.ok(t2.rascunho, 'com rascunho novo')
+  assert.equal(t2.atendimentoNovo.transicaoPendente.para, fase.para, 'na MESMA fase que tinha sido recusada')
+  assert.equal(t2.atendimentoNovo.faseRecusada, undefined, 'a pendência de recusa some quando dá certo')
+  assert.equal(t2.motivoEscalada, undefined)
+
+  // a auditoria guarda as duas tentativas no mesmo ciclo
+  const c2 = await auditoria(id)
+  assert.equal(c2.cicloAtual, c1.cicloAtual, 'regenerar não abre ciclo novo')
+  assert.notEqual(c2.tentativaAtual, c1.tentativaAtual, 'mas é outra tentativa')
+  assert.equal(c2.eventos.filter(e => e.tipo === 'rascunho_bloqueado').length, 1, 'o bloqueio antigo continua registrado')
+  assert.ok(['aguardando', 'agendada'].includes(c2.selo), 'selo agora: ' + c2.selo)
+  assert.equal(c2.checklistConcluido, true, 'e o checklist é o da tentativa NOVA')
+})
+
+test('conversa sem fase pendente nem fase recusada não regenera nada', async () => {
+  // caso que foi para o dono por decisão do motor (não por rascunho recusado):
+  // continua sem ação automática, como antes
+  fila.push(CLS({ intencao: 'reclamacao', resumo: 'mensagem fora do mapa' }))
+  const r0 = await simular({ de: 'c71@web.de', nome: 'C71', assunto: 'Bestellung #71' })
+  const t = await ticket(r0.ticket.id)
+  if (t.status === 'humano' && !t.atendimentoNovo?.faseRecusada) {
+    const reg = await api(`/api/tickets/${r0.ticket.id}/regenerar`, {})
+    assert.equal(reg.status, 400)
+    assert.match(reg.erro, /não tem ação automática agora/)
+  } else {
+    // o motor produziu rascunho: então regenerar TEM de funcionar
+    const reg = await api(`/api/tickets/${r0.ticket.id}/regenerar`, {})
+    assert.equal(reg.status, 200, reg.erro ?? '')
+  }
 })
 
 test('retenção real: mais de 400 eventos pelo caminho do servidor — corta, conta e data', async () => {

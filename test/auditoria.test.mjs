@@ -436,6 +436,41 @@ test('envio com checklist histórico indisponível: entra em "somente com erro" 
   assert.deepEqual(filtrarConversas(lista, filtrosDaAuditoria({ situacao: 'revisar' })).map(c => c.ticketId), ['rev'], 'os dois estados não se misturam')
 })
 
+test('rascunho recusado aparece na linha do tempo COM o texto que a IA escreveu', () => {
+  // o ticket não guarda mais o rascunho (foi para o dono), então sem o texto no
+  // evento a auditoria diria "bloqueado" sem deixar ver o quê
+  const t = {
+    id: 'rec', corpo: 'Die Qualität ist schlecht.', data: '2026-09-18T10:00:00.000Z',
+    status: 'humano', motivoEscalada: 'A IA saiu da etapa permitida: o texto não nomeia a ação "troca" desta etapa',
+    historico: [],
+    auditoriaIA: [
+      novoEvento({ tipo: 'cliente_recebido', ticketId: 'rec', em: '2026-09-18T10:00:00.000Z', resumo: 'cliente', dados: { cicloId: 'c1' } }),
+      novoEvento({
+        tipo: 'rascunho_bloqueado', ticketId: 'rec', em: '2026-09-18T10:01:00.000Z', situacao: 'bloqueado',
+        resumo: 'A IA saiu da etapa permitida: o texto não nomeia a ação "troca" desta etapa', fase: 'qual_troca',
+        dados: { cicloId: 'c1', tentativaId: 'c1-t1', fase: 'qual_troca', enviado: false, motivo: 'A IA saiu da etapa permitida: o texto não nomeia a ação "troca" desta etapa', texto: 'Guten Tag, hier ist Ihr Gutschein V7KQ-M4XN (15%).' },
+      }),
+    ],
+  }
+  const linha = linhaDoTempo(t, { eventos: t.auditoriaIA })
+  const m = linha.find(x => x.situacao === 'bloqueada')
+  assert.ok(m, 'o rascunho recusado está na linha do tempo')
+  assert.match(m.corpo, /V7KQ-M4XN/, 'com o texto exato que foi recusado')
+  assert.match(m.motivo, /não nomeia a ação "troca"/)
+  assert.equal(m.naoEnviado, true)
+  assert.equal(m.fase, 'qual_troca')
+  assert.equal(m.em, '2026-09-18T10:01:00.000Z')
+  // e nada disso vira "enviada"
+  assert.equal(linha.filter(x => x.situacao === 'enviada').length, 0)
+  assert.equal(seloDaConversa(t.auditoriaIA), 'bloqueado')
+
+  // com rascunho no ticket, continua sendo ele que aparece (sem duplicar)
+  const comRascunho = { ...t, rascunho: 'Texto ainda em edição' }
+  const linha2 = linhaDoTempo(comRascunho, { eventos: t.auditoriaIA })
+  assert.equal(linha2.filter(x => x.situacao === 'bloqueada').length, 1)
+  assert.equal(linha2.find(x => x.situacao === 'bloqueada').corpo, 'Texto ainda em edição')
+})
+
 test('conversa sem auditoria detalhada não ganha classificação inventada', () => {
   const t = {
     id: 'velho', historico: [{ autor: 'cliente', corpo: 'oi', data: '2026-09-01T10:00:00.000Z' }],

@@ -1645,13 +1645,26 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
   const an = t.atendimentoNovo
-  const falhar = motivo => {
-    // AUDITORIA: o rascunho não saiu — fica registrado como bloqueado, nunca como enviado
+  const falhar = (motivo, textoRecusado = null) => {
+    // AUDITORIA: o rascunho não saiu — fica registrado como bloqueado, nunca como
+    // enviado, e COM o texto recusado: sem ele não dá para julgar se o erro foi da
+    // IA ou do validador
     auditar(t, 'rascunho_bloqueado', {
       resumo: motivo, situacao: 'bloqueado', fase: faseId,
       chave: `rascunho_bloqueado:${t.id}:${faseId}:${Date.now()}`,
-      dados: { tentativaId: t.atendimentoNovo?.tentativaAtual ?? null, motivo, fase: faseId, enviado: false, checklist: { geral: 'bloqueado', enviado: false, itens: [] } },
+      dados: {
+        tentativaId: t.atendimentoNovo?.tentativaAtual ?? null, motivo, fase: faseId, enviado: false,
+        texto: textoRecusado ? String(textoRecusado).slice(0, 2000) : null,
+        checklist: { geral: 'bloqueado', enviado: false, itens: [] },
+      },
     })
+    // A FASE RECUSADA fica guardada para você poder mandar gerar de novo com um
+    // clique. Sem isso, um erro de redação da IA prendia o caso com você sem
+    // caminho de volta. Fica FORA de transicaoPendente, então a sua resposta
+    // manual continua livre — só volta à fase se você regenerar.
+    if (t.atendimentoNovo) {
+      t.atendimentoNovo.faseRecusada = { para: faseId, mensagem: resumo, faltando, motivo, em: new Date().toISOString() }
+    }
     if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo, 'rascunho')
     return { ok: false, motivo }
   }
@@ -1683,15 +1696,15 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
     somarCusto(t, e2.custo); registrarGasto(estado, t.lojaId, e2.custo)
     e = e2
     vi = conferirIdioma(e.r.resposta, idiomaAlvo, e.r.idioma)
-    if (!vi.ok) return falhar(`Resposta gerada no idioma errado (${vi.motivo})`)
+    if (!vi.ok) return falhar(`Resposta gerada no idioma errado (${vi.motivo})`, e.r.resposta)
   }
 
   // bloqueios: ação proposta, percentuais, cupons e linguagem de confirmação
   if (e.r.acao_proposta && e.r.acao_proposta !== faseId) {
-    return falhar(`A IA saiu da etapa permitida: propôs "${e.r.acao_proposta}" em vez de "${faseId}"`)
+    return falhar(`A IA saiu da etapa permitida: propôs "${e.r.acao_proposta}" em vez de "${faseId}"`, e.r.resposta)
   }
   const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an, pedido, { faltando, idioma: idiomaAlvo })
-  if (!v.ok) return falhar(`A IA saiu da etapa permitida: ${v.motivo}`)
+  if (!v.ok) return falhar(`A IA saiu da etapa permitida: ${v.motivo}`, e.r.resposta)
   an.rascunhoIdioma = normalizarIdioma(e.r.idioma) ?? idiomaAlvo
 
   t.rascunho = String(e.r.resposta || '').trim()
@@ -4478,7 +4491,12 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
   const lojaR = req.estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   if (motorDaConversa(t) === 'novo') {
     const anR = t.atendimentoNovo
-    const faseId = anR?.transicaoPendente?.para
+    // fase pendente OU a que foi recusada por um rascunho bloqueado: regenerar é a
+    // segunda chance. Nada é alterado no ticket enquanto a nova resposta não passar.
+    const pendenteR = anR?.transicaoPendente?.para ? anR.transicaoPendente : (anR?.faseRecusada?.para ? anR.faseRecusada : null)
+    const faseId = pendenteR?.para
+    const faltandoR = pendenteR?.faltando ?? []
+    const resumoR = pendenteR?.mensagem ?? ''
     if (!faseId) {
       return res.status(400).json({ erro: 'No modo novo esta conversa não tem ação automática agora (está com você) — escreva a resposta.', state: visao(req.wsId) })
     }
@@ -4489,11 +4507,11 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
       const cupT = travaCupom(lojaR, faseId, anR)
       if (cupT.precisa && !cupT.ok) return res.status(400).json({ erro: `Não gerado — ${motivoCupom(faseId, cupT)}.`, cupom: cupT.situacao, state: visao(req.wsId) })
       // escreve a MESMA ação para a caixa manual, sem mexer no rascunho nem no estado
-      const p = promptEscrever({ loja: lojaR, config: configDoNovo(req.estado.config), faseId, faltando: anR.transicaoPendente.faltando ?? [], an: anR, pedido: pedidoDoTicket(req.estado, t), ticket: t, instrucaoEstilo: instrucao || null, idiomaAlvo: anR.idioma ?? null })
+      const p = promptEscrever({ loja: lojaR, config: configDoNovo(req.estado.config), faseId, faltando: faltandoR, an: anR, pedido: pedidoDoTicket(req.estado, t), ticket: t, instrucaoEstilo: instrucao || null, idiomaAlvo: anR.idioma ?? null })
       const e = await escreverNovo(p.system, p.user)
       if (e.erro) return res.status(400).json({ erro: e.erro, state: visao(req.wsId) })
       somarCusto(t, e.custo); registrarGasto(req.estado, t.lojaId, e.custo)
-      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t), { faltando: anR.transicaoPendente.faltando ?? [], idioma: anR.idioma ?? null })
+      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t), { faltando: faltandoR, idioma: anR.idioma ?? null })
       if (!v.ok || (e.r.acao_proposta && e.r.acao_proposta !== faseId)) {
         return res.status(400).json({ erro: `A IA saiu da etapa permitida: ${v.motivo || 'ação diferente da permitida'}. Tente de novo.`, state: visao(req.wsId) })
       }
@@ -4502,7 +4520,10 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
       salvar(req.wsId)
       return res.json({ ok: true, texto: e.r.resposta, state: visao(req.wsId) })
     }
-    const r = await prepararRascunhoNovo(req.estado, t, { faseId, faltando: anR.transicaoPendente.faltando ?? [], resumo: anR.transicaoPendente.mensagem, instrucaoEstilo: instrucao || null, aoFalhar: 'manter' })
+    const r = await prepararRascunhoNovo(req.estado, t, { faseId, faltando: faltandoR, resumo: resumoR, instrucaoEstilo: instrucao || null, aoFalhar: 'manter' })
+    // deu certo: a pendência de fase recusada some (prepararRascunhoNovo já repôs
+    // transicaoPendente e devolveu o caso para Aprovações)
+    if (r.ok && anR) anR.faseRecusada = undefined
     salvar(req.wsId)
     if (!r.ok) return res.status(400).json({ erro: `${r.motivo}. O rascunho anterior foi mantido.`, state: visao(req.wsId) })
     return ok(req, res)
