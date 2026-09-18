@@ -812,6 +812,111 @@ function corrigirConfirmacoesMeioGravadas(wsId) {
   if (n) { console.log(`[arranque] ${wsId}: ${n} confirmação(ões) meio gravada(s) fechada(s) sem reenviar`); salvar(wsId) }
 }
 
+/** Impressão digital do texto enviado: identifica a resposta sem guardá-la de novo. */
+const hashDoTexto = texto => crypto.createHash('sha256').update(String(texto ?? ''), 'utf8').digest('hex').slice(0, 32)
+
+/**
+ * CONTEXTO IMUTÁVEL da tentativa de envio, montado e persistido ANTES de o canal
+ * ser chamado. Depois de uma queda ninguém precisa (nem pode) deduzir de novo
+ * como a mensagem saiu: a origem, a autorização humana, o ciclo, a tentativa, a
+ * fase, o idioma e o Message-ID já estão gravados aqui. A configuração da loja
+ * pode mudar no meio do caminho — este contexto não muda.
+ */
+function contextoDeEnvio(ticket, { mensagemId, tentativaId, fase, origem, disparo, conclusao = null, texto = '' }) {
+  const an = ticket.atendimentoNovo ?? null
+  const autorizacao = autorizacaoDoDono(ticket, conclusao)
+  // 1) texto do dono → manual; 2) solução aprovada por ele → aprovado_pelo_dono;
+  // 3) só sem nenhuma autorização humana e disparado pelo agendador → automatico
+  const origemEnvio = origem === 'manual'
+    ? 'manual'
+    : (disparo !== 'agendador' || autorizacao ? 'aprovado_pelo_dono' : 'automatico')
+  return {
+    mensagemId,
+    cicloId: ticket.cicloAuditoria ?? null,
+    tentativaId,
+    fase: fase ?? null,
+    idioma: an?.rascunhoIdioma ?? ticket.idioma ?? null,
+    disparo,
+    origem, // quem escreveu: 'ia' ou 'manual'
+    origemEnvio, // campo fechado: automatico | aprovado_pelo_dono | manual
+    autorizacao, // prova da autorização humana, quando existir
+    minimoEnvio: an?.proximoEnvioMinimo ?? null,
+    lojaId: ticket.lojaId ?? 'loja1',
+    aceiteId: conclusao?.id ?? null,
+    hashTexto: hashDoTexto(texto),
+    caracteres: String(texto ?? '').length,
+    iniciadoEm: new Date().toISOString(),
+  }
+}
+
+/**
+ * Contexto de um envio interrompido por um estado ANTIGO, gravado antes de o
+ * contexto existir. Nada é deduzido da configuração de hoje: a origem sai da
+ * autorização PERSISTIDA na própria conclusão (aprovadoEm) ou do modo com que o
+ * aceite foi fotografado.
+ */
+function contextoDeReconciliacao(t, cp, faseConf) {
+  const an = t.atendimentoNovo ?? null
+  const guardado = t.envioPendente
+  if (guardado?.mensagemId && guardado.mensagemId === cp.mensagemConfirmacaoId) return guardado
+  const autorizacao = cp?.aprovadoEm ? { aprovadoEm: cp.aprovadoEm, aprovadoPor: cp.aprovadoPor ?? null, aceiteId: cp.id ?? null } : null
+  return {
+    mensagemId: cp.mensagemConfirmacaoId,
+    cicloId: t.cicloAuditoria ?? null,
+    tentativaId: an?.tentativaAtual ?? `tent-${t.id}-reconc-${String(cp.id ?? '').slice(-6)}`,
+    fase: faseConf ?? null,
+    idioma: an?.rascunhoIdioma ?? t.idioma ?? null,
+    disparo: 'agendador',
+    origem: 'ia',
+    origemEnvio: autorizacao ? 'aprovado_pelo_dono' : 'automatico',
+    autorizacao,
+    minimoEnvio: an?.proximoEnvioMinimo ?? null,
+    lojaId: t.lojaId ?? 'loja1',
+    aceiteId: cp?.id ?? null,
+    hashTexto: hashDoTexto(t.rascunho ?? t.resposta ?? ''),
+    caracteres: String(t.rascunho ?? t.resposta ?? '').length,
+    iniciadoEm: cp?.envioIniciadoEm ?? null,
+    semContextoGravado: true,
+  }
+}
+
+/**
+ * Reconstrói na auditoria o que a queda impediu de registrar, usando o contexto
+ * gravado antes do envio — nunca a configuração atual. Idempotente: as chaves
+ * são o ticket + o Message-ID, então reiniciar duas vezes não duplica nada.
+ */
+function reconstruirEnvioNaAuditoria(estado, wsId, t, ctx, texto) {
+  const an = t.atendimentoNovo ?? null
+  if (an && ctx.tentativaId) an.tentativaAtual = ctx.tentativaId
+  const checklist = estado
+    ? checklistDoTicket(estado, wsId, t, { faseId: ctx.fase, texto, enviado: true, origem: ctx.origem })
+    : null
+  auditar(t, 'email_enviado', {
+    resumo: 'E-mail enviado ao cliente pelo canal da loja (comprovado na caixa de enviados depois da queda)',
+    situacao: 'ok', fase: ctx.fase,
+    chave: `email_enviado:${t.id}:${ctx.mensagemId}`,
+    dados: {
+      cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: ctx.fase, origem: ctx.origem,
+      loja: ctx.lojaId, mensagemId: ctx.mensagemId, minimoEnvio: ctx.minimoEnvio, checklist,
+      enviado: true, canalConfirmou: true, origemEnvio: ctx.origemEnvio, autorizacao: ctx.autorizacao,
+      reconciliado: true,
+    },
+  })
+  if (ctx.origem === 'manual') {
+    auditar(t, 'respondido_manualmente', {
+      resumo: 'Resposta escrita e enviada por você', situacao: 'informativo', fase: ctx.fase,
+      chave: `respondido_manualmente:${t.id}:${ctx.mensagemId}`,
+      dados: { cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: ctx.fase },
+    })
+  }
+  // metadados da resposta: é por eles que a linha do tempo liga a mensagem ao evento
+  t.respostaMensagemId = ctx.mensagemId
+  t.respostaFase = ctx.fase
+  t.respostaIdioma = ctx.idioma
+  t.respostaTentativaId = ctx.tentativaId
+  t.respostaOrigem = ctx.origem
+}
+
 /** Registro durável dos envios simulados (só em teste): permite conferir o Message-ID depois de uma queda. */
 function registrarEnvioSimulado(mensagemId) {
   const arq = arquivoDeEnviosSimulados()
@@ -840,16 +945,28 @@ async function reconciliarEnviosInterrompidos(wsId) {
     const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
     if (!cp || cp.status !== 'enviando') continue
     const faseConf = an.transicaoPendente?.para && FASES[an.transicaoPendente.para]?.confirmacao ? an.transicaoPendente.para : faseDeConfirmacao(cp.faseAceita)
-    const saiu = await confirmacaoFoiEnviada(wsId, t, cp.mensagemConfirmacaoId)
+    const ctx = contextoDeReconciliacao(t, cp, faseConf)
+    const saiu = await confirmacaoFoiEnviada(wsId, t, ctx.mensagemId)
     t.enviaEm = undefined
     if (saiu === true) {
       // o e-mail chegou a sair: finaliza SEM reenviar (transição, conclusão e relatório idempotente)
+      const texto = t.rascunho ?? t.resposta ?? ''
+      // AUDITORIA: o envio existiu de verdade — reconstrói a prova que a queda comeu
+      reconstruirEnvioNaAuditoria(estado, wsId, t, ctx, texto)
       if (an.transicaoPendente?.para === faseConf) {
         confirmarTransicao(an, { para: faseConf, mensagem: an.transicaoPendente.mensagem, observacao: 'confirmação reconciliada após queda do servidor' })
         an.proximoEnvioMinimo = undefined; an.rascunhoGerado = undefined
       }
+      if (faseConf) {
+        auditar(t, 'fase_confirmada', {
+          resumo: `Fase confirmada depois do envio real: ${FASES[faseConf]?.titulo ?? faseConf}`,
+          situacao: 'ok', fase: faseConf,
+          chave: `fase_confirmada:${t.id}:${ctx.mensagemId}`,
+          dados: { cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: faseConf, mensagemId: ctx.mensagemId, reconciliado: true },
+        })
+      }
       t.status = 'enviado'; t.resposta = t.rascunho ?? t.resposta; t.respondidoEm = t.respondidoEm || new Date().toISOString(); t.lido = true
-      concluirAposEnvio(estado, wsId, t, faseConf, cp.mensagemConfirmacaoId)
+      concluirAposEnvio(estado, wsId, t, faseConf, ctx.mensagemId)
       console.log(`[reconciliação] ${wsId}/${t.id}: confirmação já estava na caixa de enviados — fechada sem reenviar`)
     } else {
       cp.status = 'interrompida'; cp.interrompidaEm = new Date().toISOString()
@@ -861,11 +978,37 @@ async function reconciliarEnviosInterrompidos(wsId) {
       t.status = 'humano'
       t.motivoEscalada = cp.motivoInterrupcao
       t.decisaoPendente = decisaoDaOferta(FASES[cp.faseAceita]?.oferta ?? null)
+      // AUDITORIA: nada de email_enviado, nada de fase confirmada, nada de relatório.
+      // Fica a falha e o encaminhamento para você, no ciclo atual, com o motivo exato
+      // e o Message-ID preservado para a conferência manual.
+      auditar(t, 'envio_falhou', {
+        resumo: cp.motivoInterrupcao, situacao: 'bloqueado', fase: faseConf,
+        chave: `envio_falhou:${t.id}:${ctx.mensagemId}:reconciliacao`,
+        dados: {
+          cicloId: ctx.cicloId, tentativaId: ctx.tentativaId, fase: faseConf, mensagemId: ctx.mensagemId,
+          erro: cp.motivoInterrupcao, enviado: false,
+          conferencia: saiu === false ? 'nao_encontrado_na_caixa' : 'nao_foi_possivel_conferir',
+        },
+      })
+      auditar(t, 'caso_para_humano', {
+        resumo: cp.motivoInterrupcao, situacao: 'atencao', fase: faseConf,
+        chave: `caso_para_humano:${t.id}:${ctx.mensagemId}:reconciliacao`,
+        dados: { cicloId: ctx.cicloId, motivo: cp.motivoInterrupcao, origem: 'envio_interrompido', mensagemId: ctx.mensagemId },
+      })
       console.log(`[reconciliação] ${wsId}/${t.id}: envio interrompido — com o dono (${saiu === false ? 'não saiu' : 'não foi possível conferir'})`)
     }
     mudou = true
   }
   if (mudou) await gravarAgora(wsId)
+  // o contexto pendente só sai DEPOIS da gravação final; a evidência continua
+  // viva nos eventos e nos metadados da resposta
+  if (mudou) {
+    let limpou = false
+    for (const t of estado.tickets ?? []) {
+      if (t.envioPendente && t.atendimentoNovo?.conclusaoPendente?.status === 'concluida') { t.envioPendente = undefined; limpou = true }
+    }
+    if (limpou) salvar(wsId)
+  }
 }
 
 /**
@@ -2105,11 +2248,19 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
   let finalizarConfirmacao = null // fase conf_* a fechar no fim (estado final atômico)
   if (cpEnvio && !cpEnvio.mensagemConfirmacaoId) cpEnvio.mensagemConfirmacaoId = `atendo-${cpEnvio.id}`
   const mensagemId = cpEnvio?.mensagemConfirmacaoId ?? `atendo-${crypto.randomUUID()}`
+  // CONTEXTO IMUTÁVEL desta tentativa: decidido AGORA, antes de o canal ser
+  // chamado, e persistido junto com "enviando". Se o servidor cair depois do
+  // envio, a reconciliação usa exatamente isto — nunca a configuração de então.
+  const ctxEnvio = contextoDeEnvio(ticket, {
+    mensagemId, tentativaId: tentativaEnvio, fase: transicao?.para ?? an?.etapa ?? null,
+    origem, disparo, conclusao: cpEnvio, texto,
+  })
+  ticket.envioPendente = ctxEnvio
   auditar(ticket, 'envio_iniciado', {
     resumo: 'Envio iniciado pelo canal da loja', situacao: 'informativo',
     fase: transicao?.para ?? null,
     chave: `envio_iniciado:${ticket.id}:${tentativaEnvio}:${Date.now()}`,
-    dados: { tentativaId: tentativaEnvio, fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId },
+    dados: { tentativaId: tentativaEnvio, fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId, origemEnvio: ctxEnvio.origemEnvio },
   })
 
   if (cpEnvio && cpEnvio.status !== 'concluida') {
@@ -2121,7 +2272,7 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
     try {
       await gravarCritico(wsId)
     } catch (err) {
-      cpEnvio.status = statusAntes; cpEnvio.envioIniciadoEm = undefined
+      cpEnvio.status = statusAntes; cpEnvio.envioIniciadoEm = undefined; ticket.envioPendente = undefined
       throw new Error(`Confirmação não enviada — ${err.message}`)
     }
   }
@@ -2148,12 +2299,9 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
   if (enviou) {
     // AUDITORIA: e-mail REALMENTE enviado, com o checklist final e os horários
     const estadoA = workspaces.get(wsId)
-    // 1) texto do dono → manual; 2) solução aprovada por ele → aprovado_pelo_dono;
-    // 3) só sem nenhuma autorização humana e enviado pelo agendador → automatico
-    const autorizacao = autorizacaoDoDono(ticket, cpEnvio)
-    const origemEnvio = origem === 'manual'
-      ? 'manual'
-      : (disparo !== 'agendador' || autorizacao ? 'aprovado_pelo_dono' : 'automatico')
+    // origem e autorização vêm do contexto gravado ANTES do canal — o mesmo que
+    // a reconciliação usaria se o servidor tivesse caído aqui
+    const { origemEnvio, autorizacao } = ctxEnvio
     const checklist = estadoA
       ? checklistDoTicket(estadoA, wsId, ticket, { faseId: transicao?.para ?? an?.etapa ?? null, texto, enviado: true, origem })
       : null
@@ -2162,8 +2310,8 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
       fase: transicao?.para ?? null,
       chave: `email_enviado:${ticket.id}:${mensagemId}`,
       dados: {
-        tentativaId: tentativaEnvio, fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId,
-        minimoEnvio: an?.proximoEnvioMinimo ?? null, checklist, enviado: true,
+        cicloId: ctxEnvio.cicloId, tentativaId: tentativaEnvio, fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId,
+        minimoEnvio: ctxEnvio.minimoEnvio, checklist, enviado: true,
         // o canal confirmou a saída: só aqui, depois de enviar de verdade
         canalConfirmou: enviou === true,
         // EVIDÊNCIA de como esta mensagem saiu, gravada no próprio evento: mudar
@@ -2220,11 +2368,11 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
   ticket.status = 'enviado'
   ticket.resposta = texto
   // vínculo EXATO da mensagem enviada com o evento de auditoria
-  ticket.respostaMensagemId = mensagemId
-  ticket.respostaFase = transicao?.para ?? ticket.atendimentoNovo?.etapa ?? null
-  ticket.respostaIdioma = ticket.atendimentoNovo?.rascunhoIdioma ?? ticket.idioma ?? null
-  ticket.respostaTentativaId = tentativaEnvio
-  ticket.respostaOrigem = origem // quem escreveu: 'ia' ou 'manual'
+  ticket.respostaMensagemId = ctxEnvio.mensagemId
+  ticket.respostaFase = ctxEnvio.fase
+  ticket.respostaIdioma = ctxEnvio.idioma
+  ticket.respostaTentativaId = ctxEnvio.tentativaId
+  ticket.respostaOrigem = ctxEnvio.origem // quem escreveu: 'ia' ou 'manual'
   ticket.rascunho = texto
   ticket.rascunhoTraducao = undefined
   ticket.respondidoEm = new Date().toISOString()
@@ -2241,6 +2389,8 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
     await gravarCritico(wsId)
     if (simulado && ganchoDeTeste('ATENDO_TESTE_QUEDA') === 'depois') { console.error('[teste] queda proposital depois da gravação final'); process.exit(9) }
   }
+  // só agora: a evidência já está nos eventos e nos metadados da resposta
+  ticket.envioPendente = undefined
 }
 
 const enviando = new Set()
