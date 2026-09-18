@@ -13,8 +13,9 @@ import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
   horarioMinimoEnvio, promptClassificar, promptEscrever, configDoNovo, FASES, JORNADAS, PERCENTUAIS_CUPOM, validarEndereco,
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
-  definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS,
+  definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase,
 } from './atendimento.js'
+import { novoEvento, registrarEvento, checklistDaResposta, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas } from '../shared/auditoria.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { produtoFoiInformado } from '../shared/produto.js'
@@ -498,6 +499,138 @@ function invalidarVerificacaoCupons(loja, motivo) {
   return true
 }
 
+/* ---------------- Auditoria da IA (observa, nunca controla) ---------------- */
+
+/**
+ * Grava um evento no histórico append-only do ticket. NUNCA lança: a auditoria
+ * não pode derrubar nem alterar o atendimento. Nada de prompt, raciocínio,
+ * token, chave ou segredo entra aqui — só classificação estruturada e o
+ * resultado objetivo das validações.
+ */
+function auditar(t, tipo, { resumo = '', situacao = 'informativo', dados = {}, fase = null, chave = null, em = null } = {}) {
+  try {
+    if (!t) return null
+    const an = t.atendimentoNovo ?? null
+    const evento = novoEvento({
+      tipo, ticketId: t.id, lojaId: t.lojaId ?? 'loja1',
+      fase: fase ?? an?.transicaoPendente?.para ?? an?.etapa ?? null,
+      jornada: an?.fluxo ?? null,
+      resumo, situacao, dados, em, chave,
+    })
+    t.auditoriaIA = registrarEvento(t.auditoriaIA, evento)
+    // o histórico é longo por natureza; o teto evita crescer sem fim no JSONB
+    if (t.auditoriaIA.length > 400) t.auditoriaIA = t.auditoriaIA.slice(-400)
+    return evento
+  } catch (err) {
+    console.error('[auditoria]', err.message)
+    return null
+  }
+}
+
+/**
+ * FATOS da resposta, apurados aqui no servidor (nunca no navegador e nunca pela
+ * IA): cada item do checklist vira true (verde), false (vermelho), 'atencao'
+ * (amarelo) ou null (cinza, não se aplica).
+ */
+function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false, motivo = null, agora = Date.now() } = {}) {
+  const f = {}; const detalhes = {}
+  try {
+    const an = t.atendimentoNovo ?? null
+    const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1')) ?? null
+    const pedido = pedidoDoTicket(estado, t)
+    const fase = FASES[faseId] ?? null
+    const oferta = fase ? ofertaDaFase(faseId, an) : null
+    const idiomaAlvo = an?.idioma ?? null
+
+    // idioma
+    const vi = conferirIdioma(texto, idiomaAlvo, an?.rascunhoIdioma ?? null)
+    f.idioma = idiomaAlvo ? vi.ok : null
+    if (!vi.ok) detalhes.idioma = vi.motivo
+
+    // produto informado pelo cliente e pertencente ao pedido
+    f.produto_informado = produtoFoiInformado(an)
+    if (!f.produto_informado) detalhes.produto_informado = 'o cliente ainda não disse qual produto'
+    const rotulos = rotulosDoPedidoItens(pedido)
+    const citados = an?.produtosAfetados ?? []
+    f.produto_do_pedido = !pedido || !citados.length ? null : citados.every(p => rotulos.includes(p))
+    if (f.produto_do_pedido === false) detalhes.produto_do_pedido = 'produto citado não está no pedido localizado'
+
+    // fase e escada do mapa
+    const conferencia = fase ? conferirTextoDaFase(faseId, texto, loja, an, pedido, { faltando: an?.transicaoPendente?.faltando ?? [], idioma: idiomaAlvo }) : { ok: false, motivo: 'fase desconhecida' }
+    f.fase_correta = fase ? conferencia.ok : false
+    if (!conferencia.ok) detalhes.fase_correta = conferencia.motivo
+    const anterior = an?.etapa ?? null
+    const permitidas = anterior ? [FASES[anterior]?.aoAceitar, FASES[anterior]?.aoRecusar].filter(Boolean) : null
+    f.sem_pulo = !anterior || !permitidas?.length ? null : (permitidas.includes(faseId) || FASES[faseId]?.confirmacao === true || faseId === 'coleta' || faseId === 'endereco')
+    if (f.sem_pulo === false) detalhes.sem_pulo = `de "${FASES[anterior]?.titulo ?? anterior}" o mapa só permite: ${permitidas.map(p => FASES[p]?.titulo ?? p).join(' ou ')}`
+
+    // ação, percentual e valor
+    f.acao_correta = fase ? conferencia.ok : false
+    const pct = oferta?.pct ?? null
+    f.percentual = pct == null ? null : new RegExp(`\\b${pct}\\s?%`).test(String(texto))
+    if (f.percentual === false) detalhes.percentual = `o texto não traz ${pct}%`
+    const valorPedido = pedido?.valor != null ? Number(pedido.valor) : null
+    if (pct != null && valorPedido != null) {
+      const esperado = Math.round(valorPedido * pct) / 100
+      const numeros = String(texto).match(/\d+[.,]\d{2}/g) ?? []
+      f.valor = numeros.some(n => Math.abs(Number(n.replace('.', '').replace(',', '.')) - esperado) < 0.02)
+      if (!f.valor) detalhes.valor = `esperado ${esperado.toFixed(2)} (${pct}% de ${valorPedido.toFixed(2)})`
+    } else f.valor = null
+
+    // cupom: mesma trava única do envio
+    const cup = travaCupom(loja, faseId, an, { agora })
+    f.cupom = !cup.precisa ? null : (cup.ok && String(texto).includes(cup.codigo ?? ' '))
+    if (cup.precisa && !cup.ok) detalhes.cupom = cup.motivo
+    else if (f.cupom === false) detalhes.cupom = `o texto não traz o código conferido (${cup.codigo})`
+
+    // prazo, endereço e foto
+    f.prazo = oferta?.prazo ? conferencia.ok : null
+    const precisaEndereco = !!(oferta && /troca|reenvio/.test(oferta.tipo ?? ''))
+    f.endereco = !precisaEndereco ? null : validarEndereco(an?.enderecoConfirmado).ok
+    if (f.endereco === false) detalhes.endereco = 'endereço incompleto (rua, número, código postal, cidade)'
+    const precisaFoto = an?.fluxo === 'defeito'
+    f.foto = !precisaFoto ? null : (an?.fotoValidada === true ? true : 'atencao')
+    if (f.foto === 'atencao') detalhes.foto = 'foto do defeito ainda não validada por você'
+
+    // nenhuma oferta indevida: o texto não pode citar percentual fora da fase
+    f.sem_oferta_indevida = fase ? conferencia.ok : false
+    if (!conferencia.ok && /percentual|oferta|cupom/i.test(conferencia.motivo ?? '')) detalhes.sem_oferta_indevida = conferencia.motivo
+
+    // canal: conta da própria loja
+    const conta = contasDe(wsId).find(c => c.id === (t.lojaId ?? 'loja1')) ?? null
+    f.conta_propria = !!conta && (conta.configurado || envioPorApi)
+    if (!f.conta_propria) detalhes.conta_propria = 'a loja não tem caixa de e-mail própria configurada'
+
+    // cadência: 3 min na primeira resposta, 5 h depois
+    const minimo = horarioMinimoEnvio(t, agora)
+    f.cadencia = enviado ? (agora >= minimo) : (t.enviaEm ? t.enviaEm >= minimo : null)
+    detalhes.cadencia = `mínimo ${new Date(minimo).toISOString()}`
+
+    // envio confirmado pelo canal
+    f.envio_confirmado = enviado ? true : (motivo ? false : null)
+    if (motivo) detalhes.envio_confirmado = motivo
+    f.enviado = enviado
+  } catch (err) {
+    console.error('[auditoria-checklist]', err.message)
+  }
+  f.detalhes = detalhes
+  return f
+}
+
+/** Falha de envio: registrada SEM criar email_enviado — nada sai como enviado. */
+const auditarFalhaEnvio = (t, transicao, erro, texto) => auditar(t, 'envio_falhou', {
+  resumo: `Falha no envio: ${erro}`,
+  situacao: 'bloqueado',
+  fase: transicao?.para ?? null,
+  chave: `envio_falhou:${t.id}:${transicao?.para ?? 'sem-fase'}:${Date.now()}`,
+  dados: { fase: transicao?.para ?? null, erro: String(erro).slice(0, 200), texto: String(texto ?? '').slice(0, 2000), enviado: false },
+})
+/** wsId a partir do objeto de estado (o checklist precisa das contas da loja). */
+const wsIdAtual = estado => { for (const [id, e] of workspaces) if (e === estado) return id; return null }
+
+/** Checklist pronto (itens + resultado geral) para guardar no evento. */
+const checklistDoTicket = (estado, wsId, t, opcoes) => checklistDaResposta(fatosDaResposta(estado, wsId, t, opcoes))
+
 /** Motivo pronto para o dono, com o nome da etapa. */
 const motivoCupom = (faseId, r) => `A etapa "${FASES[faseId]?.titulo ?? faseId}" usa cupom e ${r.motivo}`
 
@@ -566,6 +699,12 @@ function concluirAposEnvio(estado, wsId, t, faseConfirmada, mensagemId) {
   const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
   if (!cp || !FASES[faseConfirmada]?.confirmacao || cp.status === 'concluida') return
   cp.status = 'concluida'; cp.confirmadaEm = new Date().toISOString(); cp.faseConfirmada = faseConfirmada; cp.mensagemConfirmacaoId = mensagemId
+  auditar(t, 'caso_encerrado', {
+    resumo: `Caso encerrado: ${FASES[cp.faseAceita]?.titulo ?? cp.faseAceita} confirmada ao cliente`,
+    situacao: 'ok', fase: faseConfirmada,
+    chave: `caso_encerrado:${t.id}:${cp.id}`,
+    dados: { faseAceita: cp.faseAceita, faseConfirmada, modo: cp.modo, percentual: cp.percentual ?? null, valor: cp.valor ?? null, moeda: cp.moeda ?? null, cupom: cp.cupom ?? null },
+  })
   // conclusão convertida para manual (interrompida) NUNCA cria linha automática: o relatório volta a ser do dono
   if (cp.modo !== 'automatico' || cp.relatorioAutomaticoProibido) return
   // relatório diário: exatamente UMA linha por evento de aceite (chave = ticket + id do aceite)
@@ -1233,7 +1372,16 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
   const an = t.atendimentoNovo
-  const falhar = motivo => { if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo); return { ok: false, motivo } }
+  const falhar = motivo => {
+    // AUDITORIA: o rascunho não saiu — fica registrado como bloqueado, nunca como enviado
+    auditar(t, 'rascunho_bloqueado', {
+      resumo: motivo, situacao: 'bloqueado', fase: faseId,
+      chave: `rascunho_bloqueado:${t.id}:${faseId}:${Date.now()}`,
+      dados: { motivo, fase: faseId, enviado: false, checklist: { geral: 'bloqueado', enviado: false, itens: [] } },
+    })
+    if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo)
+    return { ok: false, motivo }
+  }
 
   // TRAVA ÚNICA DO CUPOM, antes de montar o prompt: sem código conferido na
   // Shopify desta loja, a fase para aqui e o caso vai para Aprovações
@@ -1270,6 +1418,11 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   an.rascunhoIdioma = normalizarIdioma(e.r.idioma) ?? idiomaAlvo
 
   t.rascunho = String(e.r.resposta || '').trim()
+  auditar(t, 'rascunho_gerado', {
+    resumo: `Rascunho escrito para a fase "${FASES[faseId].titulo}"`, situacao: 'informativo', fase: faseId,
+    chave: `rascunho_gerado:${t.id}:${faseId}:${Date.now()}`,
+    dados: { fase: faseId, idioma: an.rascunhoIdioma ?? idiomaAlvo ?? null, caracteres: t.rascunho.length },
+  })
   t.rascunhoTraducao = undefined
   t.geradoPorIA = true
   t.confianca = 1
@@ -1293,6 +1446,30 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
     an.aprovacaoObrigatoria = v.aviso || `idioma "${idiomaAlvo}" não é validado localmente — aprovação humana obrigatória`
     t.enviaEm = undefined
   } else an.aprovacaoObrigatoria = undefined
+
+  // AUDITORIA: checklist da resposta (calculado aqui, no servidor) e agendamento
+  const checklist = checklistDoTicket(estado, wsIdAtual(estado), t, { faseId, texto: t.rascunho, enviado: false })
+  auditar(t, 'rascunho_validado', {
+    resumo: `Resposta validada para "${FASES[faseId].titulo}" — ${checklist.geral === 'tudo_certo' ? 'tudo certo' : checklist.geral === 'revisar' ? 'revisar' : 'bloqueado'}`,
+    situacao: checklist.geral === 'tudo_certo' ? 'ok' : checklist.geral === 'revisar' ? 'atencao' : 'bloqueado',
+    fase: faseId,
+    chave: `rascunho_validado:${t.id}:${faseId}:${Date.now()}`,
+    dados: { fase: faseId, checklist, enviado: false },
+  })
+  if (t.enviaEm) {
+    auditar(t, 'envio_agendado', {
+      resumo: `Envio agendado para ${new Date(t.enviaEm).toISOString()}`, situacao: 'ok', fase: faseId,
+      chave: `envio_agendado:${t.id}:${faseId}:${t.enviaEm}`,
+      dados: { fase: faseId, enviaEm: new Date(t.enviaEm).toISOString(), minimoEnvio: an.proximoEnvioMinimo ?? null, automatico: !!loja?.novoEnvioAutomatico },
+    })
+  } else {
+    auditar(t, 'aguardando_aprovacao', {
+      resumo: an.aprovacaoObrigatoria ?? 'Rascunho pronto, aguardando sua aprovação',
+      situacao: 'atencao', fase: faseId,
+      chave: `aguardando_aprovacao:${t.id}:${faseId}:${Date.now()}`,
+      dados: { fase: faseId, minimoEnvio: an.proximoEnvioMinimo ?? null, motivo: an.aprovacaoObrigatoria ?? an.envioBloqueado ?? null },
+    })
+  }
   return { ok: true, motivo: null }
 }
 
@@ -1316,9 +1493,44 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   if (idiomaAlvo) t.idioma = idiomaAlvo
   if (cls.resumo) { t.resumoSituacao = cls.resumo; t.situacaoTraducao = undefined }
 
+  // AUDITORIA: o que a IA entendeu (classificação estruturada, nunca o prompt)
+  auditar(t, 'ia_classificou', {
+    resumo: `IA entendeu: ${cls.intencao ?? 'sem intenção'}${cls.motivo ? ' — ' + cls.motivo : ''}`,
+    situacao: 'informativo',
+    chave: `ia_classificou:${t.id}:${t.data}:${(t.historico ?? []).length}`,
+    dados: {
+      intencao: cls.intencao ?? null, motivo: cls.motivo ?? null,
+      produtos: cls.produtos ?? [], ajuste: cls.ajuste ?? cls.tamanho ?? null,
+      entrega: cls.entrega ?? cls.situacao_entrega ?? null,
+      idioma: idiomaAlvo ?? null, idiomaDeclarado: cls.idioma ?? null,
+      endereco: cls.endereco ?? null, confianca: cls.confianca ?? null,
+      somenteDado: !!(cls.somente_dado ?? cls.somenteDado), resumo: cls.resumo ?? null,
+    },
+  })
+
   // 2. o servidor decide a única ação permitida
+  const faseAnterior = an.etapa ?? null
   const d = decidir({ an, cls, pedido, loja, temFoto: !!t.anexos?.length, agora })
   Object.assign(an, d.an)
+  // AUDITORIA: a decisão determinística do servidor (a IA não escolhe a fase)
+  auditar(t, 'motor_decidiu', {
+    resumo: d.fase
+      ? `Fase permitida pelo mapa: ${FASES[d.fase]?.titulo ?? d.fase}`
+      : (d.humano ? `Caso vai para você: ${d.humano}` : 'Sem próxima fase automática'),
+    situacao: d.humano ? 'atencao' : 'ok',
+    fase: d.fase ?? faseAnterior,
+    chave: `motor_decidiu:${t.id}:${t.data}:${(t.historico ?? []).length}`,
+    dados: {
+      jornada: an.fluxo ?? null, faseAnterior,
+      faseUnicaPermitida: d.fase ?? null, acaoPermitida: d.fase ? (FASES[d.fase]?.oferta?.tipo ?? 'mensagem') : null,
+      aoAceitar: d.fase ? (FASES[d.fase]?.aoAceitar ?? null) : null,
+      aoRecusar: d.fase ? (FASES[d.fase]?.aoRecusar ?? null) : null,
+      faltando: d.faltando ?? [], paraHumano: d.humano ?? null,
+      explicacao: d.fase
+        ? `${cls.intencao === 'recusa' ? 'Cliente recusou a oferta anterior. ' : ''}Próxima fase permitida pelo mapa: ${FASES[d.fase]?.titulo ?? d.fase}.`
+        : (d.humano ?? 'Nada a decidir'),
+    },
+  })
   if (an.fluxo && CATEGORIA_DO_FLUXO[an.fluxo]) t.categoria = CATEGORIA_DO_FLUXO[an.fluxo]
 
   if (d.encerrar) {
@@ -1328,7 +1540,27 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
     t.respondidoEm = new Date().toISOString()
     t.resolucao = 'Encerrada — cliente confirmou que está tudo certo'
     an.aguardando = null
+    auditar(t, 'caso_encerrado', {
+      resumo: 'Encerrada — cliente confirmou que está tudo certo', situacao: 'ok',
+      chave: `caso_encerrado:${t.id}:cliente-ok:${t.data}`,
+      dados: { motivo: 'cliente confirmou que está tudo certo' },
+    })
     return { spam: false }
+  }
+  if (d.aceite) {
+    auditar(t, 'cliente_aceitou', {
+      resumo: `Cliente aceitou: ${FASES[d.aceite.fase]?.titulo ?? d.aceite.fase}`,
+      situacao: 'ok', fase: d.aceite.fase,
+      chave: `cliente_aceitou:${t.id}:${d.aceite.fase}:${t.data}`,
+      dados: { fase: d.aceite.fase, oferta: d.aceite.oferta ?? null },
+    })
+  } else if (cls.intencao === 'recusa' && faseAnterior) {
+    auditar(t, 'cliente_recusou', {
+      resumo: `Cliente recusou: ${FASES[faseAnterior]?.titulo ?? faseAnterior}`,
+      situacao: 'informativo', fase: faseAnterior,
+      chave: `cliente_recusou:${t.id}:${faseAnterior}:${t.data}`,
+      dados: { fase: faseAnterior, proxima: d.fase ?? null },
+    })
   }
   if (d.humano) {
     // aceite de uma OFERTA (não fase humana): conclusão manual ou automática, pelo modo fotografado no aceite
@@ -1359,6 +1591,12 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
     an.conclusaoPendente.status = 'aguardando_cadencia'
     t.enviaEm = undefined
     an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: `Mensagem nova durante a espera: confirmação ${an.conclusaoPendente.aprovadoEm ? 'aprovada por ' + an.conclusaoPendente.aprovadoPor + ' ' : ''}reagendada (5 h a partir da nova mensagem)`, em: new Date().toISOString(), evento: 'confirmacao_reagendada' })
+    auditar(t, 'envio_reagendado', {
+      resumo: 'Mensagem nova durante a espera: confirmação reagendada (5 h a partir da nova mensagem)',
+      situacao: 'atencao',
+      chave: `envio_reagendado:${t.id}:${an.conclusaoPendente.id}:${t.data}`,
+      dados: { motivo: 'mensagem nova do cliente durante a espera', aceiteId: an.conclusaoPendente.id },
+    })
   }
 
   // 3. escrever, conferir e agendar — a fase só muda quando o e-mail sair
@@ -1422,6 +1660,12 @@ async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, 
   base.motor = base.motorAtendimento
   // loja no modo novo: o motor de etapas cuida de tudo (classificar, decidir, escrever)
   if (base.motorAtendimento === 'novo') {
+    auditar(base, 'cliente_recebido', {
+      resumo: `Primeira mensagem do cliente (${String(corpo ?? '').trim().slice(0, 80)})`,
+      situacao: 'informativo',
+      chave: `cliente_recebido:${base.id}:${messageId ?? base.data}`,
+      dados: { caracteres: String(corpo ?? '').length, comAnexo: !!anexos?.length, em: base.data, idioma: base.idioma ?? null, primeira: true },
+    })
     const rn = await processarNovo(estado, base, { agora })
     if (rn.spam) { base.status = 'spam'; base.anexos = undefined }
     return base
@@ -1592,6 +1836,14 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, ago
   t.tentativasEnvio = undefined
   t.traducao = undefined
 
+  // AUDITORIA: chegou mensagem do cliente (texto escapado só na exibição; aqui é dado)
+  auditar(t, 'cliente_recebido', {
+    resumo: `Mensagem do cliente (${String(corpo ?? '').trim().slice(0, 80)})`,
+    situacao: 'informativo',
+    chave: `cliente_recebido:${t.id}:${messageId ?? t.data}`,
+    dados: { caracteres: String(corpo ?? '').length, comAnexo: !!anexos?.length, em: t.data, idioma: t.idioma ?? null },
+  })
+
   if (viraSpam) {
     // a conversa se revelou spam (ex.: abriu como cliente e virou oferta comercial)
     t.status = 'spam'
@@ -1729,6 +1981,12 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
       throw new Error(`O texto não traz o código do cupom conferido (${cupE.codigo}) — nada é enviado`)
     }
   }
+  auditar(ticket, 'envio_iniciado', {
+    resumo: 'Envio iniciado pelo canal da loja', situacao: 'informativo',
+    fase: transicao?.para ?? null,
+    chave: `envio_iniciado:${ticket.id}:${transicao?.para ?? 'sem-fase'}:${Date.now()}`,
+    dados: { fase: transicao?.para ?? null, origem, loja: lojaId },
+  })
   // canal simulado SÓ em teste (ATENDO_SIMULAR=1 + NODE_ENV=test): 'ok' envia, 'falha' quebra.
   // Em produção é sempre null: o envio passa obrigatoriamente pelo canal real.
   const simulado = canalSimulado()
@@ -1755,19 +2013,58 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual') {
     }
   }
   if (simulado === 'ok') { registrarEnvioSimulado(mensagemId); enviou = true }
-  else if (simulado === 'falha') throw new Error('Envio simulado falhou')
-  else if (canal) { await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto, messageId: mensagemId }); enviou = true }
+  else if (simulado === 'falha') { auditarFalhaEnvio(ticket, transicao, 'Envio simulado falhou', texto); throw new Error('Envio simulado falhou') }
+  else if (canal) {
+    try {
+      await canal.enviar({ para: ticket.de, assunto: ticket.assunto, corpo: texto, messageId: mensagemId })
+    } catch (err) {
+      auditarFalhaEnvio(ticket, transicao, err.message, texto)
+      throw err
+    }
+    enviou = true
+  }
   // pontos de queda controlados: SÓ com o canal simulado (ATENDO_SIMULAR=1 + ATENDO_SMTP_FAKE),
   // nunca por uma variável solta em produção. 'antes' = depois do canal e antes da gravação final.
   if (enviou && cpEnvio && simulado && ganchoDeTeste('ATENDO_TESTE_QUEDA') === 'antes') { console.error('[teste] queda proposital depois do envio, antes da gravação'); process.exit(7) }
   // modo novo: a fase só muda depois de um canal real enviar com sucesso — sem
   // canal, nem envia (nada abaixo é executado, então nada muda no ticket)
   if (modoNovo && !enviou) {
+    auditarFalhaEnvio(ticket, transicao, 'Nenhuma caixa de e-mail configurada nesta loja', texto)
     throw new Error('Nenhuma caixa de e-mail configurada nesta loja — no modo novo a resposta só conta depois de enviada de verdade')
+  }
+  if (enviou) {
+    // AUDITORIA: e-mail REALMENTE enviado, com o checklist final e os horários
+    const estadoA = workspaces.get(wsId)
+    const checklist = transicao && estadoA
+      ? checklistDoTicket(estadoA, wsId, ticket, { faseId: transicao.para, texto, enviado: true })
+      : null
+    auditar(ticket, 'email_enviado', {
+      resumo: 'E-mail enviado ao cliente pelo canal da loja', situacao: 'ok',
+      fase: transicao?.para ?? null,
+      chave: `email_enviado:${ticket.id}:${mensagemId}`,
+      dados: {
+        fase: transicao?.para ?? null, origem, loja: lojaId, mensagemId,
+        minimoEnvio: an?.proximoEnvioMinimo ?? null, checklist, enviado: true,
+      },
+    })
+    if (origem === 'manual') {
+      auditar(ticket, 'respondido_manualmente', {
+        resumo: 'Resposta escrita e enviada por você', situacao: 'informativo',
+        fase: transicao?.para ?? null,
+        chave: `respondido_manualmente:${ticket.id}:${mensagemId}`,
+        dados: { fase: transicao?.para ?? null },
+      })
+    }
   }
   if (modoNovo && transicao) {
     // só registra transição quando ela existe de verdade
     confirmarTransicao(an, { para: transicao.para, mensagem: transicao.mensagem, observacao: transicao.observacao })
+    auditar(ticket, 'fase_confirmada', {
+      resumo: `Fase confirmada depois do envio real: ${FASES[transicao.para]?.titulo ?? transicao.para}`,
+      situacao: 'ok', fase: transicao.para,
+      chave: `fase_confirmada:${ticket.id}:${mensagemId}`,
+      dados: { fase: transicao.para, mensagemId },
+    })
     an.proximoEnvioMinimo = undefined
     an.rascunhoGerado = undefined
     // a conclusão, o relatório e os campos do ticket são finalizados JUNTOS, no fim desta função,
@@ -3108,6 +3405,131 @@ app.post('/api/relatorio/atualizar', async (req, res) => {
   })
 })
 
+/* ---------------- Auditoria da IA: leitura (nunca escreve no motor) ---------------- */
+
+/**
+ * Conversa pronta para a auditoria. Só leitura: monta a linha do tempo, a
+ * interpretação da última mensagem, a decisão do motor e o checklist — tudo a
+ * partir do que JÁ foi registrado. Conversa anterior à auditoria detalhada é
+ * marcada como tal e não ganha classificação inventada.
+ */
+function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
+  const an = t.atendimentoNovo ?? null
+  const eventos = t.auditoriaIA ?? []
+  const motor = motorDaConversa(t)
+  const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1')) ?? null
+  const pedido = pedidoDoTicket(estado, t)
+  const classificou = [...eventos].reverse().find(e => e.tipo === 'ia_classificou') ?? null
+  const decidiu = [...eventos].reverse().find(e => e.tipo === 'motor_decidiu') ?? null
+  const comChecklist = [...eventos].reverse().find(e => e.dados?.checklist?.itens?.length) ?? null
+  const cp = an?.conclusaoPendente ?? null
+  const base = {
+    ticketId: t.id,
+    lojaId: t.lojaId ?? 'loja1',
+    loja: loja?.nome ?? t.lojaId ?? 'loja1',
+    motor,
+    cliente: t.nome || t.de,
+    email: t.de,
+    assunto: t.assunto,
+    pedido: pedido ? String(pedido.numero).replace('#', '') : null,
+    jornada: an?.fluxo ?? null,
+    fase: an?.etapa ?? an?.transicaoPendente?.para ?? null,
+    faseTitulo: FASES[an?.etapa ?? an?.transicaoPendente?.para]?.titulo ?? null,
+    idioma: an?.idioma ?? t.idioma ?? null,
+    ultimaAtividade: t.respondidoEm ?? t.data ?? null,
+    aguardandoAprovacao: t.status === 'aprovacao' || t.status === 'humano',
+    envioAutomatico: !!loja?.novoEnvioAutomatico,
+    selo: motor === 'novo' ? seloDaConversa(eventos) : 'sem_dados',
+    semAuditoriaDetalhada: motor === 'novo' && eventos.length === 0,
+    revisao: t.auditoriaRevisao ?? null,
+  }
+  if (!completo) return base
+  return {
+    ...base,
+    aviso: motor === 'classico'
+      ? 'Atendimento clássico — não usa o motor de etapas'
+      : (base.semAuditoriaDetalhada ? 'Histórico anterior à auditoria detalhada — montado a partir das mensagens e das fases já gravadas' : null),
+    mensagens: linhaDoTempo(t, { eventos }),
+    passos: passosCompactos(eventos),
+    eventos: eventos.map(e => ({ ...e, dados: e.dados ?? {} })),
+    classificacao: classificou?.dados ?? null,
+    decisao: decidiu?.dados ?? null,
+    checklist: motor === 'novo' ? (comChecklist?.dados?.checklist ?? null) : null,
+    faseAnterior: an?.historicoEtapas?.filter(h => !h.evento).slice(-2, -1)[0]?.para ?? null,
+    faseAtual: an?.etapa ?? null,
+    proximaPermitida: an?.transicaoPendente?.para ?? null,
+    produtos: an?.produtosAfetados ?? [],
+    pedidoValor: pedido?.valor ?? null,
+    moeda: loja?.moeda ?? null,
+    percentual: cp?.percentual ?? (FASES[an?.acaoAceita]?.oferta?.pct ?? null),
+    valor: cp?.valor ?? null,
+    cupom: cp?.cupom ?? null,
+    cadencia: {
+      minimo: an?.proximoEnvioMinimo ?? null,
+      agendado: t.enviaEm ? new Date(t.enviaEm).toISOString() : null,
+      primeiraResposta: (t.historico ?? []).every(m => m.autor === 'cliente'),
+    },
+  }
+}
+
+// Lista paginada das conversas, com os filtros da página. Só o workspace atual.
+app.get('/api/auditoria', (req, res) => {
+  const f = filtrosDaAuditoria(req.query)
+  const limite = Date.now() - f.dias * 86400_000
+  const candidatos = (req.estado.tickets ?? []).filter(t => {
+    const quando = Date.parse(t.respondidoEm ?? t.data ?? '') || 0
+    return quando >= limite && (f.classico || motorDaConversa(t) === 'novo')
+  })
+  const todos = candidatos.map(t => conversaDaAuditoria(req.estado, req.wsId, t))
+  const filtrados = filtrarConversas(todos, f)
+    .sort((a, b) => String(b.ultimaAtividade ?? '').localeCompare(String(a.ultimaAtividade ?? '')))
+  const inicio = (f.pagina - 1) * f.porPagina
+  res.json({
+    ok: true,
+    filtros: f,
+    total: filtrados.length,
+    pagina: f.pagina,
+    porPagina: f.porPagina,
+    conversas: filtrados.slice(inicio, inicio + f.porPagina),
+    lojas: (req.estado.lojas ?? []).map(l => ({ id: l.id, nome: l.nome })),
+    jornadas: [...new Set(todos.map(c => c.jornada).filter(Boolean))].sort(),
+    fases: [...new Set(todos.map(c => c.fase).filter(Boolean))].sort(),
+    idiomas: [...new Set(todos.map(c => c.idioma).filter(Boolean))].sort(),
+    atualizadoEm: new Date().toISOString(),
+  })
+})
+
+// Uma conversa completa (linha do tempo, decisão, checklist). Só leitura.
+app.get('/api/auditoria/:id', (req, res) => {
+  const t = (req.estado.tickets ?? []).find(x => x.id === req.params.id)
+  if (!t) return res.status(404).json({ erro: 'Conversa não encontrada.' })
+  res.json({ ok: true, conversa: conversaDaAuditoria(req.estado, req.wsId, t, { completo: true }), atualizadoEm: new Date().toISOString() })
+})
+
+/**
+ * Marcar como revisada. Mexe SOMENTE nos metadados da auditoria: nunca em fase,
+ * mensagem, envio, oferta ou relatório.
+ */
+app.post('/api/auditoria/:id/revisao', (req, res) => {
+  const t = (req.estado.tickets ?? []).find(x => x.id === req.params.id)
+  if (!t) return res.status(404).json({ erro: 'Conversa não encontrada.' })
+  const resultado = req.body?.resultado
+  if (!['correta', 'problema', 'limpar'].includes(resultado)) {
+    return res.status(400).json({ erro: 'Resultado inválido: use "correta", "problema" ou "limpar".', state: visao(req.wsId) })
+  }
+  if (resultado === 'limpar') t.auditoriaRevisao = undefined
+  else {
+    t.auditoriaRevisao = {
+      resultado,
+      por: req.usuario?.nome || req.usuario?.email || 'lojista',
+      em: new Date().toISOString(),
+      observacao: String(req.body?.observacao ?? '').trim().slice(0, 300) || null,
+    }
+  }
+  salvar(req.wsId)
+  res.json({ ok: true, revisao: t.auditoriaRevisao ?? null, state: visao(req.wsId) })
+})
+
 // Vincular à mão o(s) pedido(s) de um caso do relatório: o dono escolhe entre os
 // pedidos da MESMA loja e o servidor refaz produtos, cliente, imagens, valor do
 // pedido e moeda. Não encosta em atendimento, motor, fase ou oferta — e o link
@@ -3506,6 +3928,12 @@ app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
     if (faltando.length) return res.status(400).json({ erro: `Antes de confirmar: ${faltando.join('; ')}.`, faltando, state: visao(req.wsId) })
   }
   an.historicoEtapas.push({ de: an.etapa, para: an.etapa, mensagem: `Aceite aprovado pelo lojista: ${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}`, em: new Date().toISOString(), evento: 'aceite_aprovado' })
+  auditar(t, 'aprovado_pelo_dono', {
+    resumo: `Aceite aprovado por você: ${FASES[an.acaoAceita]?.titulo ?? an.acaoAceita}`,
+    situacao: 'ok', fase: faseId,
+    chave: `aprovado_pelo_dono:${t.id}:${an.acaoAceita}:${Date.now()}`,
+    dados: { faseAceita: an.acaoAceita, faseConfirmacao: faseId, por: req.usuario?.nome || req.usuario?.email || 'lojista' },
+  })
   an.aguardando = null
   const r = await prepararRascunhoNovo(req.estado, t, { faseId, resumo: 'aceite aprovado pelo lojista' })
   if (cpA && cpA.faseAceita === an.acaoAceita) {

@@ -478,3 +478,28 @@ a { color: inherit; text-decoration: none; }
 /* Central: os seletores de filtro nunca ultrapassam o cartão (celular) */
 .central-filtros select.chip { max-width: 100%; text-overflow: ellipsis; }
 .central-filtros .search-box { max-width: 100%; }
+
+/* ---------- Auditoria da IA ---------- */
+.auditoria-grade { display: grid; grid-template-columns: minmax(230px, 300px) minmax(0, 1fr) minmax(260px, 340px); gap: 10px; align-items: stretch; }
+.coluna-auditoria { display: flex; flex-direction: column; min-height: 320px; max-height: calc(100vh - 300px); overflow: hidden; padding: 0; }
+.abas-auditoria { display: none; }
+.item-auditoria { display: block; width: 100%; text-align: left; padding: 9px 10px; border: 0; border-bottom: 1px solid var(--border); background: transparent; cursor: pointer; }
+.item-auditoria:hover { background: var(--panel-soft); }
+.item-auditoria.ativo { background: var(--panel-soft); box-shadow: inset 3px 0 0 var(--purple); }
+.passos-auditoria { background: var(--panel-soft); border-radius: 8px; padding: 6px 9px; }
+.msg-auditoria { border: 1px solid var(--border); border-radius: 12px; padding: 9px 11px; display: grid; gap: 5px; max-width: 88%; }
+.msg-auditoria.esquerda { justify-self: start; border-bottom-left-radius: 4px; }
+.msg-auditoria.direita { justify-self: end; border-bottom-right-radius: 4px; background: var(--panel-soft); }
+.msg-auditoria.sit-rascunho { border-color: var(--amber, #d29922); }
+.msg-auditoria.sit-agendada { border-color: var(--blue, #388bfd); }
+.msg-auditoria.sit-enviada { border-color: var(--green, #3fb950); }
+.msg-auditoria.sit-bloqueada, .msg-auditoria.sit-falha { border-color: var(--red, #f85149); }
+.corpo-auditoria { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lista-dados, .lista-checklist { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; }
+.lista-checklist .ponto { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+@media (max-width: 900px) {
+  .auditoria-grade { grid-template-columns: 1fr; }
+  .abas-auditoria { display: flex; }
+  .coluna-auditoria { display: none; max-height: none; }
+  .coluna-auditoria.ativa { display: flex; }
+}
