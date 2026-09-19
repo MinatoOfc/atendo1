@@ -21,9 +21,11 @@ test('os 18 tipos obrigatórios existem, mais "caso_para_humano", e um tipo desc
     'respondido_manualmente', 'fase_confirmada', 'caso_encerrado',
     // o caso voltou para você: classificação que falhou, IA pausada ou decisão do motor
     'caso_para_humano',
+    // releitura da mensagem depois de um conserto do sistema
+    'correcao_do_sistema',
   ]
   assert.deepEqual(TIPOS_AUDITORIA, esperados)
-  assert.equal(TIPOS_AUDITORIA.length, 19)
+  assert.equal(TIPOS_AUDITORIA.length, 20)
   for (const t of esperados.slice(0, 18)) assert.ok(TIPOS_AUDITORIA.includes(t), 'os 18 originais continuam: ' + t)
   assert.throws(() => novoEvento({ tipo: 'inventado' }), /tipo de auditoria desconhecido/)
 })

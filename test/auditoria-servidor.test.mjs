@@ -60,7 +60,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -920,6 +920,74 @@ test('caso real: notificação de entrega citada não vira jornada de entrega �
   assert.equal(t.relatorioAuto ?? null, null)
   assert.equal(t.relatorioDia ?? null, null)
   assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0, 'nenhum e-mail enviado')
+})
+
+test('releitura: mesma conversa e mesmo ciclo, nova tentativa, leitura antiga preservada', async () => {
+  // 1) leitura ERRADA: a IA diz que e problema de TAMANHO e a conversa para em tam_ajuste
+  fila.push({
+    intencao: 'pede_troca', motivo: 'tamanho', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'tamanho', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'c89@web.de', nome: 'C89', assunto: 'Bestellung #89', corpo: 'Das Polo Premium ist schlecht.', lojaId: 'loja1' })
+  const id = r0.ticket.id
+  const antes = await ticket(id)
+  const cAntes = await auditoria(id)
+  assert.equal(antes.atendimentoNovo.transicaoPendente.para, 'tam_ajuste')
+  const rascunhoAntigo = antes.rascunho
+  assert.ok(rascunhoAntigo, 'havia rascunho da leitura errada')
+  const cicloAntes = cAntes.cicloAtual
+  const tentativaAntes = cAntes.tentativaAtual
+  const eventosAntes = cAntes.eventos.length
+
+  // 2) RELEITURA com a classificacao certa
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'qualidade', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const rr = await api(`/api/tickets/${id}/reclassificar`, { motivo: 'correcao do sistema: leitura anterior errada' })
+  assert.equal(rr.status, 200, 'releitura aceita: ' + (rr.erro ?? ''))
+
+  const depois = await ticket(id)
+  const c = await auditoria(id)
+  // mesma conversa, MESMO ciclo, tentativa NOVA
+  assert.equal(c.cicloAtual, cicloAntes, 'a releitura nao abre ciclo novo')
+  assert.notEqual(c.tentativaAtual, tentativaAntes, 'mas abre outra tentativa')
+  // a leitura antiga foi PRESERVADA, nao apagada
+  assert.ok(c.eventos.length > eventosAntes, 'nada foi removido da auditoria')
+  const correcao = c.eventos.filter(e => e.tipo === 'correcao_do_sistema').at(-1)
+  assert.ok(correcao, 'a correcao do sistema ficou registrada')
+  assert.equal(correcao.dados.faseDescartada, 'tam_ajuste')
+  assert.equal(correcao.dados.jornadaDescartada, 'tamanho')
+  assert.equal(correcao.dados.rascunhoDescartado, rascunhoAntigo, 'o rascunho antigo ficou guardado inteiro')
+  assert.match(correcao.dados.motivo, /leitura anterior errada/)
+  assert.equal(c.eventos.filter(e => e.tipo === 'ia_classificou').length, 2, 'as DUAS leituras ficam no historico')
+
+  // a leitura nova vale
+  assert.equal(depois.atendimentoNovo.fluxo, 'qualidade')
+  assert.equal(depois.atendimentoNovo.transicaoPendente.para, 'qual_troca')
+  assert.equal(depois.atendimentoNovo.etapa ?? null, null, 'nenhuma fase avancou')
+  assert.equal(depois.enviaEm ?? null, null, 'nada agendado')
+  assert.equal(depois.relatorioAuto ?? null, null, 'nada no relatorio')
+  assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0, 'nenhuma mensagem enviada')
+})
+
+test('releitura recusada quando ja existe aceite registrado', async () => {
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'x', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'c90@web.de', nome: 'C90', assunto: 'Bestellung #90', corpo: 'Das Polo Premium ist schlecht.', lojaId: 'loja1' })
+  let t = await ticket(r0.ticket.id)
+  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env.status, 200, env.erro ?? '')
+  fila.push({
+    intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'ok', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Ja, gerne.' })
+  const rr = await api(`/api/tickets/${t.id}/reclassificar`, {})
+  assert.equal(rr.status, 400, 'solucao aceita nao se rele')
+  assert.match(rr.erro, /aceite registrado/)
 })
 
 test('os auxiliares de ensaio não alteram o corpo da mensagem do cliente', async () => {

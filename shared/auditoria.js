@@ -14,7 +14,7 @@ export const TIPOS_AUDITORIA = [
   'cliente_recebido', 'ia_classificou', 'motor_decidiu', 'rascunho_gerado', 'rascunho_validado',
   'rascunho_bloqueado', 'envio_agendado', 'envio_reagendado', 'envio_iniciado', 'email_enviado',
   'envio_falhou', 'cliente_aceitou', 'cliente_recusou', 'aguardando_aprovacao', 'aprovado_pelo_dono',
-  'respondido_manualmente', 'fase_confirmada', 'caso_encerrado', 'caso_para_humano',
+  'respondido_manualmente', 'fase_confirmada', 'caso_encerrado', 'caso_para_humano', 'correcao_do_sistema',
 ]
 
 export const ROTULO_TIPO_AUDITORIA = {
@@ -37,6 +37,7 @@ export const ROTULO_TIPO_AUDITORIA = {
   fase_confirmada: 'Fase confirmada',
   caso_encerrado: 'Caso encerrado',
   caso_para_humano: 'Caso foi para você',
+  correcao_do_sistema: 'Correção do sistema',
 }
 
 export const SITUACOES_AUDITORIA = ['ok', 'atencao', 'bloqueado', 'informativo']

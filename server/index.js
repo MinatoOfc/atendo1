@@ -1852,7 +1852,7 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   auditar(t, 'ia_classificou', {
     resumo: `IA entendeu: ${cls.intencao ?? 'sem intenção'}${cls.motivo ? ' — ' + cls.motivo : ''}${descartes.length ? ` (servidor descartou: ${descartes.map(d => d.campo).join(', ')})` : ''}`,
     situacao: entrega.conflito ? 'atencao' : 'informativo',
-    chave: `ia_classificou:${t.id}:${t.data}:${(t.historico ?? []).length}`,
+    chave: `ia_classificou:${t.id}:${t.data}:${(t.historico ?? []).length}:r${t.reclassificacoes ?? 0}`,
     dados: {
       // ACEITO pelo servidor
       intencao: cls.intencao ?? null, motivo: cls.motivo ?? null,
@@ -1897,7 +1897,7 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
       : (d.humano ? `Caso vai para você: ${d.humano}` : 'Sem próxima fase automática'),
     situacao: d.humano ? 'atencao' : 'ok',
     fase: d.fase ?? faseAnterior,
-    chave: `motor_decidiu:${t.id}:${t.data}:${(t.historico ?? []).length}`,
+    chave: `motor_decidiu:${t.id}:${t.data}:${(t.historico ?? []).length}:r${t.reclassificacoes ?? 0}`,
     dados: {
       jornada: an.fluxo ?? null, faseAnterior,
       faseUnicaPermitida: d.fase ?? null, acaoPermitida: d.fase ? (FASES[d.fase]?.oferta?.tipo ?? 'mensagem') : null,
@@ -3235,6 +3235,21 @@ if (simulacaoDeEmailLiberada()) {
     }
   })
 }
+
+/**
+ * Versão publicada. O Railway injeta o commit no ambiente; sem este endpoint,
+ * conferir qual código está no ar vira dedução.
+ */
+app.get('/api/versao', (req, res) => {
+  res.json({
+    commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.SOURCE_COMMIT ?? null,
+    commitCurto: (process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.SOURCE_COMMIT ?? '').slice(0, 7) || null,
+    branch: process.env.RAILWAY_GIT_BRANCH ?? null,
+    mensagem: process.env.RAILWAY_GIT_COMMIT_MESSAGE ?? null,
+    noAr: process.env.RAILWAY_DEPLOYMENT_ID ?? null,
+    desde: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString(),
+  })
+})
 
 app.get('/api/state', (req, res) => ok(req, res))
 
@@ -4574,6 +4589,66 @@ app.post('/api/tickets/:id/rascunho', (req, res) => {
 })
 
 // Refaz o rascunho com uma instrução do lojista ("ofereça 10% de desconto", "seja mais curto"…)
+/**
+ * RELEITURA da mensagem atual do cliente, com as regras vigentes. Serve quando o
+ * sistema leu a mensagem errado e foi corrigido: a conversa e o CICLO continuam
+ * os mesmos, abre-se outra TENTATIVA, e tudo o que veio da leitura anterior
+ * (jornada, fase, produtos, endereço, rascunho) é descartado — mas preservado na
+ * auditoria, nunca apagado. Não envia nada e não avança fase.
+ */
+app.post('/api/tickets/:id/reclassificar', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  if (motorDaConversa(t) !== 'novo') {
+    return res.status(400).json({ erro: 'Releitura só existe no modo novo.', state: visao(req.wsId) })
+  }
+  if (!iaConfigurada) {
+    return res.status(400).json({ erro: 'A releitura usa o Claude — configure a ANTHROPIC_API_KEY primeiro.', state: visao(req.wsId) })
+  }
+  const an = t.atendimentoNovo
+  if (!an) return res.status(400).json({ erro: 'Esta conversa ainda não tem leitura do motor.', state: visao(req.wsId) })
+  // compromisso já assumido não é releitura: aceite e conclusão ficam intocados
+  if (an.acaoAceita || (an.conclusaoPendente && !['cancelada', 'recusada'].includes(an.conclusaoPendente.status))) {
+    return res.status(400).json({ erro: 'Esta conversa já tem um aceite registrado — a releitura não mexe em solução aceita.', state: visao(req.wsId) })
+  }
+  const motivo = String(req.body?.motivo || '').trim() || 'Releitura da mensagem depois de uma correção do sistema'
+
+  // 1) PRESERVA o que será descartado (o rascunho antigo e a leitura antiga)
+  auditar(t, 'correcao_do_sistema', {
+    resumo: motivo, situacao: 'informativo', fase: an.transicaoPendente?.para ?? null,
+    chave: `correcao_do_sistema:${t.id}:${Date.now()}`,
+    dados: {
+      por: req.usuario?.nome || req.usuario?.email || 'lojista', motivo,
+      jornadaDescartada: an.fluxo ?? null,
+      faseDescartada: an.transicaoPendente?.para ?? null,
+      rascunhoDescartado: String(t.rascunho ?? '').slice(0, 2000),
+      produtosDescartados: [...(an.produtosAfetados ?? [])],
+      enderecoDescartado: an.enderecoInformado ?? null,
+      tentativaAnterior: an.tentativaAtual ?? null,
+    },
+  })
+
+  // 2) zera SÓ o que veio da leitura anterior — ciclo, histórico e eventos ficam
+  t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined
+  t.motivoEscalada = undefined; t.motivoTraducao = undefined; t.decisaoPendente = undefined
+  an.transicaoPendente = null; an.rascunhoGerado = undefined; an.faseRecusada = undefined
+  an.fluxo = null; an.subfluxo = null; an.motivo = null
+  an.produtosAfetados = []; an.produtosInformados = false
+  an.enderecoInformado = null; an.enderecoConfirmado = null
+  an.aguardandoProduto = false; an.proximaAposColeta = undefined
+  an.aguardando = null; an.envioBloqueado = undefined
+  t.reclassificacoes = (t.reclassificacoes ?? 0) + 1
+
+  // 3) relê a mesma mensagem com as regras de hoje (mesmo ciclo, nova tentativa)
+  try {
+    await processarNovo(req.estado, t, {})
+  } catch (err) {
+    salvar(req.wsId)
+    return res.status(500).json({ erro: `Releitura falhou: ${err.message}`, state: visao(req.wsId) })
+  }
+  salvar(req.wsId)
+  return ok(req, res)
+})
+
 app.post('/api/tickets/:id/regenerar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   if (!iaConfigurada) {
