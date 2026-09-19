@@ -64,7 +64,7 @@ function abreCitacao(linha) {
  */
 export function separarTexto(corpo) {
   const completo = String(corpo ?? '')
-  if (!completo.trim()) return { atual: '', citado: '', completo }
+  if (!completo.trim()) return { atual: '', declaracao: '', assinatura: '', citado: '', completo }
 
   // HTML: o bloco citado começa na primeira marca de citação
   const html = completo.search(RE_HTML_CITACAO)
@@ -80,12 +80,51 @@ export function separarTexto(corpo) {
     if (abreCitacao(l)) { corte = i; break }
   }
 
-  if (corte < 0) return { atual: base.trim(), citado: restoHtml.trim(), completo }
-  return {
-    atual: linhas.slice(0, corte).join('\n').trim(),
-    citado: [linhas.slice(corte).join('\n'), restoHtml].filter(Boolean).join('\n').trim(),
-    completo,
+  const atual = corte < 0 ? base.trim() : linhas.slice(0, corte).join('\n').trim()
+  const citado = corte < 0 ? restoHtml.trim() : [linhas.slice(corte).join('\n'), restoHtml].filter(Boolean).join('\n').trim()
+  // a assinatura fica PRESERVADA, mas separada: empresa, rua, telefone e site no
+  // rodapé não podem informar endereço, produto, idioma nem intenção
+  const { declaracao, assinatura } = separarAssinatura(atual)
+  return { atual, declaracao, assinatura, citado, completo }
+}
+
+/* ------------------------------------------------------------------ */
+/* Assinatura e rodapé                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Linha típica de assinatura/rodapé: telefone, site, e-mail, CNPJ/VAT, empresa. */
+const RE_LINHA_ASSINATURA = new RegExp([
+  '^\\s*--\\s*$', // separador clássico de assinatura
+  '\\btel\\.?\\s*:', '\\btelefon', '\\bmobil\\b', '\\bhandy\\b', '\\bfax\\b', '\\bphone\\b', '\\bwhatsapp\\b',
+  'www\\.', 'https?:\\/\\/', // site
+  '\\b[\\w.+-]+@[\\w.-]+\\.[a-z]{2,}\\b', // e-mail
+  '\\b(?:ust-?idnr|steuernr|cnpj|cpf|vat|btw|kvk|siret)\\b', // identificação fiscal por nome
+  '\\b[A-Z]{2,3}\\d{7,}\\b', // ATU51886008 e afins
+  '^\\s*(?:fa\\.|firma|gmbh|ltda|inc\\.|ltd\\.|s\\.a\\.)', // razão social abrindo a linha
+].join('|'), 'i')
+
+/**
+ * Corta a assinatura/rodapé do FIM da mensagem. Conservador de propósito: só
+ * remove um bloco final de linhas que parecem assinatura, e nunca devolve
+ * declaração vazia — se a mensagem inteira parecer assinatura (por exemplo o
+ * cliente respondendo com o endereço que a loja pediu), ela continua inteira.
+ *
+ * Isto existe porque a assinatura do cliente trazia empresa, rua, telefone e
+ * site: dali saía um "endereço" que ele nunca declarou como endereço de entrega.
+ */
+export function separarAssinatura(texto) {
+  const linhas = String(texto ?? '').split(/\r?\n/)
+  let corte = linhas.length
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    const l = linhas[i].trim()
+    if (!l) continue
+    if (RE_LINHA_ASSINATURA.test(l)) { corte = i; continue }
+    break
   }
+  const declaracao = linhas.slice(0, corte).join('\n').trim()
+  const assinatura = linhas.slice(corte).join('\n').trim()
+  if (!declaracao) return { declaracao: String(texto ?? '').trim(), assinatura: '' }
+  return { declaracao, assinatura }
 }
 
 /* ------------------------------------------------------------------ */

@@ -3,7 +3,7 @@
 // numa jornada de entrega. Lógica pura — nenhuma rede, nenhum servidor.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { separarTexto, validarSituacaoEntrega, produtosDoTextoAtual } from '../shared/mensagem.js'
+import { separarTexto, separarAssinatura, validarSituacaoEntrega, produtosDoTextoAtual } from '../shared/mensagem.js'
 
 /* O caso real que originou esta trava: o cliente respondeu ao aviso de entrega
    da Shopify reclamando da roupa, e o motor ofereceu "aguarde 2 dias". */
@@ -39,6 +39,35 @@ test('caso real: a notificação citada fica fora do texto do cliente', () => {
 
   // e nenhum dos dois produtos conta como informado pelo cliente
   assert.deepEqual(produtosDoTextoAtual(['Polohemd mit langen Ärmeln (Grün / XL)', 'Polohemd mit langen Ärmeln (Hellblau / XL)'], r.atual), [])
+})
+
+test('assinatura e rodapé ficam fora da declaração — e o endereço deles não conta', () => {
+  const r = separarTexto(KURT)
+  // a declaração é só a reclamação; empresa, rua, telefone e site ficam separados
+  assert.match(r.declaracao, /Schrott/)
+  assert.match(r.declaracao, /Witz/)
+  assert.doesNotMatch(r.declaracao, /Litschauer/, 'a rua da assinatura não é declaração')
+  assert.doesNotMatch(r.declaracao, /Tel\.:/)
+  assert.doesNotMatch(r.declaracao, /hanf-shop/)
+  // a assinatura continua PRESERVADA (some da decisão, não da conversa)
+  assert.match(r.assinatura, /Litschauer Str\. 38/)
+  assert.match(r.assinatura, /06641335337/)
+  assert.equal(r.completo, KURT)
+
+  // nenhum produto e nenhuma entrega saem da assinatura
+  assert.deepEqual(produtosDoTextoAtual(['Polohemd mit langen Ärmeln (Grün / XL)'], r.declaracao), [])
+
+  // o cliente RESPONDENDO com o endereço não perde a mensagem
+  const so = separarAssinatura('Hauptstrasse 12, 10115 Berlin, Deutschland')
+  assert.equal(so.declaracao, 'Hauptstrasse 12, 10115 Berlin, Deutschland')
+  assert.equal(so.assinatura, '')
+  // endereço + telefone: o telefone sai, o endereço fica
+  const misto = separarAssinatura('Hauptstrasse 12, 10115 Berlin\nTel.: 123456')
+  assert.equal(misto.declaracao, 'Hauptstrasse 12, 10115 Berlin')
+  assert.match(misto.assinatura, /Tel/)
+  // mensagem sem assinatura nenhuma continua inteira
+  assert.equal(separarAssinatura('Der Stoff ist schlecht.').declaracao, 'Der Stoff ist schlecht.')
+  assert.equal(separarAssinatura('Der Stoff ist schlecht.').assinatura, '')
 })
 
 test('delimitadores de citação nos sete idiomas, e também em HTML', () => {

@@ -60,7 +60,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -177,13 +177,8 @@ before(async () => {
 })
 after(async () => { globalThis.fetch = realFetch; await servidor.encerrar(); try { rmSync(DIR, { recursive: true, force: true }) } catch {} })
 
-// o produto só conta quando o cliente o escreve: as mensagens de ensaio citam o polo
-const simular = (extra = {}) => {
-  const base = { de: 'c1@web.de', nome: 'C1', assunto: 'Bestellung #1', corpo: 'Das Polo ist zu klein.', lojaId: 'loja1', ...extra }
-  // só a primeira mensagem precisa nomear o produto; depois a conversa já sabe
-  if (!base.ticketId && base.corpo && !/polo/i.test(base.corpo)) base.corpo = `${base.corpo} Es geht um das Polo Premium.`
-  return api('/api/simular-email', base)
-}
+// o helper NAO mexe no corpo: cada cenario declara o texto do cliente
+const simular = (extra = {}) => api('/api/simular-email', { de: 'c1@web.de', nome: 'C1', assunto: 'Bestellung #1', corpo: 'Das Polo ist zu klein.', lojaId: 'loja1', ...extra })
 
 /* =================================================================== */
 
@@ -280,7 +275,7 @@ test('cupom inválido: o rascunho fica bloqueado na auditoria e não vira mensag
   const l = st.lojas.find(x => x.id === 'loja1')
   await api('/api/lojas', { id: 'loja1', cupons: { ...l.cupons, 15: 'TROCADO15' } })
   fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao gostou', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const r0 = await simular({ de: 'c3@web.de', nome: 'C3', assunto: 'Bestellung #3', corpo: 'Die Qualität ist schlecht.' })
+  const r0 = await simular({ de: 'c3@web.de', nome: 'C3', assunto: 'Bestellung #3', corpo: 'Die Qualität vom Polo Premium ist schlecht.' })
   const id = r0.ticket.id
   const c = await auditoria(id)
   const bloqueio = c.eventos.find(e => e.tipo === 'rascunho_bloqueado')
@@ -352,7 +347,7 @@ test('marcar como revisado muda só os metadados: fase, mensagem e envio continu
 })
 
 test('atendimento clássico: sem checklist do mapa, com o aviso, e só aparece quando pedido', async () => {
-  const r0 = await api('/api/simular-email', { de: 'c6@web.de', nome: 'C6', assunto: 'Order #6', corpo: 'Hello, where is my order?', lojaId: 'loja2' })
+  const r0 = await api('/api/simular-email', { de: 'c6@web.de', nome: 'C6', assunto: 'Order #6', corpo: 'Hello, where is my order with the Polo Premium?', lojaId: 'loja2' })
   assert.ok(r0.ok)
   const id = r0.ticket.id
   const semClassico = await api('/api/auditoria?dias=7', null, 'GET')
@@ -432,7 +427,7 @@ test('bloqueado → corrigido → enviado: o selo final é "Tudo certo" e o bloq
   const l = st.lojas.find(x => x.id === 'loja1')
   await api('/api/lojas', { id: 'loja1', cupons: { ...l.cupons, 15: 'QUEBRADO15' } })
   fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao gostou', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const r0 = await simular({ de: 'c9@web.de', nome: 'C9', assunto: 'Bestellung #4', corpo: 'Die Qualität ist schlecht.' })
+  const r0 = await simular({ de: 'c9@web.de', nome: 'C9', assunto: 'Bestellung #4', corpo: 'Die Qualität vom Polo Premium ist schlecht.' })
   const id = r0.ticket.id
   const bloqueada = await auditoria(id)
   assert.equal(bloqueada.selo, 'bloqueado')
@@ -459,7 +454,7 @@ test('bloqueado → corrigido → enviado: o selo final é "Tudo certo" e o bloq
 })
 test('rascunho validado aguardando aprovação não recebe "Tudo certo"', async () => {
   fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao gostou', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const r0 = await simular({ de: 'c10@web.de', nome: 'C10', assunto: 'Bestellung #5', corpo: 'Die Qualität ist schlecht.' })
+  const r0 = await simular({ de: 'c10@web.de', nome: 'C10', assunto: 'Bestellung #5', corpo: 'Die Qualität vom Polo Premium ist schlecht.' })
   const c = await auditoria(r0.ticket.id)
   assert.notEqual(c.selo, 'tudo_certo')
   assert.ok(['aguardando', 'agendada', 'revisar'].includes(c.selo), 'selo: ' + c.selo)
@@ -492,7 +487,7 @@ const itemDo = (c, id) => (c.checklist?.itens ?? []).find(i => i.id === id)
 test('produto só fica cinza na COLETA que pergunta o produto — nas outras fases a prova continua exigida', async () => {
   // 1) COLETA DO PRODUTO: o cliente reclama sem dizer qual peça
   fila.push({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: [], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao gostou', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const rc = await simular({ de: 'c20@web.de', nome: 'C20', assunto: 'Bestellung #3', corpo: 'Die Qualität ist schlecht.' })
+  const rc = await simular({ de: 'c20@web.de', nome: 'C20', assunto: 'Bestellung #3', corpo: 'Die Qualität vom Polo Premium ist schlecht.' })
   const tc = await ticket(rc.ticket.id)
   assert.equal(tc.atendimentoNovo.transicaoPendente.para, 'coleta', 'a trava real mandou para a coleta')
   assert.ok((tc.atendimentoNovo.transicaoPendente.faltando ?? []).includes('produtos'))
@@ -502,7 +497,7 @@ test('produto só fica cinza na COLETA que pergunta o produto — nas outras fas
 
   // 2) DENTRO DO PRAZO (pedido em trânsito, ainda no prazo): a prova do produto continua exigida
   fila.push({ intencao: 'pergunta_status', motivo: 'nao_recebido', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'onde está', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const rp = await simular({ de: 'c11@web.de', nome: 'C11', assunto: 'Bestellung #11', corpo: 'Wo ist meine Bestellung?' })
+  const rp = await simular({ de: 'c11@web.de', nome: 'C11', assunto: 'Bestellung #11', corpo: 'Wo ist meine Bestellung mit dem Polo Premium?' })
   const tp = await ticket(rp.ticket.id)
   assert.equal(tp.atendimentoNovo.transicaoPendente.para, 'nc_no_prazo', 'fase dentro do prazo')
   const cp = await auditoria(rp.ticket.id)
@@ -511,7 +506,7 @@ test('produto só fica cinza na COLETA que pergunta o produto — nas outras fas
 
   // 3) AGUARDAR DOIS DIAS (marcado como entregue): idem
   fila.push({ intencao: 'pede_reembolso', motivo: 'nao_recebido', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'entregue_nao_recebido', endereco: '', resumo: 'consta entregue, nada chegou', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const ra = await simular({ de: 'c9@web.de', nome: 'C9b', assunto: 'Bestellung #9', corpo: 'Als zugestellt markiert, nichts da.' })
+  const ra = await simular({ de: 'c9@web.de', nome: 'C9b', assunto: 'Bestellung #9', corpo: 'Das Polo Premium: als zugestellt markiert, nichts da.' })
   const ta = await ticket(ra.ticket.id)
   assert.equal(ta.atendimentoNovo.transicaoPendente.para, 'nr_entregue_aguardar', 'fase aguardar 2 dias')
   const ca = await auditoria(ra.ticket.id)
@@ -519,7 +514,7 @@ test('produto só fica cinza na COLETA que pergunta o produto — nas outras fas
 
   // 4) CONFIRMAÇÃO DE REEMBOLSO: reclamação → oferta → aceite → clique do dono
   fila.push({ intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'ruim', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const rr = await simular({ de: 'c10@web.de', nome: 'C10b', assunto: 'Bestellung #10', corpo: 'Schlecht. Geld zurück.' })
+  const rr = await simular({ de: 'c10@web.de', nome: 'C10b', assunto: 'Bestellung #10', corpo: 'Das Polo Premium ist schlecht. Geld zurück.' })
   let tr = await ticket(rr.ticket.id)
   // segue a escada até uma fase de reembolso com percentual
   for (let i = 0; i < 4 && tr.atendimentoNovo.transicaoPendente?.para && !/^reemb_/.test(tr.atendimentoNovo.etapa ?? ''); i++) {
@@ -543,7 +538,7 @@ test('produto só fica cinza na COLETA que pergunta o produto — nas outras fas
 
   // 5) CONFIRMAÇÃO DE TROCA: aceite de troca → endereço → confirmação
   fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'quer trocar', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const rt = await simular({ de: 'c3@web.de', nome: 'C3b', assunto: 'Bestellung #3', corpo: 'Die Qualität ist schlecht, bitte Umtausch.' })
+  const rt = await simular({ de: 'c3@web.de', nome: 'C3b', assunto: 'Bestellung #3', corpo: 'Die Qualität vom Polo Premium ist schlecht, bitte Umtausch.' })
   let tt = await ticket(rt.ticket.id)
   const e1 = await api(`/api/tickets/${tt.id}/aprovar`, { texto: tt.rascunho, origem: 'ia' })
   assert.equal(e1.status, 200, 'oferta de troca enviada: ' + (e1.erro ?? ''))
@@ -721,7 +716,7 @@ test('confirmação APROVADA pelo dono e enviada pelo agendador continua "aprova
   const iso = ms => new Date(ms).toISOString()
   // negociação até uma fase de reembolso, com o relógio 5 h atrás para a cadência já ter vencido
   fila.push(CLS({ intencao: 'pede_reembolso', resumo: 'quero reembolso' }))
-  const r0 = await simular({ de: 'c65@web.de', nome: 'C65', assunto: 'Bestellung #65', corpo: 'Schlecht. Geld zurück.', agora: iso(Date.now() - H5 - 20 * 60_000) })
+  const r0 = await simular({ de: 'c65@web.de', nome: 'C65', assunto: 'Bestellung #65', corpo: 'Das Polo Premium ist schlecht. Geld zurück.', agora: iso(Date.now() - H5 - 20 * 60_000) })
   let t = await ticket(r0.ticket.id)
   for (let i = 0; i < 4 && !/^reemb_/.test(t.atendimentoNovo.etapa ?? ''); i++) {
     const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
@@ -927,6 +922,84 @@ test('caso real: notificação de entrega citada não vira jornada de entrega �
   assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0, 'nenhum e-mail enviado')
 })
 
+test('os auxiliares de ensaio não alteram o corpo da mensagem do cliente', async () => {
+  // prova permanente: o texto guardado é IGUAL ao declarado pelo teste, e uma
+  // classificação que diz "o cliente citou o produto" não transforma uma mensagem
+  // sem produto numa mensagem com produto
+  const corpo = 'Die Qualität ist schlecht.'
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'x', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await simular({ de: 'c88@web.de', nome: 'C88', assunto: 'Bestellung #88', corpo })
+  const t = await ticket(r0.ticket.id)
+  assert.equal(t.corpo, corpo, 'o corpo guardado é idêntico ao fornecido')
+  assert.doesNotMatch(t.corpo, /Polo/, 'nada foi acrescentado ao texto do cliente')
+  // e por isso o produto continua sem ser informado
+  assert.deepEqual(t.atendimentoNovo.produtosAfetados ?? [], [])
+  assert.equal(t.atendimentoNovo.transicaoPendente.para, 'coleta')
+})
+
+test('endereço da assinatura não vira endereço de entrega — nem o idioma sai dela', async () => {
+  // a IA TENTA aproveitar o endereço que está na assinatura do cliente
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade',
+    produtos: ['Polohemd mit langen Ärmeln (Grün / XL)', 'Polohemd mit langen Ärmeln (Hellblau / XL)'],
+    ajustes: [], situacaoEntrega: 'entregue_nao_recebido', evidenciaEntrega: 'wurde zugestellt',
+    endereco: 'Litschauer Str. 38, A-3950 Gmünd, AUSTRIA',
+    resumo: 'reclama da qualidade', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'kurt2@web.de', nome: 'Kurt', assunto: 'Aw: Eine Lieferung wurde zugestellt', corpo: CORPO_KURT, lojaId: 'loja1' })
+  const t = await ticket(r0.ticket.id)
+  const an = t.atendimentoNovo
+  const c = await auditoria(t.id)
+
+  // endereço da assinatura: descartado e AUDITADO
+  assert.equal(an.enderecoInformado ?? null, null, 'nada de endereço informado')
+  assert.equal(an.enderecoConfirmado ?? null, null, 'nada de endereço confirmado')
+  const descarteEndereco = c.classificacao.descartes.find(d => d.campo === 'endereco')
+  assert.ok(descarteEndereco, 'o descarte do endereço ficou registrado')
+  assert.match(descarteEndereco.motivo, /fora da etapa que pede o endereço/)
+  assert.match(String(descarteEndereco.valor), /Litschauer/)
+
+  // idioma continua alemão pela RECLAMAÇÃO, não pela assinatura
+  assert.equal(an.idioma, 'de')
+  assert.equal(c.classificacao.idioma, 'de')
+  // e a assinatura continua preservada no corpo da conversa
+  assert.match(t.corpo, /Litschauer Str\. 38/)
+  assert.ok(c.classificacao.textoAssinaturaCaracteres > 0, 'a auditoria registra que havia assinatura')
+
+  // sem produto informado, segue para a coleta
+  assert.equal(an.transicaoPendente.para, 'coleta')
+  assert.deepEqual(an.transicaoPendente.faltando, ['produtos'])
+})
+
+test('depois de aceitar uma troca, o mapa ainda pede o endereço — a assinatura não serve', async () => {
+  // conversa até um aceite de troca, com o cliente assinando com o endereço dele
+  const corpo = 'Das Polo Premium ist schlecht, ich möchte einen Umtausch.\n\nFa. Karasek, Litschauer Str. 38, A-3950 Gmünd\nTel.:06641335337'
+  fila.push({
+    intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: 'Litschauer Str. 38, A-3950 Gmünd',
+    resumo: 'quer troca', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'c87@web.de', nome: 'C87', assunto: 'Bestellung #87', corpo, lojaId: 'loja1' })
+  let t = await ticket(r0.ticket.id)
+  assert.equal(t.atendimentoNovo.enderecoInformado ?? null, null, 'a assinatura não informou endereço')
+  assert.equal(t.atendimentoNovo.transicaoPendente.para, 'qual_troca')
+  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env.status, 200, 'oferta de troca enviada: ' + (env.erro ?? ''))
+
+  // o cliente ACEITA — e o mapa manda pedir o endereço, mesmo com a assinatura à mão
+  fila.push({
+    intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'aceita', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Ja, gerne.' })
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoNovo.transicaoPendente?.para, 'endereco', 'a próxima fase é pedir o endereço')
+  assert.equal(t.atendimentoNovo.enderecoConfirmado ?? null, null, 'a assinatura nunca virou endereço confirmado')
+})
+
 test('pedido de UM item só: sem o cliente escrever qual produto, ainda vai para a coleta', async () => {
   fila.push({
     intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
@@ -1043,7 +1116,7 @@ test('reclamação de qualidade nunca vira entrega só porque a Shopify diz "ent
 
 test('retenção real: mais de 400 eventos pelo caminho do servidor — corta, conta e data', async () => {
   fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'ruim', idioma: 'de', idiomaConfiavel: true, spam: false })
-  const r0 = await simular({ de: 'c40@web.de', nome: 'C40', assunto: 'Bestellung #4', corpo: 'Die Qualität ist schlecht.' })
+  const r0 = await simular({ de: 'c40@web.de', nome: 'C40', assunto: 'Bestellung #4', corpo: 'Die Qualität vom Polo Premium ist schlecht.' })
   const id = r0.ticket.id
   // mensagens do cliente até passar do teto de 400 eventos, tudo pelo servidor de verdade
   // (os eventos NÃO vêm no estado normal: só a rota da auditoria os enxerga)

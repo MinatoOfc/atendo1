@@ -1054,7 +1054,7 @@ export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now()
   const user = [
     ultimaDaLoja ? `Última mensagem da loja:\n${String(ultimaDaLoja).slice(0, 1500)}\n\n---\n` : '',
     `MENSAGEM NOVA do cliente (${ticket.nome} <${ticket.de}>) — é só isto que ele escreveu agora:`,
-    partes.atual.slice(0, 4000) || '(sem texto novo)',
+    (partes.declaracao || partes.atual).slice(0, 4000) || '(sem texto novo)',
     ticket.anexos?.length ? `\n(O cliente anexou ${ticket.anexos.length} imagem(ns).)` : '',
   ].join('\n')
   return { system, user }

@@ -1800,36 +1800,49 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   const proposta = {
     intencao: cls.intencao ?? null, motivo: cls.motivo ?? null,
     situacaoEntrega: cls.situacaoEntrega ?? null, evidenciaEntrega: cls.evidenciaEntrega ?? '',
-    produtos: [...(cls.produtos ?? [])],
+    produtos: [...(cls.produtos ?? [])], endereco: cls.endereco ?? '',
   }
-  const entrega = validarSituacaoEntrega({ situacao: proposta.situacaoEntrega, evidencia: proposta.evidenciaEntrega, textoAtual: partesMsg.atual })
+  // a declaracao e o texto novo SEM a assinatura: rodape com empresa, rua,
+  // telefone e site nao informa entrega, produto, idioma nem endereco
+  const declaracao = partesMsg.declaracao || partesMsg.atual
+  const entrega = validarSituacaoEntrega({ situacao: proposta.situacaoEntrega, evidencia: proposta.evidenciaEntrega, textoAtual: declaracao })
   const descartes = []
   if (entrega.descartada) {
     descartes.push({ campo: 'situacaoEntrega', valor: proposta.situacaoEntrega, motivo: entrega.motivo })
     cls.situacaoEntrega = null
   }
   // "não recebido" como MOTIVO abre a mesma jornada: exige a mesma prova
-  if (cls.motivo === 'nao_recebido' && !(RE_NAO_RECEBIDO.test(partesMsg.atual) || RE_PERGUNTA_LOGISTICA.test(partesMsg.atual))) {
+  if (cls.motivo === 'nao_recebido' && !(RE_NAO_RECEBIDO.test(declaracao) || RE_PERGUNTA_LOGISTICA.test(declaracao))) {
     descartes.push({ campo: 'motivo', valor: 'nao_recebido', motivo: 'o texto novo do cliente não diz que não recebeu nem pergunta sobre a entrega' })
     cls.motivo = 'nao_informado'
   }
   // "só quer saber onde está" idem: sem pergunta logística no texto novo, não é status
-  if (cls.intencao === 'pergunta_status' && !RE_PERGUNTA_LOGISTICA.test(partesMsg.atual)) {
+  if (cls.intencao === 'pergunta_status' && !RE_PERGUNTA_LOGISTICA.test(declaracao)) {
     descartes.push({ campo: 'intencao', valor: 'pergunta_status', motivo: 'o texto novo do cliente não pergunta onde está o pedido nem quando chega' })
     cls.intencao = 'outro'
   }
   // PRODUTO: só conta o que o CLIENTE escreveu agora. Catálogo do pedido e
   // notificação citada nunca informam produto — nem quando o pedido tem um item
   // só: quem diz qual peça tem problema é ele.
-  cls.produtos = produtosDoTextoAtual(proposta.produtos, partesMsg.atual)
+  cls.produtos = produtosDoTextoAtual(proposta.produtos, declaracao)
   const produtosDescartados = proposta.produtos.filter(p => !cls.produtos.includes(p))
   if (produtosDescartados.length) {
     descartes.push({ campo: 'produtos', valor: produtosDescartados, motivo: 'produto não citado pelo cliente no texto novo (veio da notificação citada ou do catálogo)' })
   }
 
+  // ENDEREÇO: só conta quando a conversa está de fato pedindo o endereço. Um
+  // endereço que aparece antes disso (assinatura, rodapé, cabeçalho) nunca vira
+  // endereço de entrega — depois de aceitar troca ou reenvio, o mapa continua
+  // mandando pedir o endereço completo.
+  const pedindoEndereco = an.etapa === 'endereco' || an.transicaoPendente?.para === 'endereco' || an.proximaAposColeta === 'endereco'
+  if (cls.endereco && !pedindoEndereco) {
+    descartes.push({ campo: 'endereco', valor: String(cls.endereco).slice(0, 120), motivo: 'endereço citado fora da etapa que pede o endereço (assinatura, rodapé ou antecipação) — não vale como endereço de entrega' })
+    cls.endereco = ''
+  }
+
   // idioma-alvo: só do texto NOVO. Assinatura, endereço solto, notificação da
   // Shopify e mensagem anterior não decidem em que idioma a loja responde.
-  const idiomaAlvo = definirIdioma(an, cls, partesMsg.atual)
+  const idiomaAlvo = definirIdioma(an, cls, declaracao)
   if (idiomaAlvo) t.idioma = idiomaAlvo
   if (cls.resumo) { t.resumoSituacao = cls.resumo; t.situacaoTraducao = undefined }
 
@@ -1857,6 +1870,7 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
       descartes,
       conflito: entrega.conflito,
       textoAtualCaracteres: partesMsg.atual.length, textoCitadoCaracteres: partesMsg.citado.length,
+      textoAssinaturaCaracteres: (partesMsg.assinatura ?? '').length,
       idioma: idiomaAlvo ?? null, idiomaDeclarado: cls.idioma ?? null,
       endereco: cls.endereco ?? null, confianca: cls.confianca ?? null,
       somenteDado: !!(cls.somente_dado ?? cls.somenteDado), resumo: cls.resumo ?? null,
