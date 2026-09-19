@@ -1719,6 +1719,10 @@ test('resposta manual sai pela conta da PRÓPRIA loja, sem confirmar fase nem cr
   assert.equal(tentaOAntigo.status, 409, 'o rascunho invalidado não sai')
   assert.match(tentaOAntigo.erro, /rascunho que a IA tinha escrito/)
 
+  // fotografia de antes do envio: e contra ela que se prova que nada mudou
+  const historicoAntesDoEnvioManual = JSON.stringify(t.atendimentoNovo?.historicoEtapas ?? [])
+  const etapaAntesDoEnvio = t.atendimentoNovo?.etapa ?? null
+
   // o texto do DONO sai
   const meuTexto = 'Guten Tag, ich kümmere mich persönlich darum und melde mich morgen.'
   const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: meuTexto, origem: 'manual' })
@@ -1731,7 +1735,9 @@ test('resposta manual sai pela conta da PRÓPRIA loja, sem confirmar fase nem cr
   assert.equal(t.atendimentoHumano.ativo, true)
   // nenhuma fase inventada
   assert.equal(an.transicaoPendente ?? null, null)
-  assert.equal((an.historicoEtapas ?? []).filter(h => h.evento === 'transicao').length, 0)
+  // nada de transicao nova: o historico e o MESMO de antes do envio (o filtro
+  // por evento==='transicao' nao provava nada — o servidor nunca grava esse valor)
+  assert.equal(JSON.stringify(an.historicoEtapas ?? []), historicoAntesDoEnvioManual, 'historicoEtapas intacto')
   semRelatorio(t)
 
   const c = await auditoria(t.id)
@@ -1742,6 +1748,11 @@ test('resposta manual sai pela conta da PRÓPRIA loja, sem confirmar fase nem cr
   assert.ok(enviado.dados.mensagemId, 'com Message-ID')
   assert.equal(enviado.dados.canalConfirmou, true, 'e confirmação do canal')
   assert.equal(c.eventos.filter(e => e.tipo === 'fase_confirmada').length, 0, 'nenhuma fase confirmada')
+  assert.equal(an.etapa ?? null, etapaAntesDoEnvio, 'a fase nao mudou com o envio manual')
+  // e a resposta do DONO nao fica guardada como rascunho: no arranque ela viraria
+  // "residuo da IA" e ele nunca mais poderia repetir a propria frase
+  assert.equal(t.rascunho ?? null, null, 'a resposta manual nao vira rascunho')
+  assert.equal(an.tentativaAtual ?? null, null, 'nem deixa tentativa pendurada')
 })
 
 test('retomar a IA aguardando a próxima mensagem NÃO processa o rascunho antigo', async () => {

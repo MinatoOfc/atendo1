@@ -363,53 +363,88 @@ function reforcarAtendimentoHumano() {
     let mudou = false
     for (const t of estado.tickets ?? []) {
       if (!emAtendimentoHumano(t)) continue
-      if (t.iaPausada !== true) { t.iaPausada = true; mudou = true; corrigidos++ }
-      if (t.status !== 'humano') { t.status = 'humano'; mudou = true }
-      if (t.atendimentoNovo && t.atendimentoNovo.aguardando !== 'humano') { t.atendimentoNovo.aguardando = 'humano'; mudou = true }
+      const an = t.atendimentoNovo
 
-      // RASCUNHO LEGADO NUMA CONVERSA ASSUMIDA.
-      // Estado gravado antes desta regra pode ter t.rascunho sem
-      // atendimentoHumano.rascunhoInvalidado. Como a recusa da rota manual
-      // compara justamente com rascunhoInvalidado, esse texto podia sair como
-      // se o dono o tivesse escrito. Aqui ele é aposentado do estado ativo —
-      // e guardado, inteiro, onde nada se perde.
-      if (t.rascunho !== undefined) {
-        const an = t.atendimentoNovo
-        const texto = t.rascunho
-        // nunca sobrescreve o que já foi invalidado antes
-        if (!t.atendimentoHumano.rascunhoInvalidado) t.atendimentoHumano.rascunhoInvalidado = texto
+      /* RESÍDUO ATIVO DA IA numa conversa que já é do dono.
+       *
+       * Estado gravado antes desta regra (ou meio escrito por uma queda) pode
+       * ter rascunho, fase pendente, tentativa, agendamento — qualquer um
+       * deles, e não só o rascunho. Cada um é uma porta: o rascunho sairia
+       * como resposta "manual" do dono, a fase pendente faria o envio manual
+       * confirmar etapa, o agendamento vencido seria pego pelo agendador.
+       *
+       * Tudo é FOTOGRAFADO antes de sumir: o que sai do estado ativo entra na
+       * Auditoria, nunca no lixo. */
+      const residuo = {
+        texto: t.rascunho ?? null,
+        traducao: t.rascunhoTraducao ?? null,
+        fase: an?.transicaoPendente?.para ?? null,
+        transicao: an?.transicaoPendente ? { ...an.transicaoPendente } : null,
+        tentativa: an?.tentativaAtual ?? null,
+        agendamento: t.enviaEm ? new Date(t.enviaEm).toISOString() : null,
+        rascunhoGerado: an?.rascunhoGerado ?? null,
+        minimoEnvio: an?.proximoEnvioMinimo ?? null,
+        statusAnterior: t.status !== 'humano' ? t.status : null,
+      }
+      // status incoerente NÃO é resíduo da IA: ele é corrigido logo abaixo, e
+      // sozinho não justifica um evento dizendo que sobra da IA foi aposentada
+      const temResiduo = ['texto', 'traducao', 'fase', 'tentativa', 'agendamento', 'rascunhoGerado', 'minimoEnvio']
+        .some(k => residuo[k] !== null && residuo[k] !== undefined)
+
+      if (temResiduo) {
+        // nunca sobrescreve um rascunho já invalidado antes
+        if (residuo.texto !== null && !t.atendimentoHumano.rascunhoInvalidado) {
+          t.atendimentoHumano.rascunhoInvalidado = residuo.texto
+        }
+        // chave estável: dois reinícios com o MESMO resíduo não duplicam o
+        // evento. Um resíduo diferente (que só apareceria se algo o recriasse)
+        // ganha registro próprio, em vez de sumir em silêncio.
+        // a marca cobre o resíduo INTEIRO: dois resíduos diferentes nunca
+        // colidem na mesma chave e somem em silêncio pela deduplicação
+        const marca = JSON.stringify([
+          residuo.texto, residuo.traducao, residuo.fase, residuo.transicao,
+          residuo.tentativa, residuo.agendamento, residuo.rascunhoGerado, residuo.minimoEnvio,
+        ])
         auditar(t, 'caso_para_humano', {
-          resumo: 'Rascunho antigo aposentado no arranque (conversa já estava com você)',
+          resumo: residuo.texto !== null
+            ? 'Rascunho antigo aposentado no arranque (conversa já estava com você)'
+            : 'Resíduo da IA aposentado no arranque (conversa já estava com você)',
           situacao: 'atencao',
-          fase: an?.transicaoPendente?.para ?? an?.etapa ?? null,
-          // chave estável: dois reinícios não duplicam o evento
-          chave: `caso_para_humano:${t.id}:legado_rascunho:${t.atendimentoHumano.em ?? t.data}`,
+          fase: residuo.fase ?? an?.etapa ?? null,
+          chave: `caso_para_humano:${t.id}:legado_ia:${t.atendimentoHumano.em ?? t.data}:${marca}`,
           dados: {
-            motivo: 'rascunho encontrado numa conversa já em atendimento humano', origem: 'atendimento_humano_legado',
-            recuperadoDeEstadoLegado: true,
+            motivo: 'estado da IA encontrado numa conversa já em atendimento humano',
+            origem: 'atendimento_humano_legado', recuperadoDeEstadoLegado: true,
             por: t.atendimentoHumano.por ?? null, em: t.atendimentoHumano.em ?? null,
             // o texto inteiro, sem corte — sai da tela, não da auditoria
-            rascunhoInvalidado: texto, texto,
+            rascunhoInvalidado: residuo.texto, texto: residuo.texto,
+            traducaoDescartada: residuo.traducao,
             // o que existia fica REGISTRADO, mesmo saindo do estado ativo
-            fase: an?.transicaoPendente?.para ?? an?.etapa ?? null,
-            tentativaEncerrada: an?.tentativaAtual ?? null,
-            agendamentoCancelado: t.enviaEm ? new Date(t.enviaEm).toISOString() : null,
+            fase: residuo.fase, transicaoDescartada: residuo.transicao,
+            tentativaEncerrada: residuo.tentativa,
+            agendamentoCancelado: residuo.agendamento,
+            rascunhoGerado: residuo.rascunhoGerado,
+            minimoEnvio: residuo.minimoEnvio,
+            statusAnterior: residuo.statusAnterior,
           },
         })
+        // ...e só então o estado ativo é neutralizado
         t.rascunho = undefined
         t.rascunhoTraducao = undefined
         t.geradoPorIA = undefined
-        if (an) { an.rascunhoGerado = undefined; an.proximoEnvioMinimo = undefined }
+        t.enviaEm = undefined
+        if (an) {
+          an.transicaoPendente = null
+          an.tentativaAtual = undefined
+          an.rascunhoGerado = undefined
+          an.proximoEnvioMinimo = undefined
+        }
         mudou = true
       }
-      // A FASE PENDENTE também não sobrevive. Ela ficou registrada no evento
-      // acima, mas no estado ativo faria a resposta manual do dono ser validada
-      // contra a etapa da IA — e, pior, confirmar essa etapa ao sair.
-      const anT = t.atendimentoNovo
-      if (anT?.transicaoPendente) { anT.transicaoPendente = null; mudou = true }
-      if (anT?.tentativaAtual) { anT.tentativaAtual = undefined; mudou = true }
-      // depois do rascunho: nenhum agendamento sobrevive numa conversa assumida
-      if (t.enviaEm) { t.enviaEm = undefined; mudou = true }
+
+      if (t.iaPausada !== true) { t.iaPausada = true; mudou = true; corrigidos++ }
+      if (t.status !== 'humano') { t.status = 'humano'; mudou = true }
+      if (an && an.aguardando !== 'humano') { an.aguardando = 'humano'; mudou = true }
     }
     if (mudou) salvar(wsId)
   }
@@ -477,7 +512,9 @@ async function gerarColetasDeProduto(wsId) {
   for (const t of estado.tickets ?? []) {
     const an = t.atendimentoNovo
     if (!an?.pedirProduto) continue
-    if (emAtendimentoHumano(t)) continue // a conversa é sua: nada de rascunho no arranque
+    // a conversa é sua: nada de rascunho no arranque — e a marca de pedir
+    // produto é apagada junto, senão ela reaparece no primeiro Retomar IA
+    if (emAtendimentoHumano(t)) { if (an.pedirProduto) { an.pedirProduto = false; mudou = true } ; continue }
     try {
       if (!(an.transicaoPendente?.para === 'coleta' && (an.transicaoPendente.faltando ?? []).includes('produtos'))) {
         await prepararRascunhoNovo(estado, t, { faseId: 'coleta', faltando: ['produtos'], resumo: 'produto não informado pelo cliente — a regra do mapa exige perguntar antes de continuar', aoFalhar: 'manter' })
@@ -900,9 +937,11 @@ function concluirAposEnvio(estado, wsId, t, faseConfirmada, mensagemId) {
  * transição e sem segunda linha no relatório.
  */
 function corrigirConfirmacoesMeioGravadas(wsId) {
+  // conversa assumida não recebe promoção de rascunho a resposta enviada
   const estado = workspaces.get(wsId); if (!estado) return
   let n = 0
   for (const t of estado.tickets ?? []) {
+    if (emAtendimentoHumano(t)) continue
     const an = t.atendimentoNovo; if (!an) continue
     const confirmada = an.conclusaoPendente?.status === 'concluida' || FASES[an.etapa]?.confirmacao
     if (!confirmada) continue
@@ -1096,9 +1135,11 @@ async function confirmacaoFoiEnviada(wsId, t, mensagemId) {
  * pedindo a conferência — e nenhum relatório é criado até haver comprovação.
  */
 async function reconciliarEnviosInterrompidos(wsId) {
+  // conversa assumida não avança fase nem entra no relatório pela reconciliação
   const estado = workspaces.get(wsId); if (!estado) return
   let mudou = false
   for (const t of estado.tickets ?? []) {
+    if (emAtendimentoHumano(t)) continue
     const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
     if (!cp || cp.status !== 'enviando') continue
     const faseConf = an.transicaoPendente?.para && FASES[an.transicaoPendente.para]?.confirmacao ? an.transicaoPendente.para : faseDeConfirmacao(cp.faseAceita)
@@ -1211,6 +1252,9 @@ function neutralizarConclusaoAutomatica(wsId, motivo, { por = 'sistema (seguran�
   }
   // conclusões automáticas pendentes (nunca enviadas) da(s) loja(s) afetada(s): agendamento cancelado, caso com o dono
   for (const t of estado.tickets ?? []) {
+    // conversa assumida pelo dono não recebe transição nova em historicoEtapas
+    // nem acaoAceita nova: a conclusão dela já foi suspensa ao ser assumida
+    if (emAtendimentoHumano(t)) continue
     const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
     if (!cp || cp.modo !== 'automatico' || !['aguardando_dados', 'aguardando_cadencia'].includes(cp.status)) continue
     if (lojaId && (t.lojaId ?? 'loja1') !== lojaId) continue
@@ -2822,7 +2866,14 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
   ticket.respostaIdioma = ctxEnvio.idioma
   ticket.respostaTentativaId = ctxEnvio.tentativaId
   ticket.respostaOrigem = ctxEnvio.origem // quem escreveu: 'ia' ou 'manual'
-  ticket.rascunho = texto
+  // Numa conversa assumida, guardar o texto enviado em t.rascunho seria um tiro
+  // no pé: no próximo arranque a reconciliação o trataria como resíduo da IA,
+  // moveria para rascunhoInvalidado e o dono nunca mais poderia repetir a
+  // própria frase — além de nascer um evento de auditoria falso por reinício.
+  ticket.rascunho = humano ? undefined : texto
+  // e a tentativa do envio MANUAL não fica pendurada no estado ativo: ela já está
+  // no evento email_enviado, e sobrando aqui viraria "resíduo da IA" no arranque
+  if (humano && an) an.tentativaAtual = undefined
   ticket.rascunhoTraducao = undefined
   ticket.respondidoEm = new Date().toISOString()
   ticket.enviaEm = undefined
@@ -2927,6 +2978,9 @@ agendar(async () => {
           t.status = 'humano'
           t.enviaEm = undefined
           t.motivoEscalada = `Não foi possível enviar após ${MAX_TENTATIVAS} tentativas: ${err.message}`
+        } else if (emAtendimentoHumano(t)) {
+          // assumida no meio da tentativa: nada de contagem regressiva na tela
+          t.enviaEm = undefined
         } else {
           t.enviaEm = agora + t.tentativasEnvio * 60_000
         }
@@ -4627,6 +4681,17 @@ agendarUmaVez(atualizarReembolsosSemanal, 120_000)
 // Fecha o caso SEM enviar e-mail: sai do atendimento humano/aprovações como resolvido
 app.post('/api/tickets/:id/resolver', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  // fechar um caso que você assumiu ENCERRA o atendimento humano junto: sem
+  // isto a marca sobrevive e o arranque devolve o caso fechado para a sua fila
+  if (emAtendimentoHumano(t)) {
+    auditar(t, 'caso_encerrado', {
+      resumo: 'Caso fechado por você durante o atendimento humano', situacao: 'ok',
+      chave: `caso_encerrado:${t.id}:humano_resolvido:${t.atendimentoHumano.em ?? t.data}`,
+      dados: { motivo: 'fechado pelo dono', por: req.usuario?.nome || req.usuario?.email || 'lojista', desdeAtendimentoHumano: t.atendimentoHumano.em ?? null },
+    })
+    t.atendimentoHumano = undefined
+    t.iaPausada = false
+  }
   t.status = 'enviado'
   t.respondidoEm = new Date().toISOString()
   t.lido = true
@@ -4883,6 +4948,7 @@ app.post('/api/central/migrar', async (req, res) => {
 
 app.post('/api/tickets/:id/rascunho', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  if (emAtendimentoHumano(t)) return res.status(409).json({ erro: recusaHumano('reescrever o rascunho pela rota da IA'), state: visao(req.wsId) })
   t.rascunho = String(req.body.texto ?? '')
   t.rascunhoTraducao = undefined // texto mudou — tradução antiga não vale mais
   salvar(req.wsId); ok(req, res)
@@ -5546,6 +5612,20 @@ app.post('/api/tickets/:id/mover', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   const destinos = ['inbox', 'aprovacao', 'humano', 'spam', 'lixeira']
   if (!destinos.includes(req.body.status)) return res.status(400).json({ erro: 'status inválido', state: visao(req.wsId) })
+  // conversa assumida só sai da sua fila por "Retomar IA" — exceto para spam ou
+  // lixeira, que são decisões suas e encerram o atendimento humano com registro
+  if (emAtendimentoHumano(t)) {
+    if (!['spam', 'lixeira'].includes(req.body.status)) {
+      return res.status(409).json({ erro: recusaHumano('mudar a pasta da conversa'), state: visao(req.wsId) })
+    }
+    auditar(t, 'caso_encerrado', {
+      resumo: `Conversa movida por você para ${req.body.status} durante o atendimento humano`, situacao: 'informativo',
+      chave: `caso_encerrado:${t.id}:humano_movido:${req.body.status}:${t.atendimentoHumano.em ?? t.data}`,
+      dados: { motivo: 'movida pelo dono', destino: req.body.status, por: req.usuario?.nome || req.usuario?.email || 'lojista' },
+    })
+    t.atendimentoHumano = undefined
+    t.iaPausada = false
+  }
   t.statusAnterior = t.status
   t.status = req.body.status
   // spam marcado à mão pelo lojista não é resgatado pelo automático
@@ -5557,12 +5637,19 @@ app.post('/api/tickets/:id/mover', (req, res) => {
 
 app.post('/api/tickets/:id/restaurar', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  if (emAtendimentoHumano(t)) return res.status(409).json({ erro: recusaHumano('restaurar o status anterior'), state: visao(req.wsId) })
   t.status = t.statusAnterior && t.statusAnterior !== 'lixeira' ? t.statusAnterior : 'inbox'
   t.spamManual = undefined // restaurou: volta a valer a classificação automática
   salvar(req.wsId); ok(req, res)
 })
 
 app.delete('/api/tickets/:id', (req, res) => {
+  // apagar leva junto a auditoria e o rascunho invalidado: numa conversa
+  // assumida isso exige confirmação explícita, nunca um clique de lista
+  const alvo = req.estado.tickets.find(x => x.id === req.params.id)
+  if (alvo && emAtendimentoHumano(alvo) && req.body?.confirmar !== true) {
+    return res.status(409).json({ erro: 'Esta conversa está em atendimento humano: apagar levaria junto a auditoria e o rascunho guardado. Confirme explicitamente.', state: visao(req.wsId) })
+  }
   req.estado.tickets = req.estado.tickets.filter(x => x.id !== req.params.id)
   salvar(req.wsId); ok(req, res)
 })

@@ -50,7 +50,7 @@ estado.lojas = [
 const CENARIOS = {
   qa1: 'loja1', qa2: 'loja2', qa3: 'loja1', qa4: 'loja1', qa5: 'loja1', qa6: 'loja2',
   qa7: 'loja1', qa8: 'loja1', qa9: 'loja1', qa10: 'loja1', qa11: 'loja1', qa12: 'loja1',
-  qa13: 'loja2', qa14: 'loja2',
+  qa13: 'loja2', qa14: 'loja2', qa15: 'loja2',
 }
 estado.pedidos = Object.entries(CENARIOS).map(([id, lojaId], i) => ({
   id: 'p-' + id, numero: '#' + (101 + i), cliente: 'Cliente ' + id, email: `${id}@web.de`, pais: 'Germany', valor: 100,
@@ -90,7 +90,19 @@ const subir = extra => new Promise((resolve, reject) => {
   setTimeout(() => reject(new Error('servidor não subiu: ' + saida)), 30_000)
 })
 const morreu = processo => new Promise(resolve => processo.on('exit', (code, sinal) => resolve({ code, sinal })))
-const matar = async () => { try { filho?.kill() } catch { /* já morreu */ } filho = null; await esperar(1200) }
+// ESPERA o processo morrer de verdade antes de devolver. Sem isto o próximo
+// subir() disputa a porta com um servidor que ainda não soltou o socket, e o
+// arquivo inteiro cai com "EADDRINUSE" — um vermelho que aponta para o lugar
+// errado (a reconciliação parece quebrada quando o problema é a porta).
+const matar = async () => {
+  const p = filho
+  filho = null
+  if (!p || p.exitCode !== null || p.signalCode !== null) { await esperar(300); return }
+  const fim = morreu(p)
+  try { p.kill() } catch { /* já morreu */ }
+  await Promise.race([fim, esperar(8000)])
+  await esperar(400) // folga para o socket sair de LISTEN
+}
 after(async () => { await matar(); try { rmSync(DIR, { recursive: true, force: true }) } catch { /* temp */ } })
 
 const entrar = async () => {
@@ -358,6 +370,7 @@ test('estado legado incompatível (assumida com a IA ligada e rascunho antigo) �
   const motorAntes = alvo.motorAtendimento
   const aceitaAntes = alvo.atendimentoNovo?.acaoAceita ?? null
   const conclusaoAntes = alvo.atendimentoNovo?.conclusaoPendente?.id ?? null
+  const historicoAntes = JSON.stringify(alvo.atendimentoNovo?.historicoEtapas ?? [])
   writeFileSync(arquivo, JSON.stringify(salvo))
   const enviosAntes = envios().length
 
@@ -414,6 +427,16 @@ test('estado legado incompatível (assumida com a IA ligada e rascunho antigo) �
     assert.equal(envios().length, enviosAntes, `volta ${volta}: nenhum e-mail`)
   }
 
+  // FOTOGRAFIA de antes da resposta manual: é contra ela que se prova que o
+  // envio do dono não confirmou fase nenhuma
+  const cAntesDoEnvio = await verAuditoria(cookie, 'qa14')
+  const confirmadasAntes = cAntesDoEnvio.eventos.filter(e => e.tipo === 'fase_confirmada').length
+  const eventosAntes = cAntesDoEnvio.eventos.length
+  const enviadosAntes = cAntesDoEnvio.eventos.filter(e => e.tipo === 'email_enviado').length
+  const stAntes = await verEstado(cookie)
+  const tAntes = stAntes.tickets.find(x => x.id === 'qa14')
+  const historicoAntesDoEnvio = JSON.stringify(tAntes.atendimentoNovo?.historicoEtapas ?? [])
+
   // o que é do dono, o dono manda
   const meuTexto = 'Guten Tag, ich schreibe Ihnen persönlich: ich kümmere mich heute noch darum.'
   const envio = await fetch(base + '/api/tickets/qa14/aprovar', {
@@ -436,11 +459,118 @@ test('estado legado incompatível (assumida com a IA ligada e rascunho antigo) �
   assert.equal(t.relatorioDia ?? null, null)
 
   c = await verAuditoria(cookie, 'qa14')
-  assert.equal(c.eventos.filter(e => e.tipo === 'fase_confirmada' && e.dados?.tentativaId).length >= 0, true)
+  // a resposta manual NÃO confirma fase: a contagem é exatamente a de antes
+  assert.equal(c.eventos.filter(e => e.tipo === 'fase_confirmada').length, confirmadasAntes,
+    'nenhuma fase_confirmada nova depois da resposta manual')
+  assert.equal(JSON.stringify(t.atendimentoNovo?.historicoEtapas ?? []), historicoAntesDoEnvio,
+    'nenhuma transição nova entrou no historicoEtapas')
+  assert.equal(JSON.stringify(t.atendimentoNovo?.historicoEtapas ?? []), historicoAntes,
+    'o histórico continua o mesmo desde antes do arranque')
+  // e o ÚNICO evento de envio novo é o email_enviado manual
+  assert.equal(c.eventos.filter(e => e.tipo === 'email_enviado').length, enviadosAntes + 1, 'exatamente um envio novo')
+  const novos = c.eventos.slice(eventosAntes)
+  const tiposNovos = [...new Set(novos.map(e => e.tipo))].sort()
+  assert.deepEqual(tiposNovos.filter(x => ['email_enviado', 'fase_confirmada', 'caso_encerrado', 'envio_agendado'].includes(x)), ['email_enviado'],
+    'dos eventos de envio/fase, só nasceu email_enviado: ' + tiposNovos.join(', '))
   const enviado = c.eventos.filter(e => e.tipo === 'email_enviado').at(-1)
   assert.equal(enviado.dados.origem, 'manual', 'origemEnvio manual')
   assert.equal(enviado.dados.loja, 'loja2', 'pela conta da própria loja')
   assert.ok(enviado.dados.mensagemId)
+})
+
+test('estado legado humano SEM rascunho, mas com transição, tentativa e agendamento, também é auditado', async () => {
+  // O resíduo da IA não é só o rascunho. Uma conversa assumida pode ter ficado
+  // com fase pendente, tentativa e agendamento sem nenhum texto — e apagar isso
+  // em silêncio seria perder o registro do que existia.
+  preparar('qa15', { lojaId: 'loja2', modo: 'automatico', aprovado: false, agendado: true })
+  const salvo = estadoSalvo()
+  const alvo = salvo.tickets.find(x => x.id === 'qa15')
+  alvo.atendimentoHumano = { ativo: true, por: 'Allan', em: '2026-09-18T11:00:00.000Z', motivo: 'legado sem rascunho' }
+  alvo.iaPausada = false
+  alvo.status = 'aprovacao'
+  alvo.enviaEm = Date.now() - 1000
+  delete alvo.rascunho            // SEM texto nenhum
+  delete alvo.rascunhoTraducao
+  const an0 = alvo.atendimentoNovo
+  an0.transicaoPendente = { para: 'conf_reembolso', mensagem: 'confirmação pendente', faltando: [] }
+  an0.tentativaAtual = 'tent-legado-qa15'
+  an0.rascunhoGerado = 'texto que só existe como marca'
+  an0.proximoEnvioMinimo = new Date().toISOString()
+  an0.aguardando = 'cliente'
+  const historicoAntes = JSON.stringify(an0.historicoEtapas ?? [])
+  const faseAntes = an0.etapa ?? null
+  const motorAntes = alvo.motorAtendimento
+  const aceitaAntes = an0.acaoAceita ?? null
+  writeFileSync(arquivo, JSON.stringify(salvo))
+  const enviosAntes = envios().length
+
+  await matar()
+  filho = (await subir({})).processo
+  await esperar(2500)
+  let cookie = await entrar()
+  let st = await verEstado(cookie)
+  let t = st.tickets.find(x => x.id === 'qa15')
+  let c = await verAuditoria(cookie, 'qa15')
+
+  // o evento de recuperação existe UMA vez, mesmo sem rascunho
+  const legado = c.eventos.filter(e => e.dados?.origem === 'atendimento_humano_legado')
+  assert.equal(legado.length, 1, 'um evento de recuperação')
+  assert.equal(legado[0].dados.recuperadoDeEstadoLegado, true)
+  assert.equal(legado[0].dados.texto ?? null, null, 'não havia texto, e o evento não inventa um')
+  // e registra o que existia
+  assert.equal(legado[0].dados.fase, 'conf_reembolso', 'a fase pendente ficou registrada')
+  assert.equal(legado[0].dados.tentativaEncerrada, 'tent-legado-qa15', 'a tentativa ficou registrada')
+  assert.ok(legado[0].dados.agendamentoCancelado, 'o agendamento ficou registrado')
+  assert.equal(legado[0].dados.rascunhoGerado, 'texto que só existe como marca')
+  assert.ok(legado[0].dados.minimoEnvio, 'o horário mínimo ficou registrado')
+  assert.equal(legado[0].dados.statusAnterior, 'aprovacao', 'o status anterior ficou registrado')
+
+  // o estado ativo foi neutralizado
+  assert.equal(t.atendimentoNovo.transicaoPendente ?? null, null)
+  assert.equal(t.atendimentoNovo.tentativaAtual ?? null, null)
+  assert.equal(t.atendimentoNovo.rascunhoGerado ?? null, null)
+  assert.equal(t.atendimentoNovo.proximoEnvioMinimo ?? null, null)
+  assert.equal(t.enviaEm ?? null, null)
+  assert.equal(t.status, 'humano')
+  assert.equal(t.iaPausada, true)
+  assert.equal(t.atendimentoNovo.aguardando, 'humano')
+
+  // nada saiu, nada foi confirmado, nada entrou no relatório
+  assert.equal(envios().length, enviosAntes, 'nenhum e-mail')
+  assert.equal(c.eventos.filter(e => e.tipo === 'fase_confirmada').length, 0, 'nenhuma fase confirmada')
+  assert.equal(t.relatorioAuto ?? null, null)
+  assert.equal(t.relatorioDia ?? null, null)
+
+  // DOIS reinícios não duplicam
+  for (const volta of [1, 2]) {
+    await matar()
+    filho = (await subir({})).processo
+    await esperar(2500)
+    cookie = await entrar()
+    c = await verAuditoria(cookie, 'qa15')
+    assert.equal(c.eventos.filter(e => e.dados?.origem === 'atendimento_humano_legado').length, 1, `volta ${volta}: não duplica`)
+    assert.equal(envios().length, enviosAntes, `volta ${volta}: nenhum e-mail`)
+  }
+
+  // resposta manual nova não mexe no histórico de fases
+  st = await verEstado(cookie)
+  t = st.tickets.find(x => x.id === 'qa15')
+  const confirmadasAntes = (await verAuditoria(cookie, 'qa15')).eventos.filter(e => e.tipo === 'fase_confirmada').length
+  const envio = await fetch(base + '/api/tickets/qa15/aprovar', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
+    body: JSON.stringify({ texto: 'Guten Tag, ich melde mich persönlich.', origem: 'manual' }),
+  })
+  assert.equal(envio.status, 200, 'a resposta do dono sai: ' + (await envio.text()).slice(0, 200))
+  st = await verEstado(cookie)
+  t = st.tickets.find(x => x.id === 'qa15')
+  c = await verAuditoria(cookie, 'qa15')
+  assert.equal(JSON.stringify(t.atendimentoNovo.historicoEtapas ?? []), historicoAntes, 'historicoEtapas intacto')
+  assert.equal(c.eventos.filter(e => e.tipo === 'fase_confirmada').length, confirmadasAntes, 'nenhuma fase confirmada pela resposta manual')
+  assert.equal(t.atendimentoNovo.etapa ?? null, faseAntes, 'a fase não mudou')
+  assert.equal(t.motorAtendimento, motorAntes, 'o motor não mudou')
+  assert.equal(t.atendimentoNovo.acaoAceita ?? null, aceitaAntes, 'a solução aceita ficou')
+  assert.equal(t.relatorioAuto ?? null, null, 'nenhum relatório')
+  assert.equal(t.status, 'humano', 'continua do dono')
 })
 
 test('dois reinícios consecutivos depois da reconciliação: nada duplica', async () => {
