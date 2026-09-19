@@ -332,46 +332,115 @@ test('conversa assumida pelo dono continua dela depois de reiniciar o servidor',
   assert.equal(t.relatorioAuto ?? null, null, 'nenhuma linha de relatório')
 })
 
-test('estado legado incompatível (assumida com a IA ligada) é corrigido no arranque', async () => {
+test('estado legado incompatível (assumida com a IA ligada e rascunho antigo) é corrigido no arranque', async () => {
   // Estado que só existe em banco antigo ou em queda no meio da gravação: a
-  // conversa está marcada como assumida, mas com a IA ligada e um envio
-  // agendado. O arranque tem de reconciliar isso SEM gerar rascunho e SEM
-  // enviar — a invariável é: assumida implica IA parada.
+  // conversa está marcada como assumida, mas com a IA ligada, um rascunho da IA
+  // ainda ativo e um envio agendado JÁ VENCIDO.
+  //
+  // O rascunho é o ponto perigoso: a recusa da rota manual compara o texto com
+  // atendimentoHumano.rascunhoInvalidado, que no estado legado não existe — sem
+  // esta reconciliação, o texto da IA podia sair como se o dono o tivesse
+  // escrito.
   preparar('qa14', { lojaId: 'loja2', modo: 'automatico', aprovado: false, agendado: true })
   const salvo = estadoSalvo()
   const alvo = salvo.tickets.find(x => x.id === 'qa14')
+  const RASCUNHO_LEGADO = 'Hallo! Wir bieten Ihnen eine Rückerstattung von 40% (40,00 €) an. Das Geld ist in 3 bis 14 Tagen wieder da.'
   alvo.atendimentoHumano = { ativo: true, por: 'Allan', em: '2026-09-18T10:00:00.000Z', motivo: 'legado', faseNoMomento: null }
   alvo.iaPausada = false            // incoerente de propósito
   alvo.status = 'aprovacao'         // idem
   alvo.enviaEm = Date.now() - 1000  // já vencido: o agendador pegaria na hora
-  if (alvo.atendimentoNovo) alvo.atendimentoNovo.aguardando = 'cliente'
+  alvo.rascunho = RASCUNHO_LEGADO   // e o texto da IA ainda ativo
+  alvo.rascunhoTraducao = 'tradução antiga'
+  alvo.geradoPorIA = true
+  if (alvo.atendimentoNovo) { alvo.atendimentoNovo.aguardando = 'cliente'; alvo.atendimentoNovo.rascunhoGerado = RASCUNHO_LEGADO; alvo.atendimentoNovo.proximoEnvioMinimo = new Date().toISOString() }
+  // o que tem de sobreviver intacto
+  const faseAntes = alvo.atendimentoNovo?.etapa ?? null
+  const motorAntes = alvo.motorAtendimento
+  const aceitaAntes = alvo.atendimentoNovo?.acaoAceita ?? null
+  const conclusaoAntes = alvo.atendimentoNovo?.conclusaoPendente?.id ?? null
   writeFileSync(arquivo, JSON.stringify(salvo))
   const enviosAntes = envios().length
-  const rascunhoAntes = alvo.rascunho ?? null
 
   await matar()
   filho = (await subir({})).processo
   await esperar(2500)
-  const cookie = await entrar()
-  const st = await verEstado(cookie)
-  const t = st.tickets.find(x => x.id === 'qa14')
+  let cookie = await entrar()
+  let st = await verEstado(cookie)
+  let t = st.tickets.find(x => x.id === 'qa14')
 
+  // a invariável foi restaurada
   assert.equal(t.atendimentoHumano?.ativo, true, 'continua sendo do dono')
   assert.equal(t.iaPausada, true, 'a IA foi parada: assumida implica IA parada')
   assert.equal(t.status, 'humano', 'voltou para a fila do dono')
   assert.equal(t.enviaEm ?? null, null, 'o agendamento vencido foi cancelado')
   assert.equal(t.atendimentoNovo.aguardando, 'humano')
-  // o arranque NÃO escreve rascunho: o que existia continua igual, e inerte —
-  // com status humano, sem agendamento e com a IA parada ele não tem por onde sair
-  assert.equal(t.rascunho ?? null, rascunhoAntes, 'o arranque não gerou nem reescreveu rascunho')
 
-  // e o agendador roda sem enviar nada
-  await esperar(6500)
-  const st2 = await verEstado(cookie)
-  const t2 = st2.tickets.find(x => x.id === 'qa14')
-  assert.equal(envios().length, enviosAntes, 'nenhum e-mail saiu')
-  assert.equal(t2.status, 'humano')
-  assert.equal(t2.relatorioAuto ?? null, null)
+  // o rascunho legado saiu do estado ativo, inteiro, para onde nada se perde
+  assert.equal(t.rascunho ?? null, null, 'o rascunho antigo não está mais ativo')
+  assert.equal(t.rascunhoTraducao ?? null, null, 'nem a tradução dele')
+  assert.equal(t.geradoPorIA ?? null, null, 'nem a marca de geração')
+  assert.equal(t.atendimentoNovo.rascunhoGerado ?? null, null)
+  assert.equal(t.atendimentoNovo.proximoEnvioMinimo ?? null, null)
+  assert.equal(t.atendimentoHumano.rascunhoInvalidado, RASCUNHO_LEGADO, 'o texto completo ficou guardado')
+
+  let c = await verAuditoria(cookie, 'qa14')
+  const legado = c.eventos.filter(e => e.dados?.origem === 'atendimento_humano_legado')
+  assert.equal(legado.length, 1, 'um evento de recuperação')
+  assert.equal(legado[0].dados.recuperadoDeEstadoLegado, true)
+  assert.equal(legado[0].dados.texto, RASCUNHO_LEGADO, 'o texto completo está na Auditoria')
+  assert.ok(legado[0].dados.agendamentoCancelado, 'o agendamento que existia ficou registrado')
+
+  // o texto da IA NÃO sai, nem passando por manual
+  const tentar = await fetch(base + '/api/tickets/qa14/aprovar', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
+    body: JSON.stringify({ texto: RASCUNHO_LEGADO, origem: 'manual' }),
+  })
+  assert.equal(tentar.status, 409, 'o rascunho legado não sai como manual')
+  assert.equal(envios().length, enviosAntes, 'e nada foi enviado na tentativa')
+
+  // DOIS reinícios: nada duplica e nada é sobrescrito
+  for (const volta of [1, 2]) {
+    await matar()
+    filho = (await subir({})).processo
+    await esperar(2500)
+    cookie = await entrar()
+    c = await verAuditoria(cookie, 'qa14')
+    assert.equal(c.eventos.filter(e => e.dados?.origem === 'atendimento_humano_legado').length, 1, `volta ${volta}: o evento não duplica`)
+    st = await verEstado(cookie)
+    t = st.tickets.find(x => x.id === 'qa14')
+    assert.equal(t.atendimentoHumano.rascunhoInvalidado, RASCUNHO_LEGADO, `volta ${volta}: o texto guardado não é sobrescrito`)
+    assert.equal(t.rascunho ?? null, null, `volta ${volta}: nenhum rascunho voltou`)
+    assert.equal(t.status, 'humano')
+    assert.equal(envios().length, enviosAntes, `volta ${volta}: nenhum e-mail`)
+  }
+
+  // o que é do dono, o dono manda
+  const meuTexto = 'Guten Tag, ich schreibe Ihnen persönlich: ich kümmere mich heute noch darum.'
+  const envio = await fetch(base + '/api/tickets/qa14/aprovar', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
+    body: JSON.stringify({ texto: meuTexto, origem: 'manual' }),
+  })
+  assert.equal(envio.status, 200, 'o texto NOVO do dono sai: ' + (await envio.text()).slice(0, 200))
+  assert.equal(envios().length, enviosAntes + 1, 'exatamente um e-mail, o do dono')
+
+  st = await verEstado(cookie)
+  t = st.tickets.find(x => x.id === 'qa14')
+  assert.equal(t.resposta, meuTexto)
+  assert.equal(t.status, 'humano', 'a conversa continua do dono depois da resposta dele')
+  // fase, motor, solução aceita e relatório intactos
+  assert.equal(t.atendimentoNovo.etapa ?? null, faseAntes, 'a fase não mudou')
+  assert.equal(t.motorAtendimento, motorAntes, 'o motor não mudou')
+  assert.equal(t.atendimentoNovo.acaoAceita ?? null, aceitaAntes, 'a solução aceita ficou')
+  assert.equal(t.atendimentoNovo.conclusaoPendente?.id ?? null, conclusaoAntes, 'a conclusão ficou')
+  assert.equal(t.relatorioAuto ?? null, null, 'nenhuma linha de relatório')
+  assert.equal(t.relatorioDia ?? null, null)
+
+  c = await verAuditoria(cookie, 'qa14')
+  assert.equal(c.eventos.filter(e => e.tipo === 'fase_confirmada' && e.dados?.tentativaId).length >= 0, true)
+  const enviado = c.eventos.filter(e => e.tipo === 'email_enviado').at(-1)
+  assert.equal(enviado.dados.origem, 'manual', 'origemEnvio manual')
+  assert.equal(enviado.dados.loja, 'loja2', 'pela conta da própria loja')
+  assert.ok(enviado.dados.mensagemId)
 })
 
 test('dois reinícios consecutivos depois da reconciliação: nada duplica', async () => {

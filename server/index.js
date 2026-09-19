@@ -364,9 +364,52 @@ function reforcarAtendimentoHumano() {
     for (const t of estado.tickets ?? []) {
       if (!emAtendimentoHumano(t)) continue
       if (t.iaPausada !== true) { t.iaPausada = true; mudou = true; corrigidos++ }
-      if (t.enviaEm) { t.enviaEm = undefined; mudou = true }
       if (t.status !== 'humano') { t.status = 'humano'; mudou = true }
       if (t.atendimentoNovo && t.atendimentoNovo.aguardando !== 'humano') { t.atendimentoNovo.aguardando = 'humano'; mudou = true }
+
+      // RASCUNHO LEGADO NUMA CONVERSA ASSUMIDA.
+      // Estado gravado antes desta regra pode ter t.rascunho sem
+      // atendimentoHumano.rascunhoInvalidado. Como a recusa da rota manual
+      // compara justamente com rascunhoInvalidado, esse texto podia sair como
+      // se o dono o tivesse escrito. Aqui ele é aposentado do estado ativo —
+      // e guardado, inteiro, onde nada se perde.
+      if (t.rascunho !== undefined) {
+        const an = t.atendimentoNovo
+        const texto = t.rascunho
+        // nunca sobrescreve o que já foi invalidado antes
+        if (!t.atendimentoHumano.rascunhoInvalidado) t.atendimentoHumano.rascunhoInvalidado = texto
+        auditar(t, 'caso_para_humano', {
+          resumo: 'Rascunho antigo aposentado no arranque (conversa já estava com você)',
+          situacao: 'atencao',
+          fase: an?.transicaoPendente?.para ?? an?.etapa ?? null,
+          // chave estável: dois reinícios não duplicam o evento
+          chave: `caso_para_humano:${t.id}:legado_rascunho:${t.atendimentoHumano.em ?? t.data}`,
+          dados: {
+            motivo: 'rascunho encontrado numa conversa já em atendimento humano', origem: 'atendimento_humano_legado',
+            recuperadoDeEstadoLegado: true,
+            por: t.atendimentoHumano.por ?? null, em: t.atendimentoHumano.em ?? null,
+            // o texto inteiro, sem corte — sai da tela, não da auditoria
+            rascunhoInvalidado: texto, texto,
+            // o que existia fica REGISTRADO, mesmo saindo do estado ativo
+            fase: an?.transicaoPendente?.para ?? an?.etapa ?? null,
+            tentativaEncerrada: an?.tentativaAtual ?? null,
+            agendamentoCancelado: t.enviaEm ? new Date(t.enviaEm).toISOString() : null,
+          },
+        })
+        t.rascunho = undefined
+        t.rascunhoTraducao = undefined
+        t.geradoPorIA = undefined
+        if (an) { an.rascunhoGerado = undefined; an.proximoEnvioMinimo = undefined }
+        mudou = true
+      }
+      // A FASE PENDENTE também não sobrevive. Ela ficou registrada no evento
+      // acima, mas no estado ativo faria a resposta manual do dono ser validada
+      // contra a etapa da IA — e, pior, confirmar essa etapa ao sair.
+      const anT = t.atendimentoNovo
+      if (anT?.transicaoPendente) { anT.transicaoPendente = null; mudou = true }
+      if (anT?.tentativaAtual) { anT.tentativaAtual = undefined; mudou = true }
+      // depois do rascunho: nenhum agendamento sobrevive numa conversa assumida
+      if (t.enviaEm) { t.enviaEm = undefined; mudou = true }
     }
     if (mudou) salvar(wsId)
   }
