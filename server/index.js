@@ -15,7 +15,7 @@ import {
   faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase, valoresMonetarios,
 } from './atendimento.js'
-import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, checklistDaTentativa, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual, origemDoEnvio, cicloAtual, eventosDoCiclo } from '../shared/auditoria.js'
+import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, checklistDaTentativa, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual, origemDoEnvio, cicloAtual, eventosDoCiclo, ROTULO_TIPO_AUDITORIA, LIMITE_AUDITORIA } from '../shared/auditoria.js'
 import { separarTexto, validarSituacaoEntrega, produtosDoTextoAtual, RE_PERGUNTA_LOGISTICA, RE_NAO_RECEBIDO } from '../shared/mensagem.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
@@ -501,6 +501,19 @@ function invalidarVerificacaoCupons(loja, motivo) {
 }
 
 /* ---------------- Auditoria da IA (observa, nunca controla) ---------------- */
+
+/**
+ * Campos do TICKET que a leitura de um ciclo produz. São exatamente os que a
+ * fotografia guarda e os que uma releitura reconstrói — a lista fica num lugar
+ * só para nunca divergir entre gravar e desfazer.
+ */
+const CAMPOS_DO_CICLO = ['rascunho', 'rascunhoTraducao', 'enviaEm', 'motivoEscalada', 'motivoTraducao', 'decisaoPendente', 'resolucao', 'geradoPorIA', 'confianca', 'categoria', 'status']
+
+/** Congela em profundidade: a fotografia do ciclo não pode ser alterada depois. */
+function congelar(v) {
+  if (v && typeof v === 'object' && !Object.isFrozen(v)) { for (const x of Object.values(v)) congelar(x); Object.freeze(v) }
+  return v
+}
 
 /**
  * Abre um CICLO de auditoria: um por mensagem nova do cliente. Tudo o que
@@ -1294,7 +1307,8 @@ function visao(wsId) {
     // A auditoria NÃO viaja no estado geral: são centenas de eventos por conversa,
     // e a fotografia do envio (checklist + fatos) é interna. Só /api/auditoria e
     // /api/auditoria/:id devolvem esses dados.
-    tickets: estado.tickets.map(t => (t.auditoriaIA || t.envioPendente ? { ...t, auditoriaIA: undefined, envioPendente: undefined } : t)),
+    tickets: estado.tickets.map(t => (t.auditoriaIA || t.envioPendente || t.fotoAntesDoCiclo
+      ? { ...t, auditoriaIA: undefined, envioPendente: undefined, fotoAntesDoCiclo: undefined } : t)),
     politicas: estado.politicas,
     faqs: estado.faqs,
     comportamentos: estado.comportamentos ?? [],
@@ -1641,7 +1655,7 @@ async function exigirColetaDeProduto(estado, wsId, t, motivoHumano) {
  * regenerar e depois de o lojista validar a foto. Devolve { ok, motivo }.
  * aoFalhar: 'humano' manda o caso para o lojista; 'manter' não mexe no ticket.
  */
-async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo = '', instrucaoEstilo = null, aoFalhar = 'humano' }) {
+async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo = '', instrucaoEstilo = null, aoFalhar = 'humano', releitura = null }) {
   if (motorDaConversa(t) !== 'novo') throw new Error('conversa clássica nunca recebe rascunho, fase ou agendamento do motor novo')
   // TRAVA GLOBAL DE PRODUTO em toda saída de rascunho: sem prova, só a coleta do produto pode nascer
   if (faseId !== 'coleta' && !produtoFoiInformado(t.atendimentoNovo)) {
@@ -1654,7 +1668,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
   const an = t.atendimentoNovo
-  const falhar = (motivo, textoRecusado = null) => {
+  const falhar = (motivo, textoRecusado = null, etapaDaFalha = 'validacao') => {
     // AUDITORIA: o rascunho não saiu — fica registrado como bloqueado, nunca como
     // enviado, e COM o texto recusado: sem ele não dá para julgar se o erro foi da
     // IA ou do validador
@@ -1675,7 +1689,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
       t.atendimentoNovo.faseRecusada = { para: faseId, mensagem: resumo, faltando, motivo, em: new Date().toISOString() }
     }
     if (aoFalhar === 'humano') mandarParaHumanoNovo(t, motivo, 'rascunho')
-    return { ok: false, motivo }
+    return { ok: false, motivo, etapa: etapaDaFalha }
   }
 
   // TRAVA ÚNICA DO CUPOM, antes de montar o prompt: sem código conferido na
@@ -1685,14 +1699,14 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   const tentativaId = `tent-${t.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
   an.tentativaAtual = tentativaId
   const cup = travaCupom(loja, faseId, an)
-  if (cup.precisa && !cup.ok) return falhar(motivoCupom(faseId, cup))
+  if (cup.precisa && !cup.ok) return falhar(motivoCupom(faseId, cup), null, 'cupom')
 
   // idioma-alvo da conversa (última mensagem completa do cliente) — a configuração fixa da loja não vale aqui
   const idiomaAlvo = an.idioma ?? normalizarIdioma(t.idioma) ?? null
   // o motor novo NUNCA vê a Base de Conhecimento: só nome e assinatura da loja (configDoNovo)
   const p2 = promptEscrever({ loja, config: configDoNovo(estado.config), faseId, faltando, an, pedido, ticket: t, instrucaoEstilo, idiomaAlvo })
   let e = await escreverNovo(p2.system, p2.user)
-  if (e.erro) return falhar(`A IA não conseguiu escrever a resposta (${e.erro})`)
+  if (e.erro) return falhar(`A IA não conseguiu escrever a resposta (${e.erro})`, null, 'escrita')
   somarCusto(t, e.custo); registrarGasto(estado, t.lojaId, e.custo)
 
   // idioma: o código declarado no JSON e a detecção local têm de bater com o alvo;
@@ -1701,7 +1715,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   if (!vi.ok) {
     const p3 = promptEscrever({ loja, config: configDoNovo(estado.config), faseId, faltando, an, pedido, ticket: t, instrucaoEstilo, idiomaAlvo, instrucaoIdioma: `a resposta anterior saiu no idioma errado (${vi.motivo})` })
     const e2 = await escreverNovo(p3.system, p3.user)
-    if (e2.erro) return falhar(`A IA não conseguiu reescrever a resposta no idioma do cliente (${e2.erro})`)
+    if (e2.erro) return falhar(`A IA não conseguiu reescrever a resposta no idioma do cliente (${e2.erro})`, null, 'escrita')
     somarCusto(t, e2.custo); registrarGasto(estado, t.lojaId, e2.custo)
     e = e2
     vi = conferirIdioma(e.r.resposta, idiomaAlvo, e.r.idioma)
@@ -1745,6 +1759,14 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
     an.aprovacaoObrigatoria = v.aviso || `idioma "${idiomaAlvo}" não é validado localmente — aprovação humana obrigatória`
     t.enviaEm = undefined
   } else an.aprovacaoObrigatoria = undefined
+  // RELEITURA: proibição ESTRUTURAL de envio. Não depende de desligar automação
+  // nem configuração de loja — o contexto chega aqui e o agendamento não existe.
+  if (releitura) {
+    t.enviaEm = undefined
+    an.envioBloqueado = undefined
+    an.aprovacaoObrigatoria = an.aprovacaoObrigatoria
+      ?? 'releitura da mensagem depois de uma correção — aprovação humana obrigatória'
+  }
 
   // AUDITORIA: checklist da resposta (calculado aqui, no servidor) e agendamento
   const checklist = checklistDoTicket(estado, wsIdAtual(estado), t, { faseId, texto: t.rascunho, enviado: false })
@@ -1772,7 +1794,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   return { ok: true, motivo: null }
 }
 
-async function processarNovo(estado, t, { agora = Date.now() } = {}) {
+async function processarNovo(estado, t, { agora = Date.now(), releitura = null } = {}) {
   if (motorDaConversa(t) !== 'novo') throw new Error('conversa clássica nunca entra no motor novo')
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
@@ -1780,10 +1802,29 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   const an = t.atendimentoNovo
   const identificado = clienteComPedido(estado, t.de, t.lojaId, textoDaConversa(t))
 
+  // FOTOGRAFIA IMUTÁVEL do estado ANTERIOR ao ciclo, tirada antes da
+  // classificação. É o que uma releitura reconstrói: sem ela, desfazer uma
+  // leitura errada vira adivinhação de quais campos derivados limpar (e sobra
+  // ajuste de tamanho, foto, subfluxo…). Escrita UMA vez por ciclo — a própria
+  // releitura nunca a substitui.
+  if (!releitura && t.cicloAuditoria && t.fotoAntesDoCiclo?.ciclo !== t.cicloAuditoria) {
+    t.fotoAntesDoCiclo = congelar({
+      ciclo: t.cicloAuditoria,
+      em: new Date().toISOString(),
+      atendimentoNovo: structuredClone(an),
+      // structuredClone em cada campo: congelar uma REFERENCIA viva (decisaoPendente,
+      // por exemplo) travaria o ticket de verdade na proxima escrita
+      ticket: Object.fromEntries(CAMPOS_DO_CICLO.map(k => [k, structuredClone(t[k] ?? null)])),
+    })
+  }
+
   // 1. classificar (a IA não vê a escada, só o que foi oferecido por último)
   const p1 = promptClassificar({ loja, an, pedido, ticket: t })
   const c = await classificarNovo(p1.system, p1.user)
-  if (c.erro) { mandarParaHumanoNovo(t, `A IA não conseguiu classificar a mensagem (${c.erro})`, 'classificacao'); return { spam: false } }
+  if (c.erro) {
+    mandarParaHumanoNovo(t, `A IA não conseguiu classificar a mensagem (${c.erro})`, 'classificacao')
+    return { spam: false, falha: { etapa: 'classificacao', motivo: `A IA não conseguiu classificar a mensagem (${c.erro})` } }
+  }
   somarCusto(t, c.custo); registrarGasto(estado, t.lojaId, c.custo)
   const cls = c.r
   if (cls.spam && !identificado) return { spam: true }
@@ -1913,6 +1954,13 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   })
   if (an.fluxo && CATEGORIA_DO_FLUXO[an.fluxo]) t.categoria = CATEGORIA_DO_FLUXO[an.fluxo]
 
+  // RELEITURA: a decisão fica auditada, mas encerrar, registrar aceite, cancelar
+  // ou reagendar uma confirmação são compromissos com o cliente — nenhum deles
+  // pode nascer de uma correção nossa. Aqui a releitura para e nada é aplicado.
+  if (releitura && (d.encerrar || d.aceite || d.cancelarConfirmacao || d.reconfirmar)) {
+    return { spam: false, falha: { etapa: 'decisao', motivo: 'a releitura não encerra o caso, não registra aceite e não reagenda confirmação' } }
+  }
+
   if (d.encerrar) {
     t.status = 'enviado'; t.lido = true
     t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined
@@ -1980,7 +2028,8 @@ async function processarNovo(estado, t, { agora = Date.now() } = {}) {
   }
 
   // 3. escrever, conferir e agendar — a fase só muda quando o e-mail sair
-  await prepararRascunhoNovo(estado, t, { faseId: d.fase, faltando: d.faltando, resumo: cls.resumo || '' })
+  const rp = await prepararRascunhoNovo(estado, t, { faseId: d.fase, faltando: d.faltando, resumo: cls.resumo || '', releitura })
+  if (!rp.ok) return { spam: false, falha: { etapa: rp.etapa ?? 'rascunho', motivo: rp.motivo } }
   return { spam: false }
 }
 
@@ -4588,67 +4637,203 @@ app.post('/api/tickets/:id/rascunho', (req, res) => {
   salvar(req.wsId); ok(req, res)
 })
 
-// Refaz o rascunho com uma instrução do lojista ("ofereça 10% de desconto", "seja mais curto"…)
+/** Eventos que FECHAM um ciclo: depois deles a conversa já falou com o cliente. */
+const EVENTOS_QUE_FECHAM_O_CICLO = ['email_enviado', 'respondido_manualmente', 'fase_confirmada']
+
+/**
+ * BARREIRA DEFENSIVA da releitura. Roda sobre o resultado antes de ele encostar
+ * no ticket real: compara o depois com o antes e recusa qualquer coisa que uma
+ * correção nossa não pode produzir. Existe porque "desligar o envio" em algum
+ * ponto do caminho é uma promessa; isto é uma conferência.
+ */
+function conferirReleitura(antes, depois) {
+  const v = []
+  const igual = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  const anA = antes.atendimentoNovo ?? {}; const anD = depois.atendimentoNovo ?? {}
+
+  if (depois.enviaEm) v.push('a releitura agendou um envio')
+  if (depois.envioPendente) v.push('a releitura deixou um envio em andamento')
+  if (!['aprovacao', 'humano'].includes(depois.status)) v.push(`a releitura terminou em "${depois.status}", fora de Aprovações e da fila do dono`)
+  if ((anD.etapa ?? null) !== (anA.etapa ?? null)) v.push('a releitura avançou a etapa')
+  if (!igual(anD.acaoAceita, anA.acaoAceita) || !igual(anD.conclusaoPendente, anA.conclusaoPendente)) v.push('a releitura mexeu no aceite')
+  for (const k of ['relatorioAuto', 'relatorioDia', 'relatorioTexto', 'relatorioLinha', 'relatorioDetalhes']) {
+    if (!igual(depois[k], antes[k])) v.push('a releitura mexeu no relatório')
+  }
+  for (const k of ['resposta', 'respondidoEm', 'respostaMensagemId', 'respostaFase', 'marcadoRespondido']) {
+    if (!igual(depois[k], antes[k])) v.push('a releitura mexeu na resposta enviada')
+  }
+  if (!igual(depois.corpo, antes.corpo) || !igual(depois.data, antes.data)) v.push('a releitura alterou a mensagem do cliente')
+  if ((depois.historico ?? []).length !== (antes.historico ?? []).length) v.push('a releitura alterou o histórico da conversa')
+  if (depois.cicloAuditoria !== antes.cicloAuditoria) v.push('a releitura trocou o ciclo de auditoria')
+  if (!igual(depois.fotoAntesDoCiclo, antes.fotoAntesDoCiclo)) v.push('a releitura alterou a fotografia do ciclo')
+
+  // eventos NOVOS: nenhum tipo que signifique compromisso com o cliente
+  const antigas = new Set((antes.auditoriaIA ?? []).map(e => e.chave))
+  const proibidos = [...EVENTOS_QUE_FECHAM_O_CICLO, 'envio_agendado', 'caso_encerrado', 'cliente_aceitou', 'envio_reagendado']
+  for (const e of depois.auditoriaIA ?? []) {
+    if (!antigas.has(e.chave) && proibidos.includes(e.tipo)) v.push(`a releitura criou o evento "${ROTULO_TIPO_AUDITORIA[e.tipo] ?? e.tipo}"`)
+  }
+  // nenhum evento antigo pode SUMIR (fora da retenção honesta, que já é outro assunto)
+  if ((depois.auditoriaIA ?? []).length < LIMITE_AUDITORIA) {
+    const novas = new Set((depois.auditoriaIA ?? []).map(e => e.chave))
+    for (const e of antes.auditoriaIA ?? []) if (!novas.has(e.chave)) { v.push('a releitura apagou um evento antigo'); break }
+  }
+  return [...new Set(v)]
+}
+
 /**
  * RELEITURA da mensagem atual do cliente, com as regras vigentes. Serve quando o
  * sistema leu a mensagem errado e foi corrigido: a conversa e o CICLO continuam
  * os mesmos, abre-se outra TENTATIVA, e tudo o que veio da leitura anterior
  * (jornada, fase, produtos, endereço, rascunho) é descartado — mas preservado na
- * auditoria, nunca apagado. Não envia nada e não avança fase.
+ * auditoria, nunca apagado.
+ *
+ * Três garantias, nesta ordem:
+ *  1. NUNCA envia. O contexto da releitura desce até quem prepara o rascunho, e
+ *     no fim a barreira confere o resultado campo a campo. Uma releitura só pode
+ *     terminar com rascunho em Aprovações ou com o caso na fila do dono.
+ *  2. É TRANSACIONAL. Tudo acontece numa cópia profunda; o ticket real só é
+ *     substituído depois que classificação, escrita, validação e barreira passam.
+ *     Qualquer falha deixa a conversa exatamente como estava.
+ *  3. Só responde 200 depois de a gravação crítica confirmar o banco.
  */
 app.post('/api/tickets/:id/reclassificar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
-  if (motorDaConversa(t) !== 'novo') {
-    return res.status(400).json({ erro: 'Releitura só existe no modo novo.', state: visao(req.wsId) })
-  }
-  if (!iaConfigurada) {
-    return res.status(400).json({ erro: 'A releitura usa o Claude — configure a ANTHROPIC_API_KEY primeiro.', state: visao(req.wsId) })
-  }
-  const an = t.atendimentoNovo
-  if (!an) return res.status(400).json({ erro: 'Esta conversa ainda não tem leitura do motor.', state: visao(req.wsId) })
-  // compromisso já assumido não é releitura: aceite e conclusão ficam intocados
-  if (an.acaoAceita || (an.conclusaoPendente && !['cancelada', 'recusada'].includes(an.conclusaoPendente.status))) {
-    return res.status(400).json({ erro: 'Esta conversa já tem um aceite registrado — a releitura não mexe em solução aceita.', state: visao(req.wsId) })
-  }
-  const motivo = String(req.body?.motivo || '').trim() || 'Releitura da mensagem depois de uma correção do sistema'
+  const recusar = (msg, status = 400) => res.status(status).json({ erro: msg, state: visao(req.wsId) })
 
-  // 1) PRESERVA o que será descartado (o rascunho antigo e a leitura antiga)
-  auditar(t, 'correcao_do_sistema', {
-    resumo: motivo, situacao: 'informativo', fase: an.transicaoPendente?.para ?? null,
-    chave: `correcao_do_sistema:${t.id}:${Date.now()}`,
+  if (motorDaConversa(t) !== 'novo') return recusar('Releitura só existe no modo novo.')
+  if (!iaConfigurada) return recusar('A releitura usa o Claude — configure a ANTHROPIC_API_KEY primeiro.')
+  const an = t.atendimentoNovo
+  if (!an) return recusar('Esta conversa ainda não tem leitura do motor.')
+
+  // --- confirmação explícita e motivo de verdade (o motivo fica na auditoria)
+  if (req.body?.confirmar !== true) return recusar('A releitura precisa de confirmação explícita.')
+  const motivo = String(req.body?.motivo ?? '').trim()
+  if (!motivo) return recusar('Diga o motivo da releitura — ele fica registrado na auditoria.')
+
+  // --- clique antigo: a tela precisa estar olhando o MESMO estado que existe agora
+  const cicloEsperado = String(req.body?.cicloIdEsperado ?? '')
+  const tentativaEsperada = String(req.body?.tentativaIdEsperada ?? '')
+  const mensagemEsperada = String(req.body?.mensagemEsperada ?? '')
+  if (!cicloEsperado || !tentativaEsperada || !mensagemEsperada) {
+    return recusar('A releitura precisa do ciclo, da tentativa e da mensagem que você está vendo na tela.')
+  }
+  const desatualizado = 'A conversa mudou desde que você abriu a tela — recarregue e confira de novo antes de reler.'
+  if (cicloEsperado !== (t.cicloAuditoria ?? '')) return recusar(desatualizado, 409)
+  if (tentativaEsperada !== (an.tentativaAtual ?? '')) return recusar(desatualizado, 409)
+  if (mensagemEsperada !== (t.data ?? '')) return recusar(desatualizado, 409)
+
+  // --- ciclo já comprometido: nada de reescrever um ciclo que já falou com o cliente
+  const doCiclo = eventosDoCiclo(t.auditoriaIA ?? [], t.cicloAuditoria ?? null)
+  const fechado = doCiclo.find(e => EVENTOS_QUE_FECHAM_O_CICLO.includes(e.tipo))
+  if (fechado) return recusar(`Este ciclo já registrou "${ROTULO_TIPO_AUDITORIA[fechado.tipo] ?? fechado.tipo}" — a releitura não reescreve um ciclo que já respondeu ao cliente.`, 409)
+  if (t.resposta || t.respondidoEm || t.marcadoRespondido) return recusar('Esta conversa já foi respondida no ciclo atual — a releitura não entra aqui.', 409)
+  if (an.acaoAceita || (an.conclusaoPendente && !['cancelada', 'recusada'].includes(an.conclusaoPendente.status))) {
+    return recusar('Esta conversa já tem um aceite registrado — a releitura não mexe em solução aceita.')
+  }
+  if (t.envioPendente) return recusar('Há um envio em andamento nesta conversa — a releitura não entra no meio de um envio.', 409)
+  if (t.relatorioAuto || t.relatorioDia || t.relatorioTexto) return recusar('Esta conversa já entrou no relatório — a releitura não mexe em caso relatado.', 409)
+
+  // --- idempotência: dois cliques iguais produzem UMA correção
+  const chaveReleitura = String(req.body?.idempotencia ?? '').trim()
+    || `correcao_do_sistema:${t.id}:${cicloEsperado}:${tentativaEsperada}`
+  if ((t.auditoriaIA ?? []).some(e => e.chave === chaveReleitura)) {
+    return recusar('Esta releitura já foi feita — nada foi repetido.', 409)
+  }
+
+  /* ------------------------------------------------------------------
+     A PARTIR DAQUI NADA TOCA O TICKET REAL. Tudo acontece na cópia.
+     ------------------------------------------------------------------ */
+  const antes = structuredClone(t)
+  const trab = structuredClone(t)
+
+  const falhaDeReleitura = (etapa, detalhe, status = 500) => {
+    // o atendimento ativo continua intacto: registra-se SÓ a falha
+    auditar(t, 'correcao_do_sistema', {
+      resumo: `Releitura não aplicada (${etapa})`, situacao: 'bloqueado', fase: t.atendimentoNovo?.transicaoPendente?.para ?? null,
+      chave: `${chaveReleitura}:falha:${Date.now()}`,
+      dados: { aplicada: false, etapa, motivo, detalhe: String(detalhe ?? '').slice(0, 500), por: req.usuario?.nome || req.usuario?.email || 'lojista' },
+    })
+    salvar(req.wsId)
+    return res.status(status).json({ erro: `A releitura não foi aplicada (${etapa}: ${detalhe}). A conversa continua exatamente como estava.`, state: visao(req.wsId) })
+  }
+
+  // 1) PRESERVA integralmente o que vai ser descartado — inclusive o rascunho
+  //    inteiro, sem corte: sem ele não dá para julgar o que o sistema ia dizer.
+  const anAntigo = trab.atendimentoNovo
+  auditar(trab, 'correcao_do_sistema', {
+    resumo: motivo, situacao: 'informativo', fase: anAntigo.transicaoPendente?.para ?? null,
+    chave: chaveReleitura,
     dados: {
-      por: req.usuario?.nome || req.usuario?.email || 'lojista', motivo,
-      jornadaDescartada: an.fluxo ?? null,
-      faseDescartada: an.transicaoPendente?.para ?? null,
-      rascunhoDescartado: String(t.rascunho ?? '').slice(0, 2000),
-      produtosDescartados: [...(an.produtosAfetados ?? [])],
-      enderecoDescartado: an.enderecoInformado ?? null,
-      tentativaAnterior: an.tentativaAtual ?? null,
+      aplicada: true, por: req.usuario?.nome || req.usuario?.email || 'lojista', motivo,
+      jornadaDescartada: anAntigo.fluxo ?? null,
+      subfluxoDescartado: anAntigo.subfluxo ?? null,
+      faseDescartada: anAntigo.transicaoPendente?.para ?? null,
+      rascunhoDescartado: trab.rascunho ?? null,
+      produtosDescartados: [...(anAntigo.produtosAfetados ?? [])],
+      enderecoDescartado: anAntigo.enderecoInformado ?? null,
+      ajusteDescartado: anAntigo.ajusteTamanho ?? null,
+      tentativaAnterior: anAntigo.tentativaAtual ?? null,
+      reconstruidoDaFotografia: trab.fotoAntesDoCiclo?.ciclo === trab.cicloAuditoria,
     },
   })
 
-  // 2) zera SÓ o que veio da leitura anterior — ciclo, histórico e eventos ficam
-  t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined
-  t.motivoEscalada = undefined; t.motivoTraducao = undefined; t.decisaoPendente = undefined
-  an.transicaoPendente = null; an.rascunhoGerado = undefined; an.faseRecusada = undefined
-  an.fluxo = null; an.subfluxo = null; an.motivo = null
-  an.produtosAfetados = []; an.produtosInformados = false
-  an.enderecoInformado = null; an.enderecoConfirmado = null
-  an.aguardandoProduto = false; an.proximaAposColeta = undefined
-  an.aguardando = null; an.envioBloqueado = undefined
-  t.reclassificacoes = (t.reclassificacoes ?? 0) + 1
-
-  // 3) relê a mesma mensagem com as regras de hoje (mesmo ciclo, nova tentativa)
-  try {
-    await processarNovo(req.estado, t, {})
-  } catch (err) {
-    salvar(req.wsId)
-    return res.status(500).json({ erro: `Releitura falhou: ${err.message}`, state: visao(req.wsId) })
+  // 2) RECONSTRÓI o estado anterior ao ciclo. Com fotografia, é cópia dela; sem
+  //    fotografia (ciclos anteriores a esta versão), é uma remediação controlada
+  //    que parte do estado zerado e devolve só o que JÁ estava concluído antes —
+  //    assim nenhum resto da leitura errada (ajuste, foto, subfluxo) sobrevive.
+  const foto = trab.fotoAntesDoCiclo?.ciclo === trab.cicloAuditoria ? trab.fotoAntesDoCiclo : null
+  if (foto) {
+    trab.atendimentoNovo = structuredClone(foto.atendimentoNovo)
+    // a fotografia e congelada: entra sempre como copia, nunca como referencia
+    for (const k of CAMPOS_DO_CICLO) trab[k] = structuredClone(foto.ticket[k]) ?? undefined
+  } else {
+    const anterior = trab.atendimentoNovo
+    const base = novoEstado()
+    for (const k of ['etapa', 'historicoEtapas', 'acaoAceita', 'conclusaoPendente', 'ofertaAtual', 'ofertaEnviadaEm', 'fotoSolicitada', 'fotoValidada']) {
+      if (anterior[k] !== undefined) base[k] = anterior[k]
+    }
+    trab.atendimentoNovo = base
+    for (const k of CAMPOS_DO_CICLO) if (!['status', 'categoria'].includes(k)) trab[k] = undefined
   }
-  salvar(req.wsId)
+  trab.reclassificacoes = (trab.reclassificacoes ?? 0) + 1
+
+  // 3) relê a MESMA mensagem com as regras de hoje (mesmo ciclo, nova tentativa)
+  let r
+  try {
+    r = await processarNovo(req.estado, trab, { releitura: { motivo, chave: chaveReleitura } })
+  } catch (err) {
+    return falhaDeReleitura('exceção', err.message)
+  }
+  if (r?.falha) return falhaDeReleitura(r.falha.etapa, r.falha.motivo)
+  if (r?.spam) return falhaDeReleitura('classificacao', 'a releitura classificou a mensagem como spam')
+
+  // 4) BARREIRA: o resultado tem de ser compatível com uma correção nossa
+  const violacoes = conferirReleitura(antes, trab)
+  if (violacoes.length) return falhaDeReleitura('barreira de segurança', violacoes.join('; '))
+
+  /* ------------------------------------------------------------------
+     Troca do ticket (preservando a identidade dentro de estado.tickets) e
+     gravação crítica: 200 só depois de o banco confirmar.
+     ------------------------------------------------------------------ */
+  // a copia perdeu o congelamento: a fotografia volta imutavel no ticket real
+  const escrever = origem => { for (const k of Object.keys(t)) delete t[k]; Object.assign(t, origem); congelar(t.fotoAntesDoCiclo) }
+  escrever(trab)
+  try {
+    await gravarCritico(req.wsId)
+  } catch (err) {
+    escrever(antes) // volta ao que o banco ainda tem
+    auditar(t, 'correcao_do_sistema', {
+      resumo: 'Releitura não aplicada (gravação)', situacao: 'bloqueado',
+      chave: `${chaveReleitura}:falha:${Date.now()}`,
+      dados: { aplicada: false, etapa: 'gravacao', motivo, detalhe: String(err.message).slice(0, 500) },
+    })
+    return res.status(500).json({ erro: `A releitura não pôde ser salva (${err.message}) — a conversa continua exatamente como estava.`, state: visao(req.wsId) })
+  }
   return ok(req, res)
 })
 
+// Refaz o rascunho com uma instrução do lojista ("ofereça 10% de desconto", "seja mais curto"…)
 app.post('/api/tickets/:id/regenerar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   if (!iaConfigurada) {

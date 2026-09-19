@@ -60,7 +60,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -68,7 +68,7 @@ for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89,
   })
 }
 // pedidos da loja automática (loja3)
-for (const n of [50, 51]) {
+for (const n of [50, 51, 52]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja3',
@@ -105,10 +105,25 @@ const api = (rota, corpo, metodo = 'POST') => realFetch(url + rota, {
 const ticket = async id => (await api('/api/state', null, 'GET')).state.tickets.find(t => t.id === id)
 const auditoria = async id => (await api(`/api/auditoria/${id}`, null, 'GET')).conversa
 const esperar = ms => new Promise(r => setTimeout(r, ms))
+// a releitura exige confirmação, motivo e o estado EXATO que a tela está vendo
+const releitura = async (id, motivo, extra = {}) => {
+  const t0 = await ticket(id)
+  return api(`/api/tickets/${id}/reclassificar`, {
+    confirmar: true, motivo,
+    cicloIdEsperado: t0.cicloAuditoria, tentativaIdEsperada: t0.atendimentoNovo?.tentativaAtual,
+    mensagemEsperada: t0.data, ...extra,
+  })
+}
+const semRelatorio = t => {
+  assert.equal(t.relatorioAuto ?? null, null, 'nada no relatório automático')
+  assert.equal(t.relatorioDia ?? null, null, 'nenhum dia de relatório')
+  assert.equal(t.relatorioTexto ?? null, null, 'nenhuma linha de relatório')
+}
 
 /* ---------- IA simulada: classificação roteirizada + escritor que OBEDECE ao prompt ---------- */
 const fila = []
 let escritaRuim = false
+let escritaErro = false
 globalThis.fetch = async (u, o) => {
   const alvo = String(u)
   if (!/anthropic/.test(alvo)) return realFetch(u, o)
@@ -131,6 +146,8 @@ globalThis.fetch = async (u, o) => {
   // escritor: monta o texto com o que o PROMPT exige (prazo, cupom, percentual, ação).
   // Com escritaRuim ligado ele devolve um texto que NÃO nomeia a ação da etapa —
   // é assim que se reproduz um erro de redação da IA, que o validador recusa.
+  // 'escritaErro' = a CHAMADA da escrita falha; 'escritaRuim' = ela responde, mas o validador recusa
+  if (escritaErro) return new Response(JSON.stringify({ error: { message: 'falha simulada da escrita' } }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   if (escritaRuim) return responder({ resposta: 'Hallo! Wir haben Ihre Nachricht erhalten und melden uns bald.', acao_proposta: sys.match(/"acao_proposta" deve ser exatamente "([^"]+)"/)?.[1] ?? null, idioma: 'de' })
   const titulo = sys.match(/AÇÃO DESTA RESPOSTA — ([^\n]+):/)?.[1] ?? ''
   const aceita = sys.match(/Opção aceita pelo cliente e aprovada pelo lojista: ([^\n]+)/)?.[1] ?? ''
@@ -944,7 +961,7 @@ test('releitura: mesma conversa e mesmo ciclo, nova tentativa, leitura antiga pr
     intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
     situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'qualidade', idioma: 'de', idiomaConfiavel: true, spam: false,
   })
-  const rr = await api(`/api/tickets/${id}/reclassificar`, { motivo: 'correcao do sistema: leitura anterior errada' })
+  const rr = await releitura(id, 'correcao do sistema: leitura anterior errada')
   assert.equal(rr.status, 200, 'releitura aceita: ' + (rr.erro ?? ''))
 
   const depois = await ticket(id)
@@ -985,9 +1002,142 @@ test('releitura recusada quando ja existe aceite registrado', async () => {
     situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'ok', idioma: 'de', idiomaConfiavel: true, spam: false,
   })
   await api('/api/simular-email', { ticketId: t.id, corpo: 'Ja, gerne.' })
-  const rr = await api(`/api/tickets/${t.id}/reclassificar`, {})
+  const rr = await releitura(t.id, 'tentativa de reler um caso ja aceito')
   assert.equal(rr.status, 400, 'solucao aceita nao se rele')
   assert.match(rr.erro, /aceite registrado/)
+})
+
+// Estado de partida comum aos cenários de falha: a primeira leitura é recusada
+// pelo validador, então a conversa fica com o dono, sem rascunho e sem
+// agendamento — é exatamente de onde uma releitura parte na vida real.
+async function casoParaReler(n, lojaId = 'loja1') {
+  escritaRuim = true
+  fila.push({
+    intencao: 'pede_troca', motivo: 'tamanho', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'tamanho', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: `c${n}@web.de`, nome: 'C' + n, assunto: 'Bestellung #' + n, corpo: 'Das Polo Premium ist schlecht.', lojaId })
+  escritaRuim = false
+  return r0.ticket.id
+}
+const leituraCerta = () => fila.push({
+  intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+  situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'qualidade', idioma: 'de', idiomaConfiavel: true, spam: false,
+})
+
+test('releitura numa loja com envio automático e cadência vencida: gera rascunho, mas não agenda e não envia', async () => {
+  // loja3 tem novoEnvioAutomatico + automação geral + ATENDO_LIBERAR_AUTOENVIO=1.
+  // Nada disso pode fazer uma releitura agendar: a proibição é estrutural.
+  const id = await casoParaReler(52, 'loja3')
+  await esperar(3300) // a cadência (3 s) já venceu quando a releitura roda
+  leituraCerta()
+  const rr = await releitura(id, 'correcao do sistema: jornada errada')
+  assert.equal(rr.status, 200, 'releitura aceita: ' + (rr.erro ?? ''))
+
+  const t = await ticket(id)
+  const an = t.atendimentoNovo
+  assert.ok(t.rascunho, 'o rascunho novo existe')
+  assert.equal(t.status, 'aprovacao', 'terminou em Aprovações')
+  assert.equal(t.enviaEm ?? null, null, 'nada agendado, mesmo com envio automático ligado')
+  assert.ok(an.aprovacaoObrigatoria, 'a releitura marca aprovação humana obrigatória')
+  assert.equal(an.etapa ?? null, null, 'nenhuma fase avançou')
+  semRelatorio(t)
+
+  const c = await auditoria(id)
+  const novos = c.eventos.filter(e => e.dados?.tentativaId === an.tentativaAtual)
+  assert.equal(novos.filter(e => e.tipo === 'envio_agendado').length, 0, 'nenhum envio agendado')
+  assert.equal(c.eventos.filter(e => e.tipo === 'email_enviado').length, 0, 'nenhum e-mail enviado')
+
+  // e continua sem sair depois da cadência
+  await esperar(1200)
+  const t2 = await ticket(id)
+  assert.equal(t2.enviaEm ?? null, null, 'segue sem agendamento')
+  assert.equal(t2.resposta ?? null, null, 'nada foi enviado')
+})
+
+test('releitura que falha: classificação, escrita, validação e gravação deixam a conversa idêntica', async () => {
+  for (const [n, nome, preparar, limpar] of [
+    [93, 'classificação', () => fila.push('erro'), () => {}],
+    [94, 'escrita', () => { leituraCerta(); escritaErro = true }, () => { escritaErro = false }],
+    [95, 'validação', () => { leituraCerta(); escritaRuim = true }, () => { escritaRuim = false }],
+    [96, 'gravação crítica', () => { leituraCerta(); process.env.ATENDO_TESTE_FALHA_GRAVACAO = '1' }, () => { delete process.env.ATENDO_TESTE_FALHA_GRAVACAO }],
+  ]) {
+    const id = await casoParaReler(n)
+    const antes = await ticket(id)
+    const cAntes = await auditoria(id)
+    preparar()
+    const rr = await releitura(id, `falha proposital de ${nome}`)
+    limpar()
+    assert.equal(rr.status, 500, `falha de ${nome} devolve erro`)
+    assert.match(rr.erro, /continua exatamente como estava/)
+
+    const depois = await ticket(id)
+    assert.deepEqual(depois, antes, `falha de ${nome}: o ticket ficou IDÊNTICO`)
+    semRelatorio(depois)
+    const c = await auditoria(id)
+    // uma única falha registrada, e nada de leitura nova aplicada
+    const falhas = c.eventos.filter(e => e.tipo === 'correcao_do_sistema')
+    assert.equal(falhas.length, 1, `falha de ${nome}: exatamente uma falha registrada`)
+    assert.equal(falhas[0].dados.aplicada, false)
+    assert.equal(c.cicloAtual, cAntes.cicloAtual, 'o ciclo não mudou')
+    assert.equal(c.eventos.filter(e => e.tipo === 'ia_classificou').length, 1, 'a leitura nova não entrou')
+    assert.equal(c.eventos.filter(e => ['envio_agendado', 'email_enviado', 'fase_confirmada'].includes(e.tipo)).length, 0)
+  }
+})
+
+test('releitura: dois cliques iguais produzem uma correção só', async () => {
+  const id = await casoParaReler(91)
+  leituraCerta()
+  const um = await releitura(id, 'correcao do sistema', { idempotencia: 'releitura-91' })
+  assert.equal(um.status, 200, um.erro ?? '')
+
+  // mesmo clique de novo: o estado já mudou, e a chave já foi usada.
+  // Nada é empilhado na IA de propósito: a recusa tem de vir ANTES de qualquer leitura.
+  const dois = await api(`/api/tickets/${id}/reclassificar`, {
+    confirmar: true, motivo: 'correcao do sistema', idempotencia: 'releitura-91',
+    cicloIdEsperado: um.state.tickets.find(x => x.id === id).cicloAuditoria,
+    tentativaIdEsperada: um.state.tickets.find(x => x.id === id).atendimentoNovo.tentativaAtual,
+    mensagemEsperada: um.state.tickets.find(x => x.id === id).data,
+  })
+  assert.equal(dois.status, 409, 'a segunda chamada é recusada')
+  assert.match(dois.erro, /já foi feita/)
+
+  const c = await auditoria(id)
+  assert.equal(c.eventos.filter(e => e.tipo === 'correcao_do_sistema' && e.dados.aplicada).length, 1, 'uma correção só')
+  assert.equal(c.eventos.filter(e => e.tipo === 'ia_classificou').length, 2, 'duas leituras: a errada e a certa')
+  semRelatorio(await ticket(id))
+})
+
+test('releitura recusada quando o estado mudou entre abrir a tela e confirmar', async () => {
+  const id = await casoParaReler(92)
+  const t = await ticket(id)
+  const base = {
+    confirmar: true, motivo: 'correcao do sistema',
+    cicloIdEsperado: t.cicloAuditoria, tentativaIdEsperada: t.atendimentoNovo.tentativaAtual, mensagemEsperada: t.data,
+  }
+  for (const [campo, valor] of [['cicloIdEsperado', 'ciclo-antigo'], ['tentativaIdEsperada', 'tent-antiga'], ['mensagemEsperada', '2020-01-01T00:00:00.000Z']]) {
+    const rr = await api(`/api/tickets/${id}/reclassificar`, { ...base, [campo]: valor })
+    assert.equal(rr.status, 409, `${campo} desatualizado é recusado`)
+    assert.match(rr.erro, /recarregue/)
+  }
+  // sem confirmação e sem motivo também não passa
+  assert.equal((await api(`/api/tickets/${id}/reclassificar`, { ...base, confirmar: false })).status, 400)
+  assert.equal((await api(`/api/tickets/${id}/reclassificar`, { ...base, motivo: '  ' })).status, 400)
+  // e a conversa continua como estava
+  assert.deepEqual(await ticket(id), t)
+})
+
+test('releitura recusada num ciclo que já respondeu ao cliente', async () => {
+  leituraCerta()
+  const r0 = await api('/api/simular-email', { de: 'c97@web.de', nome: 'C97', assunto: 'Bestellung #97', corpo: 'Das Polo Premium ist schlecht.', lojaId: 'loja1' })
+  const id = r0.ticket.id
+  const t = await ticket(id)
+  const env = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env.status, 200, env.erro ?? '')
+  const rr = await releitura(id, 'tentativa de reler um ciclo ja respondido')
+  assert.equal(rr.status, 409, 'ciclo com mensagem enviada não se relê')
+  assert.match(rr.erro, /já foi respondida|já registrou/)
+  semRelatorio(await ticket(id))
 })
 
 test('os auxiliares de ensaio não alteram o corpo da mensagem do cliente', async () => {
