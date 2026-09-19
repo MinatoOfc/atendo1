@@ -101,24 +101,24 @@ export type EstadoEnvioAuditoria =
 export interface PrazoEntrega { min: number; max: number; processamento: number }
 
 /**
- * O que a tela estava vendo quando o dono abriu a revisão. Vai de volta ao
- * servidor no instante do envio para ele conferir que nada disso mudou.
- * É o RASCUNHO-BASE — nunca o texto final, que o dono pode ter editado.
+ * FOTOGRAFIA DA APROVAÇÃO — calculada pelo servidor e devolvida por ela mesma
+ * no instante do envio, pelas três telas (Auditoria, Aprovações e a tela da
+ * conversa). É o RASCUNHO-BASE, nunca o texto final, que o dono pode editar.
+ * No motor novo ela é obrigatória: sem ela o servidor recusa o envio.
  */
-export interface RevisaoEsperada {
-  workspaceId?: string | null
-  lojaId?: string | null
-  cicloId?: string | null
-  tentativaId?: string | null
-  mensagemEm?: string | null
-  rascunhoHash?: string | null
-  fase?: string | null
-  idioma?: string | null
-  percentual?: number | null
-  valor?: number | null
-  cupom?: string | null
-  prazo?: PrazoEntrega | null
-  minimoEnvio?: string | null
+export interface FotografiaAprovacao {
+  workspaceId: string
+  lojaId: string
+  ticketId: string
+  /** id/data da última mensagem do cliente */
+  mensagemEm: string | null
+  cicloId: string | null
+  tentativaId: string | null
+  fase: string | null
+  rascunhoHash: string | null
+  validado: boolean
+  /** digest do resto que muda o que pode ser enviado (oferta, cupom, prazo, cadência…) */
+  versao: string
 }
 
 export interface EnvioAuditoria {
@@ -126,16 +126,11 @@ export interface EnvioAuditoria {
   /** as cinco condições do botão "Revisar e enviar", decididas no servidor */
   podeRevisar: boolean
   rascunhoValidado: boolean
+  /** a mesma fotografia que Aprovações e a tela da conversa recebem */
+  esperado: FotografiaAprovacao
   /** texto original completo que será enviado (idioma do cliente) */
   rascunho: string | null
-  /** identidade do rascunho-BASE aberto no modal — o texto editado é outra coisa */
-  rascunhoHash: string | null
   rascunhoIdioma: string | null
-  workspaceId: string
-  lojaId: string
-  cicloId: string | null
-  tentativaId: string | null
-  mensagemEm: string | null
   mensagemAtual: string | null
   minimoEnvio: string | null
   percentual: number | null

@@ -112,6 +112,13 @@ const entrar = async () => {
 }
 const verEstado = async cookie => (await fetch(base + '/api/state', { headers: { cookie } }).then(r => r.json())).state
 const verAuditoria = async (cookie, id) => (await fetch(base + `/api/auditoria/${id}`, { headers: { cookie } }).then(r => r.json())).conversa
+// FOTOGRAFIA DA APROVAÇÃO: vem do servidor, no mesmo campo que as três telas
+// recebem em /api/state, buscada no instante da chamada
+const fotoDe = async (cookie, id) => (await verEstado(cookie)).tickets.find(t => t.id === id)?.aprovacao
+const aprovarReal = async (cookie, id, corpo) => fetch(base + `/api/tickets/${id}/aprovar`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
+  body: JSON.stringify({ esperado: await fotoDe(cookie, id), ...corpo }),
+})
 
 /**
  * Estado salvo com um aceite de 40% pronto para a confirmação sair, já com um ciclo
@@ -404,10 +411,7 @@ test('estado legado incompatível (assumida com a IA ligada e rascunho antigo) �
   assert.ok(legado[0].dados.agendamentoCancelado, 'o agendamento que existia ficou registrado')
 
   // o texto da IA NÃO sai, nem passando por manual
-  const tentar = await fetch(base + '/api/tickets/qa14/aprovar', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
-    body: JSON.stringify({ texto: RASCUNHO_LEGADO, origem: 'manual' }),
-  })
+  const tentar = await aprovarReal(cookie, 'qa14', { texto: RASCUNHO_LEGADO, origem: 'manual' })
   assert.equal(tentar.status, 409, 'o rascunho legado não sai como manual')
   assert.equal(envios().length, enviosAntes, 'e nada foi enviado na tentativa')
 
@@ -439,10 +443,7 @@ test('estado legado incompatível (assumida com a IA ligada e rascunho antigo) �
 
   // o que é do dono, o dono manda
   const meuTexto = 'Guten Tag, ich schreibe Ihnen persönlich: ich kümmere mich heute noch darum.'
-  const envio = await fetch(base + '/api/tickets/qa14/aprovar', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
-    body: JSON.stringify({ texto: meuTexto, origem: 'manual' }),
-  })
+  const envio = await aprovarReal(cookie, 'qa14', { texto: meuTexto, origem: 'manual' })
   assert.equal(envio.status, 200, 'o texto NOVO do dono sai: ' + (await envio.text()).slice(0, 200))
   assert.equal(envios().length, enviosAntes + 1, 'exatamente um e-mail, o do dono')
 
@@ -556,10 +557,7 @@ test('estado legado humano SEM rascunho, mas com transição, tentativa e agenda
   st = await verEstado(cookie)
   t = st.tickets.find(x => x.id === 'qa15')
   const confirmadasAntes = (await verAuditoria(cookie, 'qa15')).eventos.filter(e => e.tipo === 'fase_confirmada').length
-  const envio = await fetch(base + '/api/tickets/qa15/aprovar', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
-    body: JSON.stringify({ texto: 'Guten Tag, ich melde mich persönlich.', origem: 'manual' }),
-  })
+  const envio = await aprovarReal(cookie, 'qa15', { texto: 'Guten Tag, ich melde mich persönlich.', origem: 'manual' })
   assert.equal(envio.status, 200, 'a resposta do dono sai: ' + (await envio.text()).slice(0, 200))
   st = await verEstado(cookie)
   t = st.tickets.find(x => x.id === 'qa15')
@@ -632,9 +630,11 @@ test('resposta escrita pelo dono + queda: origem "manual", nunca automática', a
   const primeiro = await subir({ ATENDO_TESTE_QUEDA: 'antes' })
   const cookie = await entrar()
   const fimProcesso = morreu(primeiro.processo)
+  // a fotografia é buscada ANTES: o processo vai morrer no meio do envio
+  const fotoQa3 = await fotoDe(cookie, 'qa3')
   await fetch(base + '/api/tickets/qa3/aprovar', {
     method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
-    body: JSON.stringify({ texto: CONF, origem: 'manual' }),
+    body: JSON.stringify({ texto: CONF, origem: 'manual', esperado: fotoQa3 }),
   }).catch(() => null) // a conexão cai junto com o processo
   const fim = await Promise.race([fimProcesso, esperar(25_000).then(() => null)])
   assert.ok(fim, 'o servidor deveria cair'); assert.equal(fim.code, 7)

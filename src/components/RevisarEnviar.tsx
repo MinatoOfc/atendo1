@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { AlertTriangle, Bot, Check, Clock, Languages, Mail, RefreshCw, Send, Users, X } from 'lucide-react'
-import type { ConversaAuditoria, RevisaoEsperada } from '../../shared/auditoria.js'
+import type { ConversaAuditoria } from '../../shared/auditoria.js'
 import { useStore } from '../store'
 import { Modal } from './Shared'
 
@@ -75,15 +75,9 @@ export default function RevisarEnviar({ base, aoFechar, aoConcluir }: {
     </button>
   )
 
-  /** EXATAMENTE o que a tela estava mostrando — o servidor confere tudo de novo */
-  const esperado: RevisaoEsperada = {
-    workspaceId: e.workspaceId, lojaId: e.lojaId,
-    cicloId: e.cicloId, tentativaId: e.tentativaId,
-    mensagemEm: e.mensagemEm, rascunhoHash: e.rascunhoHash,
-    fase: base.proximaPermitida, idioma: base.idioma,
-    percentual: e.percentual, valor: e.valor, cupom: e.cupom,
-    prazo: e.prazo, minimoEnvio: e.minimoEnvio,
-  }
+  // a fotografia vem PRONTA do servidor e volta inteira: quem decide o que é
+  // conferido é ele, não esta tela
+  const esperado = e.esperado
 
   const confirmar = async () => {
     if (enviando || travado) return

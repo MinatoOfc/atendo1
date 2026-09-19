@@ -87,6 +87,8 @@ estado.tickets = [
   comCupom('ruim1', 'loja2'),                  // cupom inexistente na Shopify
   comCupom('ruim2', 'loja2'),                  // idem, para o autoenvio
   comCupom('ruim3', 'loja2'),                  // idem, para "só o texto"
+  comCupom('ruim4', 'loja2'),                  // idem, para a aprovação manual
+  comCupom('ruim5', 'loja2'),                  // idem, para a última barreira do envio
   comCupom('vencido1', 'loja4'),               // conferência de 25 h: vencida
   // autoenvio já agendado e vencido: o laço do agendador vai tentar enviar
   comCupom('auto1', 'loja3', { enviaEm: Date.now() - 1000 }),
@@ -117,6 +119,8 @@ const api = (rota, corpo, metodo = 'POST') => fetch(url + rota, {
 const ticket = async id => (await api('/api/state', null, 'GET')).state.tickets.find(t => t.id === id)
 const loja = async id => (await api('/api/state', null, 'GET')).state.lojas.find(l => l.id === id)
 const esperar = ms => new Promise(r => setTimeout(r, ms))
+// fotografia da aprovação: vem do servidor, buscada no instante da chamada
+const aprovar = async (id, corpo = {}) => api(`/api/tickets/${id}/aprovar`, { esperado: (await ticket(id))?.aprovacao, ...corpo })
 
 before(async () => {
   servidor = await import('../server/index.js')
@@ -148,13 +152,19 @@ test('"somente o texto" também bloqueia — não é atalho para o cupom não co
 })
 
 test('aprovação manual não passa: nem com o dono clicando o código inválido sai', async () => {
-  const r = await api('/api/tickets/ruim1/aprovar', { texto: RASCUNHO_COM_CUPOM, origem: 'ia' })
-  assert.equal(r.status, 400)
+  const r = await aprovar('ruim4', { texto: RASCUNHO_COM_CUPOM, origem: 'ia' })
+  assert.equal(r.status, 400, 'motivo: ' + (r.erro ?? ''))
   assert.match(r.erro, /Não enviado/)
   assert.match(r.erro, /cupom de 15%/i)
-  const t = await ticket('ruim1')
+  const t = await ticket('ruim4')
   assert.equal(t.status, 'aprovacao', 'a conversa não foi marcada como enviada')
   assert.equal(t.respondidoEm, undefined)
+
+  // e a conversa que JÁ teve o rascunho recusado (ruim1, pela regeneração
+  // acima) nem chega na trava do cupom: ela está travada antes disso
+  const jaRecusada = await aprovar('ruim1', { texto: RASCUNHO_COM_CUPOM, origem: 'manual' })
+  assert.equal(jaRecusada.status, 409, jaRecusada.erro ?? '')
+  assert.equal(jaRecusada.rascunhoRecusado, true, 'a trava do rascunho recusado vem antes')
 })
 
 test('confirmação do aceite com cupom inválido não sai', async () => {
@@ -180,10 +190,10 @@ test('autoenvio com cupom inválido não envia: o agendador manda o caso para o 
 
 test('enviarResposta é a última barreira: texto editado à mão com cupom inválido não vira e-mail', async () => {
   const texto = 'Hallo! Gutschein: DANKE15 (15%). Umtausch kostenlos, 4 bis 11 Tage.'
-  const r = await api('/api/tickets/ruim1/aprovar', { texto, origem: 'manual', confirmarAlteracao: true })
-  assert.equal(r.status, 400)
+  const r = await aprovar('ruim5', { texto, origem: 'manual', confirmarAlteracao: true })
+  assert.equal(r.status, 400, 'motivo: ' + (r.erro ?? ''))
   assert.match(r.erro, /cupom de 15%/i)
-  const t = await ticket('ruim1')
+  const t = await ticket('ruim5')
   assert.equal(t.respondidoEm, undefined)
   assert.equal((t.historico ?? []).filter(h => h.autor === 'atendo').length, 0, 'nada foi para o histórico')
 })
@@ -193,14 +203,14 @@ test('conferência vencida (mais de 24 h) bloqueia igual, mesmo com tudo "ok"', 
   assert.equal(l.verificacaoCupons.itens.every(i => i.situacao === 'ok'), true, 'a conferência antiga dizia ok')
   assert.equal(l.prontidaoNovo.cupons.find(c => c.pct === 15).situacao, 'vencida')
   assert.equal(l.prontidaoNovo.automatico.pronto, false)
-  const r = await api('/api/tickets/vencido1/aprovar', { texto: RASCUNHO_COM_CUPOM, origem: 'ia' })
+  const r = await aprovar('vencido1', { texto: RASCUNHO_COM_CUPOM, origem: 'ia' })
   assert.equal(r.status, 400)
   assert.match(r.erro, /conferido na Shopify/i)
   assert.match(r.erro, /vencida/i)
 })
 
 test('cupom conferido: o caminho feliz continua enviando normalmente', async () => {
-  const r = await api('/api/tickets/ok1/aprovar', { texto: RASCUNHO_COM_CUPOM, origem: 'ia' })
+  const r = await aprovar('ok1', { texto: RASCUNHO_COM_CUPOM, origem: 'ia' })
   assert.equal(r.status, 200, 'com o cupom conferido o envio acontece: ' + (r.erro ?? ''))
   const t = await ticket('ok1')
   assert.ok(t.respondidoEm, 'a resposta saiu')
@@ -209,7 +219,7 @@ test('cupom conferido: o caminho feliz continua enviando normalmente', async () 
 })
 
 test('oferta que revela o código do cupom não é enviada, nem com o cupom conferido', async () => {
-  const r = await api('/api/tickets/ok2/aprovar', { texto: RASCUNHO_REVELANDO_CODIGO, origem: 'ia' })
+  const r = await aprovar('ok2', { texto: RASCUNHO_REVELANDO_CODIGO, origem: 'ia' })
   assert.equal(r.status, 400, 'o código entregue antes do aceite bloqueia o envio')
   assert.match(r.erro, /antes de o cliente aceitar/)
   const t = await ticket('ok2')

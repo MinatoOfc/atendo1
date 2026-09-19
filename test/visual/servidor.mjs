@@ -437,7 +437,9 @@ estado.tickets.push(
   // 6) aguardando aprovação, com o checklist todo verde
   ticketAud('aud-espera', {
     nome: 'Felipe Aguardando', status: 'aprovacao',
-    rascunho: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Gutschein: DANKE15 (15%). Lieferzeit 4 bis 11 Tage.',
+    // oferta VÁLIDA: fala do cupom e do percentual, nunca do código — o código
+    // só sai na confirmação, depois do aceite (é o que o validador exige)
+    rascunho: 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an. Sie erhalten einen Gutschein über 15%. Lieferzeit 4 bis 11 Tage. Möchten Sie das annehmen?',
     atendimentoNovo: {
       versao: 1, fluxo: 'qualidade', etapa: null, produtosAfetados: ['Polo Premium (Schwarz / L)'],
       produtosInformados: true, motivo: 'qualidade', historicoEtapas: [],

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { RevisaoEsperada } from '../shared/auditoria.js'
+import type { FotografiaAprovacao } from '../shared/auditoria.js'
 
 /* ---------------- Tipos ---------------- */
 
@@ -111,6 +111,8 @@ export interface Ticket {
   marcadoRespondido?: boolean
   custoIA?: number
   iaPausada?: boolean
+  /** fotografia da aprovação (motor novo): volta ao servidor no instante do envio */
+  aprovacao?: FotografiaAprovacao
   /** O canal está no meio de um envio nesta conversa: nada de assumir agora. */
   envioEmAndamento?: boolean
   /** O dono assumiu a conversa: a IA não age nela até ele retomar. */
@@ -528,7 +530,7 @@ interface Store extends ServerState {
    * estava vendo pede a reconferência do servidor no instante do envio e
    * trata o erro por conta própria (sem alert).
    */
-  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual', confirmarAlteracao?: boolean, esperado?: RevisaoEsperada)
+  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual', confirmarAlteracao?: boolean, esperado?: FotografiaAprovacao, tratado?: boolean)
     => Promise<{ erro?: string; desatualizado?: boolean; enviado?: boolean }>
   /** modo novo: você confirma se a imagem recebida comprova o defeito */
   validarFotoNovo: (id: string, valida: boolean) => void
@@ -608,6 +610,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch { return prefsPadrao }
   })
   const debounces = useRef<Record<string, number>>({})
+  // o estado de AGORA, para as ações lerem a fotografia no instante do clique
+  const estadoRef = useRef(state)
+  estadoRef.current = state
 
   // aplica tema e tamanho da fonte no documento
   useEffect(() => {
@@ -821,7 +826,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       debounces.current[id] = window.setTimeout(() => { api(`/tickets/${id}/rascunho`, 'POST', { texto }) }, 800)
     },
 
-    aprovarEnviar: async function aprovarEnviar(id, texto, manterAberto, origem, confirmarAlteracao, esperado) {
+    aprovarEnviar: async function aprovarEnviar(id, texto, manterAberto, origem, confirmarAlteracao, esperado, tratado) {
       clearTimeout(debounces.current[id])
       setState(s => ({
         ...s,
@@ -829,17 +834,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ? { ...t, status: manterAberto ? t.status : 'enviado', resposta: texto, respostaOrigem: origem, respondidoEm: new Date().toISOString(), enviaEm: undefined }
           : t)),
       }))
-      const r = await api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto, origem, confirmarAlteracao: !!confirmarAlteracao, esperado })
+      // FOTOGRAFIA: quem não passa uma explicitamente (Aprovações e a tela da
+      // conversa) usa a que o servidor mandou no estado, lida AGORA — nunca uma
+      // presa num render antigo. O modal da Auditoria passa a dele, congelada.
+      const foto = esperado ?? estadoRef.current.tickets.find(t => t.id === id)?.aprovacao
+      const r = await api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto, origem, confirmarAlteracao: !!confirmarAlteracao, esperado: foto })
       // modo novo: a edição mudou a oferta da etapa — só sai com confirmação explícita
       if ((r as { precisaConfirmar?: boolean }).precisaConfirmar && !confirmarAlteracao) {
         aplicar(r) // desfaz o "enviado" otimista
         if (window.confirm(`${r.erro}\n\nEnviar mesmo assim? A alteração fica registrada no histórico de fases.`)) {
-          return aprovarEnviar(id, texto, manterAberto, origem, true, esperado)
+          // 'tratado' viaja junto: quem mostra o erro na própria tela continua
+          // mostrando depois da confirmação extra — o alert não some no caminho
+          return aprovarEnviar(id, texto, manterAberto, origem, true, foto, tratado ?? !!esperado)
         }
         return { erro: r.erro }
       }
-      // quem mandou o que estava vendo mostra o motivo na própria tela
-      if (r.erro && !esperado) alert(r.erro)
+      // quem mandou a fotografia à mão (o modal da Auditoria) mostra o motivo
+      // na própria tela; as outras telas continuam recebendo o aviso
+      if (r.erro && !(tratado ?? !!esperado)) alert(r.erro)
       aplicar(r)
       return { erro: r.erro, desatualizado: (r as { desatualizado?: boolean }).desatualizado, enviado: !r.erro }
     },

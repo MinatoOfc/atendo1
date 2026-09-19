@@ -89,7 +89,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137, 140, 141, 142, 150, 151, 152, 153, 154, 155, 156, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137, 140, 141, 142, 150, 151, 152, 153, 154, 155, 156, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -124,7 +124,19 @@ const ticketDuplicado = (ws) => ({
   lido: false, origem: 'cliente', categoria: 'outro', idioma: 'de', status: 'inbox',
   motorAtendimento: 'classico', primeiroEmailEm: new Date().toISOString(), marcaWs: ws,
 })
-estado.tickets = [ticketDuplicado('teste')]
+// 'dup-2': o MESMO id nos dois workspaces, agora no MOTOR NOVO — é nele que a
+// reconferência obrigatória vale, e é ele que prova o isolamento da fotografia
+const ticketDuplicadoNovo = (ws) => ({
+  ...ticketDuplicado(ws), id: 'dup-2', de: 'dup2@web.de', assunto: 'Bestellung #3002',
+  lojaId: 'loja1', motorAtendimento: 'novo', status: 'humano',
+  cicloAuditoria: 'ciclo-dup-2-' + ws,
+  atendimentoNovo: {
+    versao: 1, fluxo: 'qualidade', etapa: null, produtosAfetados: ['Polo Premium (Schwarz / L)'],
+    produtosInformados: true, motivo: 'qualidade', historicoEtapas: [], transicaoPendente: null,
+    aguardando: 'humano', acaoAceita: null, idioma: 'de', rascunhoIdioma: 'de',
+  },
+})
+estado.tickets = [ticketDuplicado('teste'), ticketDuplicadoNovo('teste')]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
 
 // segundo workspace, com o MESMO id de ticket
@@ -132,7 +144,7 @@ const estado2 = estadoInicial()
 estado2.config.automacaoAtiva = true
 estado2.lojas = [loja({ id: 'loja1', nome: 'Outra Loja', verificacaoCupons: conferencia('loja1') }),
   { id: 'loja2', nome: 'Outra Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' }]
-estado2.tickets = [ticketDuplicado('teste2')]
+estado2.tickets = [ticketDuplicado('teste2'), ticketDuplicadoNovo('teste2')]
 writeFileSync(path.join(DIR, 'ws-teste2.json'), JSON.stringify(estado2))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
   segredo: 'segredo-de-teste-'.padEnd(64, 'x'),
@@ -160,6 +172,11 @@ const api2 = (rota, corpo, metodo = 'POST') => realFetch(url + rota, {
 }).then(async r => ({ status: r.status, ...(await r.json()) }))
 const ticket2 = async id => (await api2('/api/state', null, 'GET')).state.tickets.find(t => t.id === id)
 const auditoria = async id => (await api(`/api/auditoria/${id}`, null, 'GET')).conversa
+// FOTOGRAFIA DA APROVAÇÃO: vem do servidor, no mesmo campo que Aprovações e a
+// tela da conversa recebem em /api/state. Nenhum teste inventa campo de
+// segurança — quem quiser provar a recusa manda 'esperado' à mão.
+const foto = async id => (await ticket(id))?.aprovacao
+const aprovar = async (id, corpo = {}) => api(`/api/tickets/${id}/aprovar`, { esperado: await foto(id), ...corpo })
 const esperar = ms => new Promise(r => setTimeout(r, ms))
 // percentual do cupom de uma fase, direto do mapa (sem duplicar a tabela aqui)
 const { FASES: FASES_MAPA } = await import('../server/atendimento.js')
@@ -356,7 +373,7 @@ test('fase só aparece confirmada depois do envio real, e o envio gera email_env
   assert.ok(!antes.eventos.some(e => e.tipo === 'fase_confirmada'), 'nada confirmado antes do envio')
   assert.equal(antes.faseAtual, null)
   const t = await ticket(id)
-  const r = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const r = await aprovar(id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(r.status, 200, 'envio pelo canal simulado: ' + (r.erro ?? ''))
   const depois = await auditoria(id)
   const tipos = depois.eventos.map(e => e.tipo)
@@ -378,7 +395,7 @@ test('falha no canal NÃO cria email_enviado e a fase não avança', async () =>
   const t = await ticket(id)
   process.env.ATENDO_SMTP_FAKE = 'falha'
   try {
-    const r = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+    const r = await aprovar(id, { texto: t.rascunho, origem: 'ia' })
     assert.notEqual(r.status, 200, 'o envio tinha de falhar')
   } finally { process.env.ATENDO_SMTP_FAKE = anterior }
   const c = await auditoria(id)
@@ -415,7 +432,7 @@ test('resposta manual aparece como "Você" e fica registrada', async () => {
   const r0 = await simular({ de: 'c4@web.de', nome: 'C4', assunto: 'Bestellung #4' })
   const id = r0.ticket.id
   const t = await ticket(id)
-  const r = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho, origem: 'manual', confirmarAlteracao: true })
+  const r = await aprovar(id, { texto: t.rascunho, origem: 'manual', confirmarAlteracao: true })
   assert.equal(r.status, 200, r.erro ?? '')
   const c = await auditoria(id)
   assert.ok(c.eventos.some(e => e.tipo === 'respondido_manualmente'))
@@ -543,8 +560,8 @@ test('/api/auditoria/:id devolve os eventos completos — e só com sessão', as
   assert.equal(semSessao.status, 401)
 })
 
-test('bloqueado → corrigido → enviado: o selo final é "Tudo certo" e o bloqueio antigo continua na linha do tempo', async () => {
-  // 1) cupom quebrado: a primeira tentativa é bloqueada
+test('bloqueado → assumido → enviado: o texto só sai depois de você assumir a conversa', async () => {
+  // 1) cupom quebrado: a primeira tentativa é bloqueada pelo validador
   const st = (await api('/api/state', null, 'GET')).state
   const l = st.lojas.find(x => x.id === 'loja1')
   await api('/api/lojas', { id: 'loja1', cupons: { ...l.cupons, 15: 'QUEBRADO15' } })
@@ -554,26 +571,60 @@ test('bloqueado → corrigido → enviado: o selo final é "Tudo certo" e o bloq
   const bloqueada = await auditoria(id)
   assert.equal(bloqueada.selo, 'bloqueado')
   const tentativaBloqueada = bloqueada.tentativaAtual
+  const recusado = [...bloqueada.eventos].reverse().find(e => e.tipo === 'rascunho_bloqueado')
+  // quando a trava é o CUPOM, a IA nem chegou a escrever: o evento não tem texto
+  assert.equal(recusado.dados.texto ?? null, null, 'a recusa do cupom acontece antes da escrita')
 
-  // 2) o dono conserta o cupom e responde à mão: NOVA tentativa, com envio real
+  // a conversa caiu com você: status 'humano', MAS sem atendimento humano ativo
+  let t = await ticket(id)
+  assert.equal(t.status, 'humano', 'a conversa caiu com você')
+  assert.equal(t.atendimentoHumano ?? null, null, 'e NÃO está em atendimento humano assumido')
+  assert.equal(t.atendimentoNovo.transicaoPendente ?? null, null, 'sem fase pendente')
+
+  // 2) NADA sai enquanto a conversa não for assumida de propósito.
+  //    Nem o texto novo que você escreveria...
+  const MEU_TEXTO = 'Hallo! Wir melden uns mit einer Lösung.'
   await api('/api/lojas', { id: 'loja1', cupons: { ...l.cupons, 15: 'DANKE15' } })
   await api('/api/lojas/loja1/testar-cupons', {})
-  const t = await ticket(id)
-  const env = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho ?? 'Hallo! Wir melden uns mit einer Lösung.', origem: 'manual', confirmarAlteracao: true })
+  const semAssumir = await aprovar(id, { texto: MEU_TEXTO, origem: 'manual', confirmarAlteracao: true })
+  assert.equal(semAssumir.status, 409, 'o envio é recusado: ' + (semAssumir.erro ?? ''))
+  assert.match(semAssumir.erro, /recusado pelo validador/)
+  assert.equal(semAssumir.rascunhoRecusado, true)
+  //    ...nem sem mandar a fotografia da aprovação
+  const semFoto = await api(`/api/tickets/${id}/aprovar`, { texto: MEU_TEXTO, origem: 'manual' })
+  assert.equal(semFoto.status, 409, semFoto.erro ?? '')
+  assert.equal(semFoto.rascunhoRecusado, true, 'a trava do rascunho recusado vem antes de tudo')
+  assert.equal((await auditoria(id)).eventos.filter(e => e.tipo === 'email_enviado').length, 0, 'zero e-mails até aqui')
+
+  // 3) você assume a conversa — ação explícita e auditada
+  assert.equal((await mover(id, { motivo: 'o validador recusou; respondo eu' })).status, 200)
+  t = await ticket(id)
+  assert.equal(t.atendimentoHumano.ativo, true)
+  const historicoAntes = JSON.stringify(t.atendimentoNovo.historicoEtapas ?? [])
+  const faseAntes = t.atendimentoNovo.etapa ?? null
+
+  // 4) o SEU texto sai
+  const env = await aprovar(id, { texto: MEU_TEXTO, origem: 'manual' })
   assert.equal(env.status, 200, 'o envio manual acontece: ' + (env.erro ?? ''))
 
-  // 3) o selo passa a valer pela tentativa ATUAL
+  // 5) sem confirmar fase e sem criar relatório
   const final = await auditoria(id)
-  assert.notEqual(final.tentativaAtual, tentativaBloqueada, "o envio abriu outra tentativa")
-  assert.equal(final.selo, 'tudo_certo')
-  // o bloqueio antigo continua registrado na linha do tempo
+  t = await ticket(id)
+  assert.equal(JSON.stringify(t.atendimentoNovo.historicoEtapas ?? []), historicoAntes, 'nenhuma fase nova no histórico')
+  assert.equal(t.atendimentoNovo.etapa ?? null, faseAntes, 'a fase não mudou')
+  assert.equal(final.eventos.filter(e => e.tipo === 'fase_confirmada').length, 0, 'nenhuma fase confirmada')
+  assert.equal(t.relatorioAuto ?? null, null, 'nenhum relatório automático')
+  assert.equal(t.relatorioDia ?? null, null)
+  assert.equal(t.relatorioTexto ?? null, null)
+
+  // o bloqueio antigo continua registrado, e a mensagem enviada tem vínculo exato
+  assert.notEqual(final.tentativaAtual, tentativaBloqueada, 'o envio abriu outra tentativa')
   assert.ok(final.eventos.some(e => e.tipo === 'rascunho_bloqueado'), 'o histórico preserva o bloqueio')
-  assert.ok(!final.passos.includes('bloqueada'), 'mas os passos falam da tentativa atual')
-  // e a mensagem enviada tem vínculo EXATO
   const enviada = final.mensagens.find(m => m.situacao === 'enviada')
   assert.equal(enviada.vinculo, 'exato')
   assert.ok(enviada.mensagemId)
 })
+
 test('rascunho validado aguardando aprovação não recebe "Tudo certo"', async () => {
   fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao gostou', idioma: 'de', idiomaConfiavel: true, spam: false })
   const r0 = await simular({ de: 'c10@web.de', nome: 'C10', assunto: 'Bestellung #5', corpo: 'Die Qualität vom Polo Premium ist schlecht.' })
@@ -587,7 +638,7 @@ test('duas respostas seguidas ficam ligadas aos eventos certos pelo Message-ID',
   const id = globalThis.__idBase
   const t = await ticket(id)
   // segunda resposta manual na mesma conversa, poucos segundos depois
-  const r = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho ?? 'Hallo! Danke.', origem: 'manual', confirmarAlteracao: true })
+  const r = await aprovar(id, { texto: t.rascunho ?? 'Hallo! Danke.', origem: 'manual', confirmarAlteracao: true })
   assert.equal(r.status, 200, 'a 2ª resposta TEM de sair — sem escapatória: ' + (r.erro ?? ''))
   const c = await auditoria(id)
   const enviadas = c.mensagens.filter(m => m.situacao === 'enviada')
@@ -640,7 +691,7 @@ test('produto só fica cinza na COLETA que pergunta o produto — nas outras fas
   let tr = await ticket(rr.ticket.id)
   // segue a escada até uma fase de reembolso com percentual
   for (let i = 0; i < 4 && tr.atendimentoNovo.transicaoPendente?.para && !/^reemb_/.test(tr.atendimentoNovo.etapa ?? ''); i++) {
-    const env = await api(`/api/tickets/${tr.id}/aprovar`, { texto: tr.rascunho, origem: 'ia' })
+    const env = await aprovar(tr.id, { texto: tr.rascunho, origem: 'ia' })
     assert.equal(env.status, 200, 'envio da escada: ' + (env.erro ?? ''))
     if (/^reemb_/.test((await ticket(tr.id)).atendimentoNovo.etapa ?? '')) { tr = await ticket(tr.id); break }
     fila.push({ intencao: 'recusa', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nein', idioma: 'de', idiomaConfiavel: true, spam: false })
@@ -662,13 +713,13 @@ test('produto só fica cinza na COLETA que pergunta o produto — nas outras fas
   fila.push({ intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'quer trocar', idioma: 'de', idiomaConfiavel: true, spam: false })
   const rt = await simular({ de: 'c3@web.de', nome: 'C3b', assunto: 'Bestellung #3', corpo: 'Die Qualität vom Polo Premium ist schlecht, bitte Umtausch.' })
   let tt = await ticket(rt.ticket.id)
-  const e1 = await api(`/api/tickets/${tt.id}/aprovar`, { texto: tt.rascunho, origem: 'ia' })
+  const e1 = await aprovar(tt.id, { texto: tt.rascunho, origem: 'ia' })
   assert.equal(e1.status, 200, 'oferta de troca enviada: ' + (e1.erro ?? ''))
   fila.push({ intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: '', resumo: 'ok', idioma: 'de', idiomaConfiavel: true, spam: false })
   await simular({ ticketId: tt.id, corpo: 'Ja, gerne.' })
   tt = await ticket(tt.id)
   if (tt.atendimentoNovo.transicaoPendente?.para === 'endereco') {
-    const e2 = await api(`/api/tickets/${tt.id}/aprovar`, { texto: tt.rascunho, origem: 'ia' })
+    const e2 = await aprovar(tt.id, { texto: tt.rascunho, origem: 'ia' })
     assert.equal(e2.status, 200, 'pedido de endereço enviado: ' + (e2.erro ?? ''))
     fila.push({ intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [], situacaoEntrega: 'nenhuma', endereco: 'Hauptstrasse 12, 10115 Berlin, Deutschland', resumo: 'endereco', idioma: 'de', idiomaConfiavel: true, spam: false })
     await simular({ ticketId: tt.id, corpo: 'Hauptstrasse 12, 10115 Berlin, Deutschland' })
@@ -690,7 +741,7 @@ test('ponta a ponta: duas respostas em menos de dois minutos, a primeira arquiva
   const r0 = await simular({ de: 'c30@web.de', nome: 'C30', assunto: 'Bestellung #3', corpo: 'Das Polo ist zu klein.' })
   const id = r0.ticket.id
   const t1 = await ticket(id)
-  const env1 = await api(`/api/tickets/${id}/aprovar`, { texto: t1.rascunho, origem: 'ia' })
+  const env1 = await aprovar(id, { texto: t1.rascunho, origem: 'ia' })
   assert.equal(env1.status, 200, '1ª resposta enviada: ' + (env1.erro ?? ''))
   const depois1 = await ticket(id)
   const idPrimeira = depois1.respostaMensagemId
@@ -708,7 +759,7 @@ test('ponta a ponta: duas respostas em menos de dois minutos, a primeira arquiva
   assert.ok(arquivada.origem, 'a origem sobreviveu ao arquivamento')
   assert.ok(arquivada.tentativaId, 'a tentativa sobreviveu ao arquivamento')
 
-  const env2 = await api(`/api/tickets/${id}/aprovar`, { texto: t2.rascunho, origem: 'ia' })
+  const env2 = await aprovar(id, { texto: t2.rascunho, origem: 'ia' })
   assert.equal(env2.status, 200, '2ª resposta enviada: ' + (env2.erro ?? ''))
   const t3 = await ticket(id)
   const idSegunda = t3.respostaMensagemId
@@ -757,7 +808,7 @@ async function conversaVerde(de, assunto) {
   // então o envio sai com o checklist inteiro verde
   const r0 = await simular({ de, nome: de, assunto, agora: new Date(Date.now() - 10 * 60_000).toISOString() })
   const t = await ticket(r0.ticket.id)
-  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env.status, 200, 'a conversa precisa ficar verde antes do ciclo novo: ' + (env.erro ?? ''))
   const c = await auditoria(t.id)
   assert.equal(c.selo, 'tudo_certo', 'ponto de partida verde')
@@ -841,7 +892,7 @@ test('confirmação APROVADA pelo dono e enviada pelo agendador continua "aprova
   const r0 = await simular({ de: 'c65@web.de', nome: 'C65', assunto: 'Bestellung #65', corpo: 'Das Polo Premium ist schlecht. Geld zurück.', agora: iso(Date.now() - H5 - 20 * 60_000) })
   let t = await ticket(r0.ticket.id)
   for (let i = 0; i < 4 && !/^reemb_/.test(t.atendimentoNovo.etapa ?? ''); i++) {
-    const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+    const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
     assert.equal(env.status, 200, 'envio da escada: ' + (env.erro ?? ''))
     t = await ticket(t.id)
     if (/^reemb_/.test(t.atendimentoNovo.etapa ?? '')) break
@@ -1103,7 +1154,7 @@ test('releitura recusada quando ja existe aceite registrado', async () => {
   })
   const r0 = await api('/api/simular-email', { de: 'c90@web.de', nome: 'C90', assunto: 'Bestellung #90', corpo: 'Das Polo Premium ist schlecht.', lojaId: 'loja1' })
   let t = await ticket(r0.ticket.id)
-  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env.status, 200, env.erro ?? '')
   fila.push({
     intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
@@ -1240,7 +1291,7 @@ test('releitura recusada num ciclo que já respondeu ao cliente', async () => {
   const r0 = await api('/api/simular-email', { de: 'c97@web.de', nome: 'C97', assunto: 'Bestellung #97', corpo: 'Das Polo Premium ist schlecht.', lojaId: 'loja1' })
   const id = r0.ticket.id
   const t = await ticket(id)
-  const env = await api(`/api/tickets/${id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env = await aprovar(id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env.status, 200, env.erro ?? '')
   const rr = await releitura(id, 'tentativa de reler um ciclo ja respondido')
   assert.equal(rr.status, 409, 'ciclo com mensagem enviada não se relê')
@@ -1328,7 +1379,7 @@ test('cupom combinado com troca: oferta sem código, confirmação com o código
   for (const cod of Object.values(CUPONS)) {
     assert.ok(!t.rascunho.includes(cod), `o código ${cod} não pode aparecer na oferta`)
   }
-  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env.status, 200, env.erro ?? '')
 
   // 3) o cliente ACEITA — e o mapa pede o endereço ANTES de confirmar
@@ -1343,7 +1394,7 @@ test('cupom combinado com troca: oferta sem código, confirmação com o código
   for (const cod of Object.values(CUPONS)) {
     assert.ok(!String(t.rascunho).includes(cod), `o código ${cod} não pode sair no pedido de endereço`)
   }
-  const env2 = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env2 = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env2.status, 200, env2.erro ?? '')
 
   // 4) o cliente manda o endereço completo → conclusão aguardando você
@@ -1373,7 +1424,7 @@ async function ateOfertaCombinada(n) {
   const r0 = await api('/api/simular-email', { de: `c${n}@web.de`, nome: 'C' + n, assunto: 'Bestellung #' + n, corpo: 'Das Polo Premium ist von schlechter Qualität, ich möchte einen Umtausch.', lojaId: 'loja1' })
   let t = await ticket(r0.ticket.id)
   assert.equal(t.atendimentoNovo.transicaoPendente.para, 'qual_troca', 'a etapa oferece troca + cupom de 15%')
-  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env.status, 200, env.erro ?? '')
   t = await ticket(t.id)
   assert.equal(t.atendimentoNovo.etapa, 'qual_troca', 'a oferta combinada está em aberto')
@@ -1588,14 +1639,14 @@ test('cobrança de reembolso COM prova: a loja já disse o valor, e isso aparece
   let t = await ticket(r0.ticket.id)
   let voltas = 0
   while (t.atendimentoNovo.transicaoPendente && !/^reemb_/.test(t.atendimentoNovo.transicaoPendente.para) && voltas++ < 4) {
-    const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+    const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
     assert.equal(env.status, 200, env.erro ?? '')
     t = await recusar(t)
   }
   const faseReemb = t.atendimentoNovo.transicaoPendente?.para
   assert.match(String(faseReemb), /^reemb_/, 'chegou numa fase de reembolso: ' + faseReemb)
   assert.match(t.rascunho, /Rückerstattung/, 'a oferta fala de reembolso')
-  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env.status, 200, env.erro ?? '')
 
   // o cliente COBRA o reembolso
@@ -1679,7 +1730,7 @@ test('conversa BLOQUEADA movida para atendimento humano: rascunho e agendamento 
 test('mover preserva fase, solução aceita, histórico e o motor — e é idempotente', async () => {
   let t = await conversaComRascunho(131)
   // faz a conversa AVANÇAR e ACEITAR, para haver o que preservar
-  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env.status, 200, env.erro ?? '')
   t = await ticket(t.id)
   const etapaAntes = t.atendimentoNovo.etapa
@@ -1745,7 +1796,7 @@ test('no atendimento humano a IA não regenera, não relê e o autoenvio não at
     assert.match(rr.erro, /atendimento humano/)
   }
   // aprovar como IA também recusa
-  const comoIA = await api(`/api/tickets/${t.id}/aprovar`, { texto: 'qualquer coisa', origem: 'ia' })
+  const comoIA = await aprovar(t.id, { texto: 'qualquer coisa', origem: 'ia' })
   assert.equal(comoIA.status, 409)
 
   // passada a cadência, o agendador continua sem enviar
@@ -1765,7 +1816,7 @@ test('resposta manual sai pela conta da PRÓPRIA loja, sem confirmar fase nem cr
   t = await ticket(t.id)
 
   // o rascunho da IA não pode ser reenviado nem por engano
-  const tentaOAntigo = await api(`/api/tickets/${t.id}/aprovar`, { texto: rascunhoDaIA, origem: 'manual' })
+  const tentaOAntigo = await aprovar(t.id, { texto: rascunhoDaIA, origem: 'manual' })
   assert.equal(tentaOAntigo.status, 409, 'o rascunho invalidado não sai')
   assert.match(tentaOAntigo.erro, /rascunho que a IA tinha escrito/)
 
@@ -1775,7 +1826,7 @@ test('resposta manual sai pela conta da PRÓPRIA loja, sem confirmar fase nem cr
 
   // o texto do DONO sai
   const meuTexto = 'Guten Tag, ich kümmere mich persönlich darum und melde mich morgen.'
-  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: meuTexto, origem: 'manual' })
+  const env = await aprovar(t.id, { texto: meuTexto, origem: 'manual' })
   assert.equal(env.status, 200, env.erro ?? '')
   t = await ticket(t.id)
   const an = t.atendimentoNovo
@@ -1972,7 +2023,7 @@ test('o dono vence a corrida: o envio aborta ANTES de chamar o canal', async () 
 
   // o dono assume PRIMEIRO; só depois alguém tenta enviar pela IA
   assert.equal((await mover(t.id)).status, 200)
-  const envio = await api(`/api/tickets/${t.id}/aprovar`, { texto: 'texto da IA', origem: 'ia' })
+  const envio = await aprovar(t.id, { texto: 'texto da IA', origem: 'ia' })
   assert.equal(envio.status, 409, 'o envio da IA é recusado')
 
   const c = await auditoria(t.id)
@@ -1990,7 +2041,7 @@ test('o canal vence a corrida: mover devolve 409 e NÃO altera o estado', async 
 
   await comAtraso(1500, async () => {
     // dispara o envio e NÃO espera: enquanto o canal está em voo, tenta assumir
-    const enviando = api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+    const enviando = aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
     await esperar(300)
     const durante = await mover(t.id)
     assert.equal(durante.status, 409, 'mover no meio do envio é recusado')
@@ -2028,7 +2079,7 @@ test('falha do canal: o envio não trava a conversa e o dono consegue assumir de
   const anterior = process.env.ATENDO_SMTP_FAKE
   process.env.ATENDO_SMTP_FAKE = 'falha'
   try {
-    const r = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+    const r = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
     assert.notEqual(r.status, 200, 'o envio falhou')
   } finally { process.env.ATENDO_SMTP_FAKE = anterior }
 
@@ -2068,7 +2119,7 @@ test('retomar a IA também respeita a trava do envio em andamento', async () => 
   t = await ticket(t.id)
 
   await comAtraso(1200, async () => {
-    const enviando = api(`/api/tickets/${t.id}/aprovar`, { texto: 'Guten Tag, ich melde mich.', origem: 'manual' })
+    const enviando = aprovar(t.id, { texto: 'Guten Tag, ich melde mich.', origem: 'manual' })
     await esperar(300)
     const durante = await retomar(t.id, 'aguardar')
     assert.equal(durante.status, 409, 'retomar no meio do envio é recusado')
@@ -2092,7 +2143,7 @@ test('a trava é por WORKSPACE: o mesmo id de ticket em outro cliente não é af
 
   await comAtraso(1500, async () => {
     // envio em voo no workspace 1
-    const enviando = api(`/api/tickets/dup-1/aprovar`, { texto: 'Guten Tag, ich melde mich.', origem: 'manual' })
+    const enviando = aprovar('dup-1', { texto: 'Guten Tag, ich melde mich.', origem: 'manual' })
     await esperar(300)
 
     // no workspace 1 a conversa está travada
@@ -2275,7 +2326,7 @@ test('depois de aceitar uma troca, o mapa ainda pede o endereço — a assinatur
   let t = await ticket(r0.ticket.id)
   assert.equal(t.atendimentoNovo.enderecoInformado ?? null, null, 'a assinatura não informou endereço')
   assert.equal(t.atendimentoNovo.transicaoPendente.para, 'qual_troca')
-  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  const env = await aprovar(t.id, { texto: t.rascunho, origem: 'ia' })
   assert.equal(env.status, 200, 'oferta de troca enviada: ' + (env.erro ?? ''))
 
   // o cliente ACEITA — e o mapa manda pedir o endereço, mesmo com a assinatura à mão
@@ -2453,19 +2504,13 @@ test('retenção: passar de 400 eventos não apaga nada em silêncio', async () 
 /* ================================================================== */
 
 /**
- * O que a TELA estava vendo, montado a partir do payload REAL da Auditoria.
- * É exatamente isto que o modal devolve ao servidor no instante do envio.
- * Repare que o TEXTO não entra aqui: o hash é do rascunho-BASE, e o texto
+ * O que a TELA estava vendo: a fotografia que o SERVIDOR calculou e mandou no
+ * payload da Auditoria — a mesma que Aprovações e a tela da conversa recebem.
+ * Repare que o TEXTO não entra nela: o hash é do rascunho-BASE, e o texto
  * final pode ter sido editado pelo dono.
  */
-const esperadoDe = c => ({
-  workspaceId: c.envio.workspaceId, lojaId: c.envio.lojaId,
-  cicloId: c.envio.cicloId, tentativaId: c.envio.tentativaId,
-  mensagemEm: c.envio.mensagemEm, rascunhoHash: c.envio.rascunhoHash,
-  fase: c.proximaPermitida, idioma: c.idioma,
-  percentual: c.envio.percentual, valor: c.envio.valor, cupom: c.envio.cupom,
-  prazo: c.envio.prazo, minimoEnvio: c.envio.minimoEnvio,
-})
+const esperadoDe = c => c.envio.esperado
+// aqui a fotografia é passada À MÃO de propósito: é o clique velho que se quer provar
 const confirmarEnvio = (id, texto, esperado, extra = {}) =>
   api(`/api/tickets/${id}/aprovar`, { texto, origem: 'ia', esperado, ...extra })
 const enviadosDe = async id => (await auditoria(id)).eventos.filter(e => e.tipo === 'email_enviado')
@@ -2488,17 +2533,23 @@ test('modal de uma resposta validada: o payload traz tudo o que a revisão preci
   // texto ORIGINAL completo que será enviado — no idioma do cliente
   assert.equal(e.rascunho, t.rascunho, 'o texto original completo')
   assert.ok(/[A-Za-zÄÖÜäöüß]/.test(e.rascunho) && !/^Olá/.test(e.rascunho), 'no idioma do cliente')
-  assert.equal(e.rascunhoHash.length, 32, 'com identidade própria (hash do rascunho-base)')
+  assert.equal(e.esperado.rascunhoHash.length, 32, 'com identidade própria (hash do rascunho-base)')
   // checklist, cadência e canal
   assert.ok(c.checklist && c.checklist.itens.length > 0, 'checklist da tentativa')
   assert.ok('minimo' in c.cadencia, 'horário mínimo da cadência')
   assert.equal(e.canal.configurado, true, 'canal de e-mail configurado')
   assert.equal(e.canal.propria, true, 'e é a conta da própria loja')
   assert.equal(e.canal.endereco, 'loja1@teste.local')
-  // ciclo e tentativa atuais, para a reconferência
-  assert.equal(e.cicloId, t.cicloAuditoria)
-  assert.equal(e.tentativaId, t.atendimentoNovo.tentativaAtual)
-  assert.equal(e.workspaceId, 'teste')
+  // a FOTOGRAFIA que volta ao servidor no instante do envio — a mesma que
+  // Aprovações e a tela da conversa recebem em /api/state
+  assert.deepEqual(e.esperado, t.aprovacao, 'a Auditoria e o estado mandam a MESMA fotografia')
+  assert.equal(e.esperado.cicloId, t.cicloAuditoria)
+  assert.equal(e.esperado.tentativaId, t.atendimentoNovo.tentativaAtual)
+  assert.equal(e.esperado.workspaceId, 'teste')
+  assert.equal(e.esperado.ticketId, t.id)
+  assert.equal(e.esperado.mensagemEm, t.data)
+  assert.equal(e.esperado.validado, true)
+  assert.equal(e.esperado.versao.length, 32, 'e a versão da conversa')
   assert.equal(e.enviada, null, 'ainda não saiu nada')
 })
 
@@ -2519,8 +2570,8 @@ test('conversa bloqueada: sem botão de envio, e o servidor recusa se alguém in
   const recusado = [...c.eventos].reverse().find(e => e.tipo === 'rascunho_bloqueado')
   const r = await confirmarEnvio(t.id, recusado.dados.texto, esperadoDe(c))
   assert.equal(r.status, 409, 'recusado: ' + (r.erro ?? ''))
-  assert.match(r.erro, /validador recusou/)
-  assert.equal(r.desatualizado, true)
+  assert.match(r.erro, /recusado pelo validador/)
+  assert.equal(r.rascunhoRecusado, true)
   assert.equal((await enviadosDe(t.id)).length, 0, 'zero e-mails enviados')
 })
 
@@ -2653,10 +2704,11 @@ test('clique duplo: um único envio e um único Message-ID', async () => {
   assert.equal(depois.envio.enviada.canalConfirmou, true, 'e confirmação do canal')
 
   // e uma terceira tentativa com o MESMO estado é recusada
+  // um terceiro clique com a MESMA fotografia é recusado: depois do envio a
+  // versão da conversa e o rascunho mudaram, e a tela está velha
   const terceiro = await confirmarEnvio(t.id, c.envio.rascunho, esperado)
   assert.equal(terceiro.status, 409, terceiro.erro ?? '')
-  // pelo motivo CERTO: já foi enviada (e não só porque o rascunho sumiu)
-  assert.match(terceiro.erro, /já foi enviada ao cliente/)
+  assert.equal(terceiro.desatualizado, true)
   assert.equal((await enviadosDe(t.id)).length, 1, 'continua UM envio só')
 })
 
@@ -2677,6 +2729,12 @@ test('falha do canal não confirma a fase nem marca a conversa como respondida',
   const cd = await auditoria(t.id)
   assert.equal(cd.eventos.filter(e => e.tipo === 'email_enviado').length, 0, 'nenhum e-mail enviado')
   assert.ok(cd.eventos.some(e => e.tipo === 'envio_falhou'), 'a falha ficou registrada')
+
+  // e a conversa NÃO fica presa em "Envio em andamento": o marcador persistido
+  // sobrevive à falha, mas quem manda é a trava em memória
+  assert.notEqual(cd.envio.estado, 'em_andamento', 'estado: ' + cd.envio.estado)
+  const denovo = await confirmarEnvio(t.id, cd.envio.rascunho, esperadoDe(cd))
+  assert.equal(denovo.status, 200, 'dá para tentar de novo depois da falha: ' + (denovo.erro ?? ''))
 })
 
 test('a revisão de um workspace não vale no outro, mesmo com o mesmo id de conversa', async () => {
@@ -2684,30 +2742,53 @@ test('a revisão de um workspace não vale no outro, mesmo com o mesmo id de con
   const doOutro = await ticket2('dup-1')
   assert.ok(meu && doOutro, 'o id existe nos dois workspaces')
 
-  // o dono do ws2 abre a revisão da CONVERSA DELE
-  const doWs2 = (await api2('/api/auditoria/dup-1', null, 'GET')).conversa
-  assert.equal(doWs2.envio.workspaceId, 'teste2')
-  const doWs1 = (await api('/api/auditoria/dup-1', null, 'GET')).conversa
-  assert.equal(doWs1.envio.workspaceId, 'teste', 'cada um enxerga o seu')
+  // 'dup-2' também existe nos dois, e é do MOTOR NOVO: é nele que a
+  // reconferência vale (o clássico segue como sempre foi)
+  const doWs2 = (await api2('/api/auditoria/dup-2', null, 'GET')).conversa
+  const doWs1 = (await api('/api/auditoria/dup-2', null, 'GET')).conversa
+  assert.equal(doWs2.envio.esperado.workspaceId, 'teste2')
+  assert.equal(doWs1.envio.esperado.workspaceId, 'teste', 'cada um enxerga o seu')
+  assert.notEqual(doWs2.envio.esperado.versao, doWs1.envio.esperado.versao, 'e as versões são diferentes')
 
-  // essa revisão NÃO pode confirmar um envio no ws1
-  const r = await confirmarEnvio('dup-1', 'texto qualquer', esperadoDe(doWs2))
+  // a fotografia do ws2 NÃO confirma um envio no ws1
+  const r = await confirmarEnvio('dup-2', 'Guten Tag, ich melde mich.', esperadoDe(doWs2))
   assert.equal(r.status, 409, r.erro ?? '')
   assert.match(r.erro, /aberta em outra conta/)
+  // e a do ws1 vale no ws1
+  const ok = await confirmarEnvio('dup-2', 'Guten Tag, ich melde mich.', esperadoDe(doWs1), { origem: 'manual' })
+  assert.equal(ok.status, 200, 'a fotografia certa envia: ' + (ok.erro ?? ''))
+})
+
+test('a versão da conversa pega o que a tela nem sabe que existe: prazo da loja mudou, envio recusado', async () => {
+  const t = await conversaComRascunho(170)
+  const c = await auditoria(t.id)
+  const foto = esperadoDe(c)
+  const prazoOriginal = (await api('/api/state', null, 'GET')).state.lojas.find(l => l.id === 'loja1').prazoEntrega
+
+  // o PRAZO DA LOJA muda depois que a tela carregou. Ele não é campo da
+  // fotografia — está dentro do digest `versao`. É por isso que o digest
+  // existe: a tela não precisa conhecer cada campo para ficar protegida.
+  const mudanca = await api('/api/lojas', { id: 'loja1', prazoEntrega: { min: 9, max: 20, processamento: 4 } })
+  assert.equal(mudanca.status, 200, mudanca.erro ?? '')
+  const agora = (await ticket(t.id)).aprovacao
+  assert.equal(agora.rascunhoHash, foto.rascunhoHash, 'o rascunho é o MESMO')
+  assert.equal(agora.tentativaId, foto.tentativaId, 'a tentativa é a MESMA')
+  assert.notEqual(agora.versao, foto.versao, 'mas a versão da conversa mudou')
+
+  const r = await confirmarEnvio(t.id, c.envio.rascunho, foto)
+  assert.equal(r.status, 409, r.erro ?? '')
+  assert.equal(r.desatualizado, true)
+  assert.match(r.erro, /conversa mudou/)
+  assert.equal((await enviadosDe(t.id)).length, 0, 'nada foi enviado')
+
+  await api('/api/lojas', { id: 'loja1', prazoEntrega: prazoOriginal })
 })
 
 test('a revisão preserva a cadência atual — não cria nem adianta um horário mínimo', async () => {
-  const t = await conversaComRascunho(170)
+  const t = await conversaComRascunho(174)
   const c = await auditoria(t.id)
-  const minimoAntes = c.envio.minimoEnvio
+  assert.ok(c.envio.minimoEnvio, 'a conversa nasce com horário mínimo')
 
-  // mínimo diferente do que a tela viu: a revisão está velha
-  const r = await confirmarEnvio(t.id, c.envio.rascunho, { ...esperadoDe(c), minimoEnvio: '2099-01-01T00:00:00.000Z' })
-  assert.equal(r.status, 409, r.erro ?? '')
-  assert.match(r.erro, /horário mínimo da cadência mudou/)
-  assert.equal((await ticket(t.id)).atendimentoNovo.proximoEnvioMinimo ?? null, minimoAntes, 'e a cadência não foi tocada')
-
-  // com o mínimo certo, o envio sai — e não deixa uma cadência nova para trás
   const ok = await confirmarEnvio(t.id, c.envio.rascunho, esperadoDe(c))
   assert.equal(ok.status, 200, ok.erro ?? '')
   const depois = await ticket(t.id)
@@ -2784,4 +2865,85 @@ test('falha do Google não bloqueia o envio: a tradução avisa e o original con
   // e o envio do original continua funcionando normalmente
   const ok = await confirmarEnvio(t.id, c.envio.rascunho, esperadoDe(c))
   assert.equal(ok.status, 200, 'o envio não foi bloqueado pela falha da tradução: ' + (ok.erro ?? ''))
+})
+
+/* ============ a fotografia é obrigatória no motor novo ============ */
+
+test('chamada direta sem a fotografia no motor novo: 409, mesmo com tudo em ordem', async () => {
+  const t = await conversaComRascunho(175)
+  const c = await auditoria(t.id)
+  assert.equal(c.envio.podeRevisar, true, 'a conversa está pronta para enviar')
+
+  // sem 'esperado' nenhum
+  const sem = await api(`/api/tickets/${t.id}/aprovar`, { texto: c.envio.rascunho, origem: 'ia' })
+  assert.equal(sem.status, 409, sem.erro ?? '')
+  assert.equal(sem.semFotografia, true)
+  // com uma fotografia pela metade: o cliente não escolhe o que é conferido
+  const { versao, ...semVersao } = esperadoDe(c)
+  void versao
+  const pedaco = await confirmarEnvio(t.id, c.envio.rascunho, semVersao)
+  assert.equal(pedaco.status, 409, pedaco.erro ?? '')
+  assert.match(pedaco.erro, /conferência completa/)
+  // com um objeto vazio
+  const vazio = await confirmarEnvio(t.id, c.envio.rascunho, {})
+  assert.equal(vazio.status, 409, vazio.erro ?? '')
+  // campo INVENTADO pelo cliente não substitui nada nem libera nada
+  const inventado = await confirmarEnvio(t.id, c.envio.rascunho, { ...esperadoDe(c), tudoCerto: true, fase: 'fase_inventada' })
+  assert.equal(inventado.status, 409, inventado.erro ?? '')
+  assert.match(inventado.erro, /fase permitida mudou/)
+
+  assert.equal((await enviadosDe(t.id)).length, 0, 'nada foi enviado em nenhuma das tentativas')
+  // e com a fotografia inteira e verdadeira, sai
+  const ok = await confirmarEnvio(t.id, c.envio.rascunho, esperadoDe(c))
+  assert.equal(ok.status, 200, ok.erro ?? '')
+})
+
+test('depois de assumir, o texto que o validador recusou continua proibido', async () => {
+  escritaRuim = true
+  fila.push(clsPadrao())
+  const r0 = await api('/api/simular-email', { de: 'c176@web.de', nome: 'C176', assunto: 'Bestellung #160', corpo: CORPO_PADRAO, lojaId: 'loja1' })
+  escritaRuim = false
+  const id = r0.ticket.id
+  const c = await auditoria(id)
+  const recusado = [...c.eventos].reverse().find(e => e.tipo === 'rascunho_bloqueado')
+  assert.ok(recusado?.dados?.texto, 'o texto recusado ficou guardado na auditoria')
+
+  assert.equal((await mover(id, { motivo: 'respondo eu' })).status, 200)
+  // o texto da IA recusado NÃO sai nem como resposta sua
+  const proibido = await aprovar(id, { texto: recusado.dados.texto, origem: 'manual' })
+  assert.equal(proibido.status, 409, proibido.erro ?? '')
+  assert.equal(proibido.rascunhoRecusado, true)
+  assert.match(proibido.erro, /escrito pela IA e recusado/)
+  assert.equal((await enviadosDe(id)).length, 0, 'nada foi enviado')
+
+  // o SEU texto, sim
+  const meu = await aprovar(id, { texto: 'Guten Tag, ich kümmere mich persönlich darum.', origem: 'manual' })
+  assert.equal(meu.status, 200, meu.erro ?? '')
+})
+
+test('atendimento clássico continua enviando sem fotografia nenhuma', async () => {
+  const t = await ticket('dup-1')
+  assert.equal(t.motorAtendimento, 'classico', 'é mesmo clássica')
+  assert.equal(t.aprovacao ?? null, null, 'e o clássico nem recebe fotografia')
+  const r = await api('/api/tickets/dup-1/aprovar', { texto: 'Guten Tag, wir melden uns.', origem: 'manual' })
+  assert.equal(r.status, 200, 'o clássico não mudou: ' + (r.erro ?? ''))
+})
+
+test('mensagem nova invalida a fotografia das três telas de uma vez', async () => {
+  const t = await conversaComRascunho(140)
+  // as três telas leem a MESMA fotografia: /api/state (Aprovações e a tela da
+  // conversa) e /api/auditoria/:id (o modal de revisão)
+  const doEstado = (await ticket(t.id)).aprovacao
+  const daAuditoria = (await auditoria(t.id)).envio.esperado
+  assert.deepEqual(doEstado, daAuditoria, 'a mesma fotografia nas três telas')
+
+  fila.push(clsPadrao())
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Und noch eine Frage dazu.' })
+
+  const depois = (await ticket(t.id)).aprovacao
+  assert.notEqual(depois.mensagemEm, doEstado.mensagemEm, 'a mensagem nova mudou a fotografia')
+  assert.notEqual(depois.versao, doEstado.versao)
+  const r = await confirmarEnvio(t.id, 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an.', doEstado)
+  assert.equal(r.status, 409, r.erro ?? '')
+  assert.match(r.erro, /mensagem nova do cliente/)
 })

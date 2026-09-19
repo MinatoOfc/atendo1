@@ -1495,8 +1495,15 @@ function visao(wsId) {
     // envioEmAndamento: a tela precisa saber que o canal está no meio de um
     // envio — para desabilitar "Mover para atendimento humano" em vez de
     // prometer um cancelamento que não existe
-    tickets: estado.tickets.map(t => (t.auditoriaIA || t.envioPendente || t.fotoAntesDoCiclo || envioEmAndamento(wsId, t.id)
-      ? { ...t, auditoriaIA: undefined, envioPendente: undefined, fotoAntesDoCiclo: undefined, envioEmAndamento: envioEmAndamento(wsId, t.id) || undefined } : t)),
+    // aprovacao: a FOTOGRAFIA que Aprovações e a tela da conversa devolvem no
+    // instante do envio — a mesma que a Auditoria usa no modal de revisão.
+    // É por ela que nenhuma das três telas envia sobre um estado velho.
+    tickets: estado.tickets.map(t => {
+      const emVoo = envioEmAndamento(wsId, t.id)
+      const aprovacao = motorDaConversa(t) === 'novo' ? fotografiaDaAprovacao(estado, wsId, t) : undefined
+      if (!t.auditoriaIA && !t.envioPendente && !t.fotoAntesDoCiclo && !emVoo && !aprovacao) return t
+      return { ...t, auditoriaIA: undefined, envioPendente: undefined, fotoAntesDoCiclo: undefined, envioEmAndamento: emVoo || undefined, aprovacao }
+    }),
     politicas: estado.politicas,
     faqs: estado.faqs,
     comportamentos: estado.comportamentos ?? [],
@@ -4314,9 +4321,200 @@ function situacaoDoRascunho(t) {
 }
 
 /**
+ * Todo texto escrito pela IA que NÃO pode sair por nenhuma porta: o rascunho
+ * invalidado quando você assumiu a conversa e TODO rascunho que o validador
+ * recusou nesta conversa. A comparação é exata, de propósito: se você corrigir
+ * o texto, ele passa a ser seu e sai — o que não pode é o texto recusado sair
+ * como se tivesse sido aprovado.
+ */
+function textosProibidosDaIA(t) {
+  const fora = new Set()
+  const inv = t?.atendimentoHumano?.rascunhoInvalidado
+  if (typeof inv === 'string' && inv.trim()) fora.add(inv.trim())
+  for (const e of t?.auditoriaIA ?? []) {
+    if (e.tipo === 'rascunho_bloqueado' && typeof e.dados?.texto === 'string' && e.dados.texto.trim()) {
+      fora.add(e.dados.texto.trim())
+    }
+  }
+  return fora
+}
+
+/** O texto é um dos que a IA escreveu e que não podem sair? O evento guarda o
+ *  rascunho recusado TRUNCADO em 2000 caracteres, então a comparação olha o
+ *  mesmo recorte — senão um rascunho longo escaparia por causa do corte. */
+function textoProibidoDaIA(t, texto) {
+  const alvo = String(texto ?? '').trim()
+  if (!alvo) return false
+  for (const proibido of textosProibidosDaIA(t)) {
+    if (alvo === proibido) return true
+    if (proibido.length === 2000 && alvo.slice(0, 2000) === proibido) return true
+  }
+  return false
+}
+
+/**
+ * FOTOGRAFIA DA APROVAÇÃO — a fonte ÚNICA.
+ *
+ * O servidor calcula; as três telas (Auditoria, Aprovações e a tela da
+ * conversa) recebem a mesma fotografia e a devolvem no instante do envio.
+ * Quem decide o que é conferido é esta função, nunca o cliente: /aprovar
+ * exige TODAS estas chaves de volta e compara cada uma com o estado de agora.
+ * Campo a mais mandado pela tela é ignorado; campo a menos recusa o envio.
+ */
+function fotografiaDaAprovacao(estado, wsId, t) {
+  const an = t.atendimentoNovo ?? null
+  const sit = situacaoDoRascunho(t)
+  const cp = an?.conclusaoPendente ?? null
+  const lojaId = t.lojaId ?? 'loja1'
+  const loja = estado.lojas.find(l => l.id === lojaId) ?? null
+  const temRascunho = typeof t.rascunho === 'string' && t.rascunho.trim() !== ''
+  const foto = {
+    workspaceId: wsId,
+    lojaId,
+    ticketId: t.id,
+    // id/data da última mensagem do cliente: muda quando ele escreve de novo
+    mensagemEm: t.data ?? null,
+    cicloId: t.cicloAuditoria ?? null,
+    tentativaId: an?.tentativaAtual ?? null,
+    fase: an?.transicaoPendente?.para ?? null,
+    rascunhoHash: temRascunho ? hashDoTexto(t.rascunho) : null,
+    validado: sit.validado && !sit.bloqueado,
+  }
+  // VERSÃO DA CONVERSA: digest de tudo o que muda O QUE PODE SER ENVIADO.
+  // É a rede que pega o resto — oferta, cupom, prazo, cadência, atendimento
+  // humano, resposta já enviada. Um campo novo aqui protege as três telas de
+  // uma vez, sem precisar que cada uma saiba dele.
+  foto.versao = hashDoTexto(JSON.stringify([
+    ...Object.values(foto),
+    sit.bloqueado, t.status ?? null, t.atendimentoHumano?.ativo === true,
+    t.respondidoEm ?? null, t.enviaEm ?? null, t.iaPausada === true,
+    an?.etapa ?? null, an?.aguardando ?? null, an?.acaoAceita ?? null,
+    an?.proximoEnvioMinimo ?? null, an?.idioma ?? null, an?.aprovacaoObrigatoria ?? null,
+    an?.envioBloqueado ?? null, an?.produtosInformados === true,
+    cp?.percentual ?? null, cp?.valor ?? null, cp?.cupom ?? null, cp?.status ?? null,
+    loja?.prazoEntrega ?? null, loja?.cupons ?? null,
+    t.atendimentoHumano?.rascunhoInvalidado ?? null,
+  ]))
+  return foto
+}
+
+/** Por que a tela está velha, campo a campo. */
+const MOTIVO_FOTOGRAFIA = {
+  workspaceId: 'Esta aprovação foi aberta em outra conta',
+  lojaId: 'A conversa mudou de loja depois que a tela carregou',
+  ticketId: 'Esta aprovação é de outra conversa',
+  mensagemEm: 'Chegou uma mensagem nova do cliente depois que a tela carregou',
+  cicloId: 'Este ciclo da conversa não é mais o atual',
+  tentativaId: 'Esta tentativa não é mais a atual — a IA escreveu outra resposta depois',
+  fase: 'A fase permitida mudou depois que a tela carregou',
+  rascunhoHash: 'O rascunho mudou depois que a tela carregou',
+  validado: 'A situação do rascunho mudou depois que a tela carregou',
+  versao: 'A conversa mudou depois que a tela carregou',
+}
+
+const FIM_DESATUALIZADA = ' — nada foi enviado. Recarregue a conversa e confira de novo.'
+
+/**
+ * Confere a fotografia devolvida pela tela contra o estado de AGORA.
+ *
+ * Duas coisas DIFERENTES, e é esta a separação que o pedido exige:
+ *  - aqui só entra o RASCUNHO-BASE (hash, ciclo, tentativa, fase, mensagem do
+ *    cliente, versão). Ele tem de continuar sendo o que o servidor tem agora;
+ *  - o TEXTO FINAL, que o dono pode ter editado, NÃO entra. Ele é validado
+ *    depois, pelas regras de fase, idioma, oferta e cupom. Uma edição legítima
+ *    nunca falha por ter hash diferente do rascunho-base.
+ */
+function conferirFotografia(estado, wsId, t, esperado) {
+  const atual = fotografiaDaAprovacao(estado, wsId, t)
+  for (const [chave, valor] of Object.entries(atual)) {
+    if (!(chave in esperado)) {
+      return { erro: `A tela não mandou a conferência completa do envio (faltou "${chave}")${FIM_DESATUALIZADA}`, desatualizado: true, status: 409 }
+    }
+    if (JSON.stringify(esperado[chave] ?? null) !== JSON.stringify(valor ?? null)) {
+      return { erro: (MOTIVO_FOTOGRAFIA[chave] ?? 'A conversa mudou') + FIM_DESATUALIZADA, desatualizado: true, status: 409 }
+    }
+  }
+  return null
+}
+
+/**
+ * RECONFERÊNCIA NO INSTANTE DO ENVIO — obrigatória no motor novo, em TODAS as
+ * telas. O clássico segue exatamente como sempre foi.
+ */
+function conferirAntesDeEnviar(estado, wsId, t, { esperado, origem, textoFinal }) {
+  if (motorDaConversa(t) !== 'novo') return null
+  const lojaId = t.lojaId ?? 'loja1'
+  const humano = emAtendimentoHumano(t)
+  const sit = situacaoDoRascunho(t)
+  const texto = String(textoFinal ?? '').trim()
+
+  // (1) RASCUNHO RECUSADO PELO VALIDADOR. Enquanto a conversa não for
+  // explicitamente assumida, nada sai por aqui — nem como manual, nem com o
+  // texto colado à mão, nem com o produto já informado. `status: 'humano'`
+  // sozinho não é autorização: é só onde a conversa caiu quando a IA errou.
+  if (sit.bloqueado && !humano) {
+    return {
+      erro: 'Este rascunho foi recusado pelo validador e não pode ser enviado. Gere novamente ou mova explicitamente a conversa para atendimento humano.',
+      rascunhoRecusado: true, status: 409,
+    }
+  }
+  // (2) Depois de assumida, o texto da IA que foi recusado ou invalidado
+  // continua proibido — o que sai é o que VOCÊ escrever.
+  if (textoProibidoDaIA(t, texto)) {
+    return {
+      erro: 'Este texto foi escrito pela IA e recusado — ele não sai nem como resposta sua. Escreva a resposta ou peça um rascunho novo.',
+      rascunhoRecusado: true, status: 409,
+    }
+  }
+  // (3) A FOTOGRAFIA é obrigatória: sem ela a tela pode estar olhando um
+  // estado que não existe mais. Em atendimento humano ela também vale — é o
+  // que impede responder sobre uma mensagem antiga.
+  if (!esperado || typeof esperado !== 'object' || Array.isArray(esperado)) {
+    return {
+      erro: 'Esta tela não mandou a conferência do envio — recarregue a conversa e tente de novo.',
+      semFotografia: true, desatualizado: true, status: 409,
+    }
+  }
+  const velha = conferirFotografia(estado, wsId, t, esperado)
+  if (velha) return velha
+
+  // (4) estado vivo que a fotografia não cobre (é do servidor, não da tela)
+  if (humano && origem !== 'manual') {
+    return { erro: recusaHumano('o envio da resposta da IA'), desatualizado: true, status: 409 }
+  }
+  // "em voo" é a TRAVA em memória, e só ela. t.envioPendente é um marcador
+  // PERSISTIDO que sobrevive a uma falha do canal: tratá-lo como envio em
+  // curso trancaria a conversa para sempre depois de um e-mail que não saiu.
+  // Queda de verdade no meio do envio é resolvida na reconciliação do arranque.
+  if (envioEmAndamento(wsId, t.id)) {
+    return { erro: 'Existe um envio em andamento nesta conversa; aguarde a confirmação e tente novamente.', status: 409 }
+  }
+  // "a resposta ainda não foi enviada" NÃO precisa de guarda própria: assim que
+  // um envio acontece, respondidoEm e o rascunho mudam, e com eles `versao` e
+  // `rascunhoHash` — qualquer tela que ainda esteja mostrando o estado de antes
+  // é recusada acima. Uma guarda por tentativa impediria o dono de escrever uma
+  // SEGUNDA resposta de propósito, que é coisa diferente de clicar duas vezes.
+  // A conta de e-mail da própria loja e o produto informado NÃO entram aqui:
+  // não são "tela velha", e conferi-los antes escondia o motivo real (cupom,
+  // fase, idioma) de quem ainda não configurou a caixa. Ficam na própria rota,
+  // depois das validações do texto.
+  return null
+}
+
+/** Caixa de e-mail da PRÓPRIA loja: no modo novo não existe conta reserva. */
+function canalDaPropriaLoja(estado, wsId, t) {
+  if (motorDaConversa(t) !== 'novo') return null
+  const lojaId = t.lojaId ?? 'loja1'
+  const conta = contasDe(wsId).find(c => c.id === lojaId) ?? null
+  if (conta && (conta.configurado || envioPorApi)) return null
+  const loja = estado.lojas.find(l => l.id === lojaId) ?? null
+  return 'A loja desta conversa (' + (loja?.nome ?? lojaId) + ') não tem caixa de e-mail configurada — no modo novo a resposta só sai pela conta da própria loja.'
+}
+
+/**
  * Tudo o que o modal "Revisar e enviar" da Auditoria precisa: o estado do
- * envio, a identidade EXATA do rascunho-base que está sendo revisado e a
- * situação do canal. Só leitura — não muda nada na conversa.
+ * envio, a fotografia para a reconferência e a situação do canal.
+ * Só leitura — não muda nada na conversa.
  */
 function dadosDoEnvio(estado, wsId, t) {
   const an = t.atendimentoNovo ?? null
@@ -4327,8 +4525,9 @@ function dadosDoEnvio(estado, wsId, t) {
   const sit = situacaoDoRascunho(t)
   const cp = an?.conclusaoPendente ?? null
   const humano = emAtendimentoHumano(t)
-  // "em voo" pelos dois lados: a trava em memória e o contexto persistido
-  const emVoo = envioEmAndamento(wsId, t.id) || !!t.envioPendente
+  // "em voo" é a trava em memória: t.envioPendente sobrevive a uma falha do
+  // canal e deixaria a conversa presa em "Envio em andamento" para sempre
+  const emVoo = envioEmAndamento(wsId, t.id)
   const tent = an?.tentativaAtual ?? null
   const enviadoNaTentativa = tent
     ? [...aud].reverse().find(e => e.tipo === 'email_enviado' && e.dados?.tentativaId === tent) ?? null
@@ -4349,22 +4548,15 @@ function dadosDoEnvio(estado, wsId, t) {
 
   return {
     estado: estadoEnvio,
-    // as cinco condições do botão principal, decididas no servidor: aguardando
-    // aprovação, rascunho validado, ciclo e tentativa atuais (é o que o modal
-    // devolve na reconferência), sem envio em andamento, fora do humano
+    // as cinco condições do botão principal, decididas no servidor
     podeRevisar: estadoEnvio === 'aguardando_aprovacao' && sit.validado && !humano && !emVoo
       && motorDaConversa(t) === 'novo' && !!tent && !!t.cicloAuditoria,
     rascunhoValidado: sit.validado,
-    // identidade do RASCUNHO-BASE aberto no modal — é isto que a reconferência
-    // exige de volta. O texto final editado pelo dono é outra coisa.
+    // A MESMA fotografia que Aprovações e a tela da conversa recebem
+    esperado: fotografiaDaAprovacao(estado, wsId, t),
+    // texto original completo que será enviado, no idioma do cliente
     rascunho: temRascunho ? String(t.rascunho) : null,
-    rascunhoHash: temRascunho ? hashDoTexto(t.rascunho) : null,
     rascunhoIdioma: an?.rascunhoIdioma ?? null,
-    workspaceId: wsId,
-    lojaId,
-    cicloId: t.cicloAuditoria ?? null,
-    tentativaId: tent,
-    mensagemEm: t.data ?? null,
     mensagemAtual: typeof t.corpo === 'string' ? t.corpo : null,
     minimoEnvio: an?.proximoEnvioMinimo ?? null,
     percentual: cp?.percentual ?? (FASES[an?.acaoAceita]?.oferta?.pct ?? null),
@@ -4383,94 +4575,6 @@ function dadosDoEnvio(estado, wsId, t) {
       canalConfirmou: enviadoNaTentativa.dados?.canalConfirmou === true,
     } : null,
   }
-}
-
-/**
- * RECONFERÊNCIA NO INSTANTE DO ENVIO.
- *
- * Duas coisas DIFERENTES, conferidas separadamente:
- *
- *  - o RASCUNHO-BASE que estava aberto no modal (hash, ciclo, tentativa,
- *    mensagem do cliente, oferta, cadência): tem de continuar sendo
- *    exatamente o que o servidor tem agora. Se a IA regenerou, se a conversa
- *    foi relida ou se chegou mensagem nova, a tela está velha e nada sai.
- *
- *  - o TEXTO FINAL, que o dono pode ter editado: NÃO entra aqui. Ele é
- *    validado depois, pelas regras de fase, idioma, oferta e cupom que já
- *    existem nesta mesma rota. Uma edição legítima nunca pode falhar só
- *    porque o hash dela é diferente do hash do rascunho-base.
- *
- * Todos os campos são opcionais: a página Aprovações continua enviando sem
- * eles e nada muda para ela.
- */
-function conferirAntesDeEnviar(estado, wsId, t, esperado) {
-  if (!esperado || typeof esperado !== 'object' || Array.isArray(esperado)) return null
-  const an = t.atendimentoNovo ?? null
-  const aud = t.auditoriaIA ?? []
-  const lojaId = t.lojaId ?? 'loja1'
-  const txt = v => (v === null || v === undefined ? '' : String(v))
-  const mudou = (a, b) => txt(a) !== txt(b)
-  const dado = k => esperado[k] !== undefined && esperado[k] !== null
-  const FIM = ' — nada foi enviado. Feche a revisão, recarregue a conversa e confira de novo.'
-  const velho = motivo => ({ erro: motivo + FIM, desatualizado: true, status: 409 })
-
-  // (1) workspace e (2) loja corretos
-  if (dado('workspaceId') && mudou(esperado.workspaceId, wsId)) return velho('Esta revisão foi aberta em outra conta')
-  if (dado('lojaId') && mudou(esperado.lojaId, lojaId)) return velho('A conversa mudou de loja desde que você abriu a revisão')
-  // (3) a conversa ainda existir já foi conferido por acharTicket
-  // (4) conversa não foi movida para atendimento humano
-  if (emAtendimentoHumano(t)) return { erro: recusaHumano('o envio da resposta da IA'), desatualizado: true, status: 409 }
-  // (5) nenhum envio já em andamento
-  if (envioEmAndamento(wsId, t.id) || t.envioPendente) {
-    return { erro: 'Existe um envio em andamento nesta conversa; aguarde a confirmação e tente novamente.', status: 409 }
-  }
-  // (6) nenhuma mensagem nova do cliente
-  if (dado('mensagemEm') && mudou(esperado.mensagemEm, t.data)) return velho('Chegou uma mensagem nova do cliente depois que você abriu a revisão')
-  // (7) ciclo e (8) tentativa ainda atuais
-  if (dado('cicloId') && mudou(esperado.cicloId, t.cicloAuditoria)) return velho('Este ciclo da conversa não é mais o atual')
-  if (dado('tentativaId') && mudou(esperado.tentativaId, an?.tentativaAtual)) return velho('Esta tentativa não é mais a atual — a IA escreveu outra resposta depois')
-  // (9) a resposta desta tentativa ainda não foi enviada
-  if (an?.tentativaAtual && aud.some(e => e.tipo === 'email_enviado' && e.dados?.tentativaId === an.tentativaAtual)) {
-    return { erro: 'Esta resposta já foi enviada ao cliente — nada foi enviado de novo.', desatualizado: true, status: 409 }
-  }
-  // (10) o RASCUNHO-BASE é o mesmo e (11) o hash dele não mudou. Conferido
-  // contra o rascunho que o servidor tem AGORA, nunca contra o texto final.
-  if (dado('rascunhoHash')) {
-    if (typeof t.rascunho !== 'string' || t.rascunho.trim() === '') return velho('O rascunho que você revisou não existe mais')
-    if (mudou(esperado.rascunhoHash, hashDoTexto(t.rascunho))) return velho('O rascunho mudou depois que você abriu a revisão')
-  }
-  // (12) rascunho continua validado pelo validador
-  const sit = situacaoDoRascunho(t)
-  if (esperado.exigirValidado !== false) {
-    if (sit.bloqueado) return velho('O validador recusou esta resposta')
-    if (!sit.validado) return velho('Esta resposta não está validada pelo validador')
-  }
-  // (13) fase continua permitida e (14) idioma correto
-  if (dado('fase') && mudou(esperado.fase, an?.transicaoPendente?.para)) return velho('A fase permitida mudou desde que você abriu a revisão')
-  if (dado('idioma') && mudou(esperado.idioma, an?.idioma)) return velho('O idioma da conversa mudou desde que você abriu a revisão')
-  // (15) percentual e valor exatos, (16) cupom, (17) prazo
-  const cp = an?.conclusaoPendente ?? null
-  if (dado('percentual') && mudou(esperado.percentual, cp?.percentual ?? (FASES[an?.acaoAceita]?.oferta?.pct ?? null))) {
-    return velho('O percentual da oferta mudou desde que você abriu a revisão')
-  }
-  if (dado('valor') && mudou(esperado.valor, cp?.valor ?? null)) return velho('O valor da oferta mudou desde que você abriu a revisão')
-  if (dado('cupom') && mudou(esperado.cupom, cp?.cupom ?? null)) return velho('O cupom da oferta mudou desde que você abriu a revisão')
-  const lojaR = estado.lojas.find(l => l.id === lojaId) ?? null
-  if (dado('prazo') && JSON.stringify(esperado.prazo) !== JSON.stringify(lojaR?.prazoEntrega ?? null)) {
-    return velho('O prazo de entrega da loja mudou desde que você abriu a revisão')
-  }
-  // (18) regra de cadência preservada — a revisão não cria uma cadência nova
-  if (esperado.minimoEnvio !== undefined && mudou(esperado.minimoEnvio, an?.proximoEnvioMinimo)) {
-    return velho('O horário mínimo da cadência mudou desde que você abriu a revisão')
-  }
-  // conta de e-mail da PRÓPRIA loja (no modo novo não existe caixa reserva)
-  const conta = contasDe(wsId).find(c => c.id === lojaId) ?? null
-  if (motorDaConversa(t) === 'novo' && !(conta && (conta.configurado || envioPorApi))) {
-    return { erro: 'A loja desta conversa (' + (lojaR?.nome ?? lojaId) + ') não tem caixa de e-mail configurada — no modo novo a resposta só sai pela conta da própria loja.', status: 400 }
-  }
-  // produto informado quando exigido: a trava do mapa continua sendo a oficial,
-  // logo abaixo nesta mesma rota — aqui só o clique velho é barrado.
-  return null
 }
 
 function conversaDaAuditoria(estado, wsId, t, { completo = false } = {}) {
@@ -5561,13 +5665,12 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
       }
       if (!textoFinal.trim()) return res.status(400).json({ erro: 'Escreva a resposta antes de enviar.', state: visao(req.wsId) })
     }
-    // RECONFERÊNCIA no instante do envio: quando a tela manda o que ela estava
-    // vendo (modal "Revisar e enviar" da Auditoria), o servidor exige que tudo
-    // continue valendo. Confere o RASCUNHO-BASE; o texto final editado é
-    // validado logo abaixo, pelas regras de fase, idioma, oferta e cupom.
-    const desatualizada = conferirAntesDeEnviar(req.estado, req.wsId, t, req.body?.esperado)
-    if (desatualizada) {
-      const { status, ...corpo } = desatualizada
+    // RECONFERÊNCIA no instante do envio — OBRIGATÓRIA no motor novo, nas três
+    // telas. Confere o RASCUNHO-BASE contra o estado de agora; o texto final
+    // editado é validado logo abaixo, pelas regras de fase, idioma e oferta.
+    const recusa = conferirAntesDeEnviar(req.estado, req.wsId, t, { esperado: req.body?.esperado, origem, textoFinal })
+    if (recusa) {
+      const { status, ...corpo } = recusa
       return res.status(status ?? 409).json({ ...corpo, state: visao(req.wsId) })
     }
     // TRAVA PELO MOTOR DA CONVERSA (não pela transição): modo novo sem produto informado só envia a coleta do produto
@@ -5609,6 +5712,9 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
         anA.transicaoPendente.observacao = 'Texto editado por você antes do envio (a oferta da etapa não mudou)'
       }
     }
+
+    const semCaixa = canalDaPropriaLoja(req.estado, req.wsId, t)
+    if (semCaixa) return res.status(400).json({ erro: semCaixa, state: visao(req.wsId) })
 
     await enviarResposta(req.wsId, t, textoFinal, origem)
     // "Enviar e manter comigo": a mensagem sai, mas a conversa continua em

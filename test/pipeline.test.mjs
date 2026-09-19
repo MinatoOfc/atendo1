@@ -250,7 +250,12 @@ async function cliente(cls, { de, nome, corpo, ticketId, lojaId, comImagem, agor
   if (corpo !== undefined) assert.equal(r.ticket.corpo, corpo, 'o helper nao pode alterar o corpo da mensagem do cliente')
   return r.ticket
 }
-const aprovar = (t, extra = {}) => api(`/api/tickets/${t.id}/aprovar`, { texto: extra.texto ?? t.rascunho, origem: 'ia', ...extra })
+// A FOTOGRAFIA DA APROVAÇÃO vem do servidor (o mesmo campo que as três telas
+// recebem em /api/state) e é buscada no instante da chamada. Nenhum teste
+// inventa campo de segurança — quem prova a recusa manda 'esperado' à mão.
+const fotoDe = async id => (await api('/api/state', null, 'GET')).state.tickets.find(x => x.id === id)?.aprovacao
+const aprovar = async (t, extra = {}) => aprovarId(t.id, { texto: extra.texto ?? t.rascunho, origem: 'ia', esperado: await fotoDe(t.id), ...extra })
+const aprovarId = async (id, corpo = {}) => api(`/api/tickets/${id}/aprovar`, { esperado: await fotoDe(id), ...corpo })
 const comEnvio = async (modo, fn) => { const anterior = process.env.ATENDO_SMTP_FAKE; process.env.ATENDO_SMTP_FAKE = modo; try { return await fn() } finally { if (anterior === undefined) delete process.env.ATENDO_SMTP_FAKE; else process.env.ATENDO_SMTP_FAKE = anterior } }
 const esperar = ms => new Promise(r => setTimeout(r, ms))
 
@@ -292,11 +297,13 @@ test('loja sem e-mail não envia pela conta de outra loja; falta de canal e falh
   const t4 = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c15@web.de', nome: 'C15', corpo: 'The Polo Premium is bad.', lojaId: 'loja4' })
   assert.equal(an(t4).transicaoPendente.para, 'qual_troca')
   let r = await comEnvio('ok', () => aprovar(t4))
-  assert.equal(r.status, 500); assert.match(r.erro, /própria loja/); assert.match(r.erro, /caixa de e-mail/)
+  // 400, não 500: a falta de caixa própria é recusada ANTES de chamar o canal,
+  // com o motivo na cara — antes vinha como erro interno do envio
+  assert.equal(r.status, 400, r.erro ?? ''); assert.match(r.erro, /própria loja/); assert.match(r.erro, /caixa de e-mail/)
   let t2 = await ticket(t4.id)
   assert.equal(t2.status, 'aprovacao'); assert.equal(an(t2).etapa, null); assert.equal(an(t2).historicoEtapas.length, 0); assert.equal(an(t2).transicaoPendente.para, 'qual_troca')
   r = await aprovar(t4)
-  assert.equal(r.status, 500, 'sem simulação também não')
+  assert.equal(r.status, 400, 'sem simulação também não: ' + (r.erro ?? ''))
   // loja1 tem conta própria: falha de envio não muda nada; sucesso muda
   const t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade' }, { de: 'c2@web.de', nome: 'C2', corpo: 'Das Polo Premium ist schlecht.', lojaId: 'loja1' })
   assert.equal(an(t).transicaoPendente.para, 'qual_troca')
@@ -307,7 +314,7 @@ test('loja sem e-mail não envia pela conta de outra loja; falta de canal e falh
   assert.equal(t2.status, 'aprovacao'); assert.equal(an(t2).etapa, null); assert.equal(an(t2).historicoEtapas.length, 0)
   // envio real bem-sucedido: agora sim
   r = await comEnvio('ok', () => aprovar(t))
-  assert.equal(r.status, 200)
+  assert.equal(r.status, 200, 'motivo: ' + (r.erro ?? ''))
   t2 = await ticket(t.id)
   assert.equal(an(t2).etapa, 'qual_troca'); assert.equal(an(t2).historicoEtapas.length, 1); assert.equal(an(t2).transicaoPendente, null)
 })
@@ -975,7 +982,7 @@ test('rotas — casos antigos sem prova de produto: oferta antiga não sai (manu
   const s1 = g('sp1'); assert.equal(an(s1).transicaoPendente.para, 'coleta'); assert.deepEqual(an(s1).transicaoPendente.faltando, ['produtos']); assert.equal(an(s1).proximaAposColeta, 'reemb_40'); assert.equal(an(s1).etapa, 'reemb_25'); assert.equal(s1.enviaEm, undefined)
   dentro(s1, /Welchen Artikel/); assert.doesNotMatch(s1.rascunho, /40|%|erstatt/i)
   // aprovação manual do texto de oferta antigo → 400 (só a pergunta do produto pode sair)
-  let r = await api('/api/tickets/sp1/aprovar', { texto: TEXTO40, origem: 'manual', confirmarAlteracao: true }); assert.equal(r.status, 400); assert.match(r.erro, /produto|etapa/i)
+  let r = await aprovarId('sp1', { texto: TEXTO40, origem: 'manual', confirmarAlteracao: true }); assert.equal(r.status, 400); assert.match(r.erro, /produto|etapa/i)
   // sp6: rascunho antigo com envio AUTOMÁTICO vencido → não saiu; agendamento removido; etapa e histórico intactos
   // (a loja3 é automática e o envio está liberado neste arquivo: no máximo a PERGUNTA DO PRODUTO saiu sozinha — nunca a oferta)
   const s6 = g('sp6'); const seq6 = an(s6).historicoEtapas.map(h => h.para)
@@ -1020,12 +1027,12 @@ test('rotas — modo novo SEM transição pendente: sem produto nada sai (manual
   const COLETA = 'Hallo! Welchen Artikel aus Ihrer Bestellung meinen Sie genau?'
   // sp7: modo novo, transicaoPendente null, produto ausente, status humano → oferta/troca manual = 400 e NADA sai
   let s7 = await ticket('sp7'); assert.equal(an(s7).transicaoPendente, null); assert.equal(s7.status, 'humano')
-  let r = await comEnvio('ok', () => api('/api/tickets/sp7/aprovar', { texto: OFERTA, origem: 'manual', confirmarAlteracao: true }))
+  let r = await comEnvio('ok', () => aprovarId('sp7', { texto: OFERTA, origem: 'manual', confirmarAlteracao: true }))
   assert.equal(r.status, 400); assert.equal(r.produtoNaoInformado, true)
   s7 = await ticket('sp7'); assert.equal(s7.resposta, 'Antwort.', 'nada foi enviado'); assert.equal(an(s7).historicoEtapas.length, 1); assert.equal(an(s7).etapa, 'qual_troca')
   assert.equal(an(s7).transicaoPendente.para, 'coleta'); assert.deepEqual(an(s7).transicaoPendente.faltando, ['produtos']); assert.equal(an(s7).proximaAposColeta, '__humano__'); assert.equal(an(s7).humanoPendente, 'Enviado e mantido com você', 'motivo humano preservado')
   // a coleta manual do produto no idioma do cliente é permitida; depois do produto, volta ao MESMO motivo humano
-  r = await comEnvio('ok', () => api('/api/tickets/sp7/aprovar', { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  r = await comEnvio('ok', () => aprovarId('sp7', { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
   s7 = await ticket('sp7'); assert.equal(an(s7).etapa, 'coleta'); assert.equal(s7.resposta, COLETA)
   s7 = await cliente({ intencao: 'informa', produtos: ['Polo Premium'], resumo: 'polo' }, { de: 'c57@web.de', corpo: 'Das Polo Premium.', ticketId: 'sp7' })
   assert.equal(s7.status, 'humano'); assert.equal(s7.motivoEscalada, 'Enviado e mantido com você'); assert.equal(an(s7).produtosInformados, true); assert.equal(an(s7).transicaoPendente, null)
@@ -1035,9 +1042,9 @@ test('rotas — modo novo SEM transição pendente: sem produto nada sai (manual
   let a = await cliente(null, { de: 'c61@web.de', nome: 'C61', corpo: 'Hilfe, Geld zurück für das Polo Premium.', lojaId: 'loja1' })
   assert.equal(a.status, 'humano'); assert.match(a.motivoEscalada, /não conseguiu classificar/); assert.equal(a.rascunho, undefined)
   assert.equal(an(a).transicaoPendente.para, 'coleta'); assert.deepEqual(an(a).transicaoPendente.faltando, ['produtos']); assert.equal(an(a).proximaAposColeta, '__humano__')
-  r = await comEnvio('ok', () => api(`/api/tickets/${a.id}/aprovar`, { texto: OFERTA, origem: 'manual', confirmarAlteracao: true })); assert.equal(r.status, 400); assert.match(r.erro, /etapa|produto/i)
+  r = await comEnvio('ok', () => aprovarId(a.id, { texto: OFERTA, origem: 'manual', confirmarAlteracao: true })); assert.equal(r.status, 400); assert.match(r.erro, /etapa|produto/i)
   a = await ticket(a.id); assert.equal(a.resposta, undefined, 'nada saiu'); assert.equal(an(a).etapa, null)
-  r = await comEnvio('ok', () => api(`/api/tickets/${a.id}/aprovar`, { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  r = await comEnvio('ok', () => aprovarId(a.id, { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
   a = await cliente({ intencao: 'informa', produtos: ['Polo Premium'], resumo: 'polo' }, { de: 'c61@web.de', corpo: 'Das Polo Premium.', ticketId: a.id })
   assert.equal(a.status, 'humano'); assert.match(a.motivoEscalada, /não conseguiu classificar/, 'volta ao mesmo motivo humano')
 
@@ -1046,17 +1053,17 @@ test('rotas — modo novo SEM transição pendente: sem produto nada sai (manual
   assert.equal(an(b).transicaoPendente.para, 'coleta')
   r = await api(`/api/tickets/${b.id}/pausar-ia`, { pausar: true }); assert.equal(r.status, 200)
   b = await cliente(null, { de: 'c62@web.de', corpo: 'Hallo?', ticketId: b.id }); assert.equal(b.status, 'humano'); assert.match(b.motivoEscalada, /pausada/)
-  r = await comEnvio('ok', () => api(`/api/tickets/${b.id}/aprovar`, { texto: OFERTA, origem: 'manual', confirmarAlteracao: true })); assert.equal(r.status, 400)
+  r = await comEnvio('ok', () => aprovarId(b.id, { texto: OFERTA, origem: 'manual', confirmarAlteracao: true })); assert.equal(r.status, 400)
   b = await ticket(b.id); assert.equal(b.resposta, undefined); assert.equal(an(b).etapa, null)
-  r = await comEnvio('ok', () => api(`/api/tickets/${b.id}/aprovar`, { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  r = await comEnvio('ok', () => aprovarId(b.id, { texto: COLETA, origem: 'manual' })); assert.equal(r.status, 200, r.erro)
   b = await ticket(b.id); assert.equal(an(b).etapa, 'coleta')
 
   // sp8: modo novo sem transição, produto informado, loja SEM e-mail → nunca a conta de outra loja (nada sai)
-  r = await comEnvio('ok', () => api('/api/tickets/sp8/aprovar', { texto: 'Hallo, wir melden uns.', origem: 'manual' }))
-  assert.equal(r.status, 500); assert.match(r.erro, /própria loja/); const s8 = await ticket('sp8'); assert.equal(s8.resposta, 'Antwort.'); assert.equal(s8.status, 'humano')
+  r = await comEnvio('ok', () => aprovarId('sp8', { texto: 'Hallo, wir melden uns.', origem: 'manual' }))
+  assert.equal(r.status, 400, r.erro ?? ''); assert.match(r.erro, /própria loja/); const s8 = await ticket('sp8'); assert.equal(s8.resposta, 'Antwort.'); assert.equal(s8.status, 'humano')
 
   // sp9: modo novo sem transição, produto informado → resposta humana sai pela conta própria, sem transição inventada
-  r = await comEnvio('ok', () => api('/api/tickets/sp9/aprovar', { texto: 'Hallo, wir kümmern uns darum.', origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  r = await comEnvio('ok', () => aprovarId('sp9', { texto: 'Hallo, wir kümmern uns darum.', origem: 'manual' })); assert.equal(r.status, 200, r.erro)
   const s9 = await ticket('sp9'); assert.equal(s9.status, 'enviado'); assert.equal(s9.resposta, 'Hallo, wir kümmern uns darum.'); assert.equal(an(s9).etapa, 'qual_troca'); assert.equal(an(s9).historicoEtapas.length, 1, 'nenhuma transição registrada'); assert.equal(an(s9).transicaoPendente, null)
 })
 
@@ -1206,7 +1213,7 @@ test('Base de Conhecimento é exclusiva do clássico: marcadores conflitantes en
   // aprendizado de estilo (respostas manuais) na loja6, ainda no clássico
   await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true })
   let k6 = await cliente(null, { de: 'c91@web.de', nome: 'C91', corpo: 'Wo ist mein Paket mit dem Polo Premium?', lojaId: 'loja6' }); assert.equal(k6.motorAtendimento, 'classico')
-  r = await comEnvio('ok', () => api(`/api/tickets/${k6.id}/aprovar`, { texto: 'Hallo! MARCADOR-ESTILO-XK4 — wir haben Ihre Sendung geprüft und melden uns mit allen Details zur Lieferung noch heute.', origem: 'manual' })); assert.equal(r.status, 200, r.erro)
+  r = await comEnvio('ok', () => aprovarId(k6.id, { texto: 'Hallo! MARCADOR-ESTILO-XK4 — wir haben Ihre Sendung geprüft und melden uns mit allen Details zur Lieferung noch heute.', origem: 'manual' })); assert.equal(r.status, 200, r.erro)
 
   // 2) clássico (loja2): os marcadores aparecem no prompt real e na resposta simulada
   promptsCapturados.length = 0

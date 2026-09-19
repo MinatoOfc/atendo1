@@ -227,7 +227,7 @@ test.describe('Revisar e enviar', () => {
     await expect(modal).toContainText('Die Qualität ist schlecht')
     await expect(modal).toContainText('Troca')            // fase
     await expect(modal).toContainText('de')               // idioma
-    await expect(modal).toContainText('DANKE15')          // texto original, com o cupom
+    await expect(modal).toContainText('Gutschein über 15%') // texto original, com o percentual do cupom
     await expect(modal).toContainText('Checklist da resposta')
     await expect(modal).toContainText('horário mínimo da cadência')
     await expect(modal).toContainText('canal de e-mail')
@@ -267,7 +267,7 @@ test.describe('Revisar e enviar', () => {
     }
     // ORIGINAL INTACTO: o texto que vai sair continua o mesmo, em alemão
     await expect(modal.locator('.corpo-auditoria').nth(1)).toHaveText(original)
-    await expect(modal.locator('.corpo-auditoria').nth(1)).toContainText('DANKE15')
+    await expect(modal.locator('.corpo-auditoria').nth(1)).toContainText('15%')
 
     // e o campo editável começa com o ORIGINAL, nunca com a tradução
     await modal.getByRole('button', { name: 'Editar antes de enviar' }).click()

@@ -102,6 +102,9 @@ const chamar = (cookie, rota, corpo, metodo = 'POST') => fetch(base + rota, {
   method: metodo, headers: { 'Content-Type': 'application/json', cookie },
   body: metodo === 'GET' ? undefined : JSON.stringify(corpo ?? {}),
 }).then(async r => ({ status: r.status, ...(await r.json().catch(() => ({}))) }))
+// fotografia da aprovação: vem do servidor, buscada no instante da chamada
+const fotoDe = async (cookie, id) => (await chamar(cookie, '/api/state', null, 'GET')).state?.tickets?.find(t => t.id === id)?.aprovacao
+const aprovar = async (cookie, id, corpo) => chamar(cookie, `/api/tickets/${id}/aprovar`, { esperado: await fotoDe(cookie, id), ...corpo })
 
 /* =================================================================== */
 
@@ -109,8 +112,10 @@ test('produção + ATENDO_SIMULAR=1 + ATENDO_SMTP_FAKE=ok: o envio NÃO é dado 
   filho = await subir()
   assert.match(filho.saida(), /ATENDO_SIMULAR=1 está configurado FORA de NODE_ENV=test e foi IGNORADO/)
   const cookie = await entrar()
-  const r = await chamar(cookie, '/api/tickets/pr1/aprovar', { texto: RASCUNHO, origem: 'ia' })
+  const r = await aprovar(cookie, 'pr1', { texto: RASCUNHO, origem: 'ia' })
   assert.notEqual(r.status, 200, 'o canal falso não pode dar o envio por concluído')
+  assert.equal(r.desatualizado ?? false, false, 'e a recusa é do CANAL, não de uma fotografia velha: ' + (r.erro ?? ''))
+  assert.equal(r.semFotografia ?? false, false)
   const { tickets } = estadoSalvo()
   const t = tickets.find(x => x.id === 'pr1')
   assert.equal(t.respondidoEm, undefined, 'nada foi marcado como respondido')
@@ -164,8 +169,9 @@ test('sem ATENDO_SIMULAR_EMAIL a rota de injeção não existe; com ela, existe 
   const comVar = await chamar(cookie, '/api/simular-email', { de: 'novo@web.de', nome: 'Novo', assunto: 'Frage', corpo: 'Hallo', lojaId: 'loja1' })
   assert.equal(comVar.status, 200, 'a rota de injeção é liberada pela variável própria')
   // mas ela NÃO liga o SMTP falso: aprovar continua falhando no canal real
-  const envio = await chamar(cookie, '/api/tickets/pr1/aprovar', { texto: RASCUNHO, origem: 'ia' })
+  const envio = await aprovar(cookie, 'pr1', { texto: RASCUNHO, origem: 'ia' })
   assert.notEqual(envio.status, 200, 'ATENDO_SIMULAR_EMAIL não pode ligar o canal falso')
+  assert.equal(envio.desatualizado ?? false, false, 'a recusa é do canal real: ' + (envio.erro ?? ''))
   assert.deepEqual(envios(), [], 'e continua sem registro de envios simulados')
   // nem impede a leitura dos e-mails reais
   const sync = await chamar(cookie, '/api/sync', {})
