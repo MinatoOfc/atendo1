@@ -235,6 +235,201 @@ const ROTULO_INTENCAO = {
   pede_cancelamento: 'pedir cancelamento', aceita: 'aceitar a oferta', recusa: 'recusar a oferta',
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Pequeno ou grande: SÓ com evidência literal do cliente              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Caso real #2749. O cliente escreveu:
+ *
+ *   "Bitte senden Sie mir einen Retourenschein, da das Hemd in hellblau
+ *    nicht passt."
+ *
+ * "nicht passt" é NÃO SERVE — não diz se ficou pequena ou grande. A IA
+ * decidiu que tinha ficado grande e ofereceu um tamanho menor que o comprado.
+ *
+ * Daqui em diante, a direção do ajuste é um FATO do cliente, não uma leitura:
+ * ou a frase dele diz com todas as letras que ficou pequeno/apertado ou que
+ * ficou grande/largo, ou a direção é desconhecida e a conversa vai perguntar.
+ *
+ * Escritas para o texto NORMALIZADO (sem acento, minúsculo): "não" é "nao",
+ * "größer" é "großer".
+ */
+
+/** intensificadores de "está X demais", nos sete idiomas */
+const DEMAIS = '(?:zu|te|trop|troppo|demasiad[oa]|muy|too|muito|bem)'
+/** verbos de caimento que, em pt/es, já afirmam o ajuste sem intensificador */
+const CAIMENTO = '(?:ficou|ficaram|fica|ficam|esta|estao|e|me queda|le queda|queda|quedan|resulta)'
+
+/**
+ * PEQUENO e GRANDE.
+ *
+ * Os comparativos ficam de FORA por lookahead: "größer", "bigger", "maior"
+ * dizem qual tamanho o cliente QUER, e querer um maior significa que o atual
+ * ficou pequeno — o oposto do que uma leitura ingênua concluiria. Direção só
+ * sai de afirmação sobre o caimento atual.
+ */
+export const RE_AJUSTE = {
+  pequeno: new RegExp(
+    '(?:' + DEMAIS + '\\s+(?:klein(?!er)|eng(?!er)|knapp|strak|nauw|petit|piccol|strett|peque[nñ]|small(?!er)|tight(?!er)|apertad|justo)'
+    + '|' + CAIMENTO + '\\s+(?:muito\\s+|demasiado\\s+|bem\\s+)?(?:pequen|apertad|peque[nñ]|justo)'
+    + '|(?:pequen|apertad)[oa]s?\\s+demais'
+    + '|uma?\\s+numero\\s+' + '(?:zu\\s+klein|maior)'
+    + '|eine\\s+nummer\\s+zu\\s+klein'
+    + '|niet\\s+groot\\s+genoeg|not\\s+big\\s+enough|nicht\\s+gro[sß]+\\s+genug'
+    + ')', 'i'),
+  grande: new RegExp(
+    '(?:' + DEMAIS + '\\s+(?:gro[sß]+(?!er)|weit(?!er)|groot(?!er)|wijd|ruim|grand(?!e?r)|larg|ampl|big(?!ger)|loose|baggy|folgad|anch)'
+    + '|' + CAIMENTO + '\\s+(?:muito\\s+|demasiado\\s+|bem\\s+)?(?:grande|larg|folgad|anch)'
+    + '|(?:grande|larg[oa]|folgad[oa])s?\\s+demais'
+    + '|eine\\s+nummer\\s+zu\\s+gro[sß]+'
+    + '|niet\\s+klein\\s+genoeg|not\\s+small\\s+enough|nicht\\s+klein\\s+genug'
+    + ')', 'i'),
+}
+
+/**
+ * "Não serve" e equivalentes: o cliente reclamou do caimento sem dizer a
+ * direção. É AMBÍGUO — não autoriza pequeno nem grande, e é exatamente a
+ * frase do #2749.
+ */
+export const RE_AJUSTE_AMBIGUO = new RegExp(
+  '(?:passt\\s+(?:mir\\s+|ihm\\s+|ihr\\s+)?nicht|nicht\\s+(?:mehr\\s+)?passt|passt\\s+leider\\s+nicht'
+  + '|past\\s+niet|niet\\s+past|past\\s+me\\s+niet'
+  + '|do(?:es)?\\s?n[o\']?t\\s+fit|does\\s+not\\s+fit|doesnt\\s+fit|didn\'?t\\s+fit|not\\s+fit'
+  + '|ne\\s+(?:me\\s+)?(?:va|convient)\\s+pas|ne\\s+correspond\\s+pas'
+  + '|non\\s+(?:mi\\s+)?(?:va\\s+bene|sta\\s+bene|calza)'
+  + '|no\\s+(?:me\\s+)?(?:queda\\s+bien|sirve|vale|va\\s+bien)'
+  + '|nao\\s+(?:me\\s+)?(?:serve|serviu|coube|cabe|ficou\\s+bom|ficou\\s+boa|deu\\s+certo)'
+  + ')', 'i')
+
+/**
+ * Negação da direção: "não ficou pequeno", "nicht zu klein", "non e piccolo".
+ * A janela não atravessa vírgula nem ponto final, para "não quero trocar, está
+ * muito grande" continuar sendo GRANDE — a negação é de outra oração.
+ */
+const NEGADOR = '(?:nao|nicht|niet|geen|not|nunca|ne|non|no|sem)'
+const JANELA = '[^,.;:!?]{0,24}?'
+export const RE_AJUSTE_NEGADO = {
+  pequeno: new RegExp(NEGADOR + '\\s+' + JANELA + '(?:klein|eng\\b|knapp|strak|nauw|petit|piccol|strett|peque[nñ]|small|tight|apertad)', 'i'),
+  grande: new RegExp(NEGADOR + '\\s+' + JANELA + '(?:gro[sß]+|weit|groot|wijd|ruim|grand|larg|ampl|big|loose|baggy|folgad|anch)', 'i'),
+}
+
+/**
+ * COMPARATIVO COMO PEDIDO DE OUTRO TAMANHO.
+ *
+ * "quero um tamanho maior" diz a direção pelo avesso: se ele precisa de um
+ * MAIOR, o que ele tem ficou PEQUENO. Mas a palavra sozinha não basta — "das
+ * Hemd ist größer als das andere" compara duas peças e não pede nada. Exige-se
+ * construção de PEDIDO ou de NECESSIDADE, ou a forma fechada "uma numeração
+ * maior" / "eine Nummer größer" / "one size bigger", que já é um pedido.
+ */
+const QUER = '(?:quero|queria|gostaria|preciso|precisava|prefiro|prefiria|manda|mande|mandem|envie|enviem|troque|trocar por|me mande'
+  + '|ich mochte|ich brauche|ich hatte gerne|ich nehme|ich benotige|bitte schicken|schicken sie mir|senden sie mir|hatte gerne'
+  + '|ik wil|ik heb nodig|ik zou graag|graag|stuur mij|mag ik'
+  + '|je voudrais|je veux|il me faut|jaimerais|j aimerais|envoyez moi|puis je avoir'
+  + '|vorrei|voglio|mi serve|ho bisogno|mandatemi|potrei avere'
+  + '|quisiera|quiero|necesito|me gustaria|enviadme|puedo tener'
+  + '|i would like|i d like|id like|i want|i need|can i get|could i get|can i have|please send|send me|swap it for)'
+/** forma fechada: "uma numeração maior", "eine Nummer größer", "one size bigger" */
+const UMA_NUMERO = '(?:uma?|eine[nmr]?|one|een|un[ae]?)\\s+(?:numero|numeracao|nummer|size|maat|taille|taglia|talla|misura|tamanho)'
+const MAIOR = '(?:maior|gro[sß]+er|bigger|larger|plus grand|piu grand|mas grande|groter|wijder)'
+const MENOR = '(?:menor|kleiner|smaller|plus petit|piu piccol|mas peque|kleinere|enger|nauwer)'
+const JANELA_PEDIDO = '[^,.;:!?]{0,32}?'
+/**
+ * Comparação com OUTRA COISA não é pedido: "um tamanho maior QUE o meu" fala
+ * do irmão, não do que ele quer receber. O rabo comparativo desqualifica a
+ * forma fechada — comparação complexa continua ambígua, como o dono pediu.
+ */
+const SEM_COMPARACAO = '(?![^,.;:!?]{0,14}\\b(?:que|do que|als|than|dan|che|di quello|de lo que|comparado|vergleich)\\b)'
+
+export const RE_QUER_TAMANHO = {
+  maior: new RegExp('(?:' + QUER + JANELA_PEDIDO + MAIOR
+    + '|' + UMA_NUMERO + '\\s+' + MAIOR + SEM_COMPARACAO
+    + '|' + MAIOR + 'e?[sn]?\\s+(?:numero|nummer|size|maat|taille|taglia|talla|tamanho|groesse|gro[sß]+e)'
+    + '|one size (?:up|bigger|larger))', 'i'),
+  menor: new RegExp('(?:' + QUER + JANELA_PEDIDO + MENOR
+    + '|' + UMA_NUMERO + '\\s+' + MENOR + SEM_COMPARACAO
+    + '|' + MENOR + 'e?[sn]?\\s+(?:numero|nummer|size|maat|taille|taglia|talla|tamanho|groesse|gro[sß]+e)'
+    + '|one size (?:down|smaller))', 'i'),
+}
+
+/** pedir um MAIOR significa que o atual ficou pequeno, e vice-versa */
+const PEDIDO_DA_DIRECAO = { pequeno: 'maior', grande: 'menor' }
+
+/** A frase afirma esta direção, sem que ela esteja negada? */
+export function direcaoAfirmada(texto, direcao) {
+  const s = normalizar(texto)
+  // (a) o cliente PEDE outro tamanho: pedir um maior é dizer que ficou pequeno
+  const pedido = RE_QUER_TAMANHO[PEDIDO_DA_DIRECAO[direcao]]
+  if (pedido?.test(s)) return true
+  // (b) ou ele afirma o caimento atual, e a negação vence a afirmação
+  if (!RE_AJUSTE[direcao]?.test(s)) return false
+  if (RE_AJUSTE_NEGADO[direcao].test(s)) return false
+  return true
+}
+
+/** O texto só reclama do caimento, sem dizer a direção? */
+export const tamanhoAmbiguo = texto => RE_AJUSTE_AMBIGUO.test(normalizar(texto))
+
+const ROTULO_DIRECAO = { pequeno: 'ficou pequeno', grande: 'ficou grande' }
+
+/**
+ * VALIDA A DIREÇÃO DO AJUSTE contra a evidência apontada pela IA — mesmo
+ * molde de validarIntencao: a evidência tem de existir LITERALMENTE na
+ * mensagem nova (nunca em citação, assinatura, assunto, pedido ou catálogo),
+ * tem de significar aquela direção e tem de sobreviver às negações.
+ *
+ * Devolve os ajustes ACEITOS; tudo o mais é descartado com motivo, e a
+ * conversa segue para perguntar.
+ */
+export function validarTamanho({ ajustes = [], evidencia = '', textoAtual = '', desejado = null } = {}) {
+  const lista = Array.isArray(ajustes) ? ajustes.filter(a => a?.produto && (a.ajuste === 'pequeno' || a.ajuste === 'grande')) : []
+  const atual = normalizar(textoAtual)
+  const ev = normalizar(evidencia)
+  const base = {
+    ajustes: [], descartados: lista, desejado: null,
+    evidenciaNoTextoAtual: false, motivo: null, ambigua: false,
+  }
+  // tamanho desejado: só quando o cliente escreveu o rótulo na mensagem nova
+  const querido = String(desejado ?? '').trim()
+  const desejadoOk = querido && atual.includes(normalizar(querido)) ? querido : null
+
+  if (!lista.length) return { ...base, descartados: [], desejado: desejadoOk }
+
+  const recusar = (motivo, ambigua = false) => ({ ...base, motivo, ambigua, desejado: desejadoOk })
+
+  // Evidência apontada pela IA tem de ser literal da mensagem nova. Sem
+  // evidência, a prova é a DECLARAÇÃO INTEIRA do cliente — que é o texto novo
+  // dele, exatamente o que o dono exigiu ("o texto novo afirma claramente").
+  // O que nunca vale é deduzir de citação, assinatura, pedido ou catálogo.
+  if (ev && !atual.includes(ev)) {
+    return recusar('o trecho apontado como prova não está na mensagem nova do cliente (veio do texto citado, do assunto, do pedido ou do catálogo)')
+  }
+  const prova = ev || atual
+  if (!prova) return recusar('não há texto novo do cliente que comprove se ficou pequeno ou grande')
+
+  const aceitos = []
+  const fora = []
+  for (const a of lista) {
+    if (direcaoAfirmada(prova, a.ajuste)) aceitos.push(a)
+    else fora.push(a)
+  }
+  if (!aceitos.length) {
+    const ambigua = tamanhoAmbiguo(prova) || tamanhoAmbiguo(atual)
+    const qual = ROTULO_DIRECAO[lista[0].ajuste] ?? lista[0].ajuste
+    return recusar(ambigua
+      ? `o cliente disse que não serve, mas não disse se ficou pequeno ou grande — "${qual}" seria invenção`
+      : `o trecho apontado não diz que ${qual}`, ambigua)
+  }
+  return {
+    ajustes: aceitos, descartados: fora, desejado: desejadoOk,
+    evidenciaNoTextoAtual: true,
+    motivo: fora.length ? `sem prova de que ${fora.map(a => ROTULO_DIRECAO[a.ajuste]).join(' e ')}` : null,
+    ambigua: false,
+  }
+}
+
 /* ---- núcleo da declaração: o que sobra tirando saudação e cortesia ---- */
 
 /**

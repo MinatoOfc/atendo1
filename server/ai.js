@@ -582,7 +582,7 @@ export async function inferirFasesHistoricas(casos, catalogo) {
 const SCHEMA_CLASSIFICACAO_NOVO = {
   type: 'object',
   additionalProperties: false,
-  required: ['intencao', 'evidenciaIntencao', 'motivo', 'produtos', 'ajustes', 'situacaoEntrega', 'evidenciaEntrega', 'endereco', 'resumo', 'idioma', 'idiomaConfiavel', 'spam'],
+  required: ['intencao', 'evidenciaIntencao', 'motivo', 'produtos', 'ajustes', 'evidenciaTamanho', 'situacaoEntrega', 'evidenciaEntrega', 'endereco', 'resumo', 'idioma', 'idiomaConfiavel', 'spam'],
   properties: {
     intencao: { type: 'string', enum: ['aceita', 'recusa', 'pede_reembolso', 'pede_cancelamento', 'pede_troca', 'informa', 'pergunta_status', 'agradece', 'outro'] },
     // trecho LITERAL da mensagem nova que prova a intenção de AÇÃO (pedir troca,
@@ -591,6 +591,12 @@ const SCHEMA_CLASSIFICACAO_NOVO = {
     evidenciaIntencao: { type: 'string' },
     motivo: { type: 'string', enum: ['tamanho', 'qualidade', 'nao_gostou', 'defeito', 'errado', 'nao_recebido', 'nao_informado', 'nenhum'] },
     produtos: { type: 'array', items: { type: 'string' } },
+    // trecho LITERAL da mensagem nova que prova a DIREÇÃO do ajuste. O servidor
+    // confere; sem prova o ajuste é descartado e a conversa vai perguntar.
+    // "não serve" / "passt nicht" / "doesn't fit" NÃO provam direção nenhuma.
+    evidenciaTamanho: { type: 'string' },
+    // tamanho que o CLIENTE escreveu que quer ("4XL"); vazio se não escreveu
+    tamanhoDesejado: { type: 'string' },
     ajustes: {
       type: 'array',
       items: {
@@ -652,6 +658,8 @@ export async function classificarNovo(system, user) {
         endereco: String(r.endereco || '').trim() || null,
         produtos: Array.isArray(r.produtos) ? r.produtos : [],
         ajustes: Array.isArray(r.ajustes) ? r.ajustes : [],
+        evidenciaTamanho: String(r.evidenciaTamanho || '').trim(),
+        tamanhoDesejado: String(r.tamanhoDesejado || '').trim(),
       },
       custo,
     }

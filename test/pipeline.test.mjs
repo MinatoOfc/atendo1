@@ -1403,7 +1403,7 @@ test('aceite automático por tipo: cupom, troca (endereço antes), troca + 20%, 
       ? 'Das Paket mit dem Polo Premium ist nicht angekommen. Ich will mein Geld zurück.'
       : 'Das Polo Premium hat ein Problem. Ich will mein Geld zurück.'
     let t = await cliente(cls, { de, nome: 'C' + n, corpo: corpoCliente, lojaId: 'loja3', agora: antes() })
-    if (an(t).transicaoPendente.para === 'tam_ajuste') { const r0 = await comEnvio('ok', () => aprovar(t)); assert.equal(r0.status, 200, r0.erro); t = await cliente({ intencao: 'informa', ajustes: cls.ajustes, resumo: 'ajuste' }, { de, corpo: 'zu klein', ticketId: t.id, agora: antes() }) }
+    if (an(t).transicaoPendente.para === 'tam_ajuste') { const r0 = await comEnvio('ok', () => aprovar(t)); assert.equal(r0.status, 200, r0.erro); t = await cliente({ intencao: 'informa', ajustes: cls.ajustes, resumo: 'ajuste' }, { de, corpo: cls.ajustes?.[0]?.ajuste === 'grande' ? 'Es ist zu groß.' : 'Es ist zu klein.', ticketId: t.id, agora: antes() }) }
     t = await negociarAte(t, de, alvo, { agora: antes })
     t = await cliente({ intencao: 'aceita', resumo: 'ok' }, { de, corpo: 'Ok!', ticketId: t.id, agora: antes() })
     const cp = an(t).conclusaoPendente; assert.ok(cp, de); assert.equal(cp.modo, 'automatico', de); assert.equal(cp.faseAceita, alvo, de)

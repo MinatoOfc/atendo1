@@ -12,11 +12,11 @@ import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, ex
 import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
   horarioMinimoEnvio, promptClassificar, promptEscrever, configDoNovo, FASES, JORNADAS, PERCENTUAIS_CUPOM, validarEndereco,
-  faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS, rotulosDoPedido,
+  faltaPara, conferirTextoDaFase, conferirTamanhoDoTexto, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS, rotulosDoPedido,
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase, valoresMonetarios,
 } from './atendimento.js'
 import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, checklistDaTentativa, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual, origemDoEnvio, cicloAtual, eventosDoCiclo, ROTULO_TIPO_AUDITORIA, LIMITE_AUDITORIA } from '../shared/auditoria.js'
-import { separarTexto, validarSituacaoEntrega, validarIntencao, produtosDoTextoAtual, normalizar, RE_PEDIDO_INTEIRO, RE_PARTE_DO_PEDIDO, RE_COBRANCA_REEMBOLSO, RE_ACAO_CLIENTE, RE_PERGUNTA_LOGISTICA, RE_NAO_RECEBIDO } from '../shared/mensagem.js'
+import { separarTexto, validarSituacaoEntrega, validarIntencao, validarTamanho, produtosDoTextoAtual, normalizar, RE_PEDIDO_INTEIRO, RE_PARTE_DO_PEDIDO, RE_COBRANCA_REEMBOLSO, RE_ACAO_CLIENTE, RE_PERGUNTA_LOGISTICA, RE_NAO_RECEBIDO } from '../shared/mensagem.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { produtoFoiInformado } from '../shared/produto.js'
@@ -769,7 +769,7 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
 
     // fase e escada do mapa
     const conferencia = fase
-      ? conferirTextoDaFase(faseId, texto, loja, an, pedido, { faltando: an?.transicaoPendente?.faltando ?? [], idioma: idiomaAlvo })
+      ? conferirTextoDaFase(faseId, texto, loja, an, pedido, { faltando: an?.transicaoPendente?.faltando ?? [], idioma: idiomaAlvo, produtos: estado.produtos ?? [] })
       : { ok: null, motivo: 'resposta escrita por você, fora das etapas do mapa' }
     f.fase_correta = fase ? conferencia.ok : null
     if (conferencia.ok === false) detalhes.fase_correta = conferencia.motivo
@@ -806,6 +806,25 @@ function fatosDaResposta(estado, wsId, t, { faseId, texto = '', enviado = false,
         ? `o texto não traz o código conferido (${cup.codigo})`
         : 'o código do cupom apareceu antes de o cliente aceitar'
     }
+
+    // TAMANHO: direção comprovada, tamanho coerente e variante no catálogo.
+    // Os três só ficam cinza quando a resposta não trata de tamanho nenhum —
+    // no #2749 o checklist ficou todo verde oferecendo 2XL sobre um 3XL.
+    const tamFato = conferirTamanhoDoTexto(texto, an, pedido, estado.produtos ?? [])
+    const citaTamanho = tamFato.tamanho != null || ['multiplos', 'varios_tamanhos'].includes(tamFato.codigo)
+    const rotuloAf = (an?.produtosAfetados ?? [])[0] ?? null
+    const direcaoProvada = (an?.ajusteTamanho && rotuloAf ? an.ajusteTamanho[rotuloAf] : null)
+      ?? (an?.ajusteTamanho ? Object.values(an.ajusteTamanho)[0] : null) ?? null
+    const exigeDirecao = citaTamanho || (FASES[faseId]?.requer ?? []).includes('ajuste')
+    // contradição entre a direção e o tamanho pedido derruba a própria
+    // comprovação: as duas metades do que ele disse não cabem juntas
+    f.direcao_ajuste = !exigeDirecao ? null
+      : (tamFato.codigo !== 'contradicao_tamanho' && !!(direcaoProvada || an?.tamanhoDesejado))
+    if (f.direcao_ajuste === false) detalhes.direcao_ajuste = tamFato.codigo === 'contradicao_tamanho' ? tamFato.motivo : 'o cliente não disse se ficou pequeno ou grande'
+    f.tamanho_coerente = !citaTamanho ? null : (tamFato.ok || !['ordem', 'multiplos', 'desconhecido', 'pedido', 'sem_direcao', 'contradicao_tamanho', 'varios_tamanhos'].includes(tamFato.codigo))
+    if (f.tamanho_coerente === false) detalhes.tamanho_coerente = tamFato.motivo
+    f.variante_catalogo = !citaTamanho ? null : tamFato.codigo !== 'catalogo'
+    if (f.variante_catalogo === false) detalhes.variante_catalogo = tamFato.motivo
 
     // prazo, endereço e foto
     f.prazo = oferta?.prazo ? conferencia.ok : null
@@ -1981,7 +2000,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
   if (e.r.acao_proposta && e.r.acao_proposta !== faseId) {
     return falhar(`A IA saiu da etapa permitida: propôs "${e.r.acao_proposta}" em vez de "${faseId}"`, e.r.resposta)
   }
-  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an, pedido, { faltando, idioma: idiomaAlvo })
+  const v = conferirTextoDaFase(faseId, e.r.resposta, loja, an, pedido, { faltando, idioma: idiomaAlvo, produtos: estado.produtos ?? [] })
   if (!v.ok) return falhar(`A IA saiu da etapa permitida: ${v.motivo}`, e.r.resposta)
   an.rascunhoIdioma = normalizarIdioma(e.r.idioma) ?? idiomaAlvo
 
@@ -2130,6 +2149,25 @@ async function processarNovo(estado, t, { agora = Date.now(), releitura = null }
     descartes.push({ campo: 'intencao', valor: intencao.descartada, motivo: intencao.motivo })
     cls.intencao = intencao.intencao
   }
+  // AJUSTE DE TAMANHO: pequeno ou grande é FATO do cliente, não leitura da IA.
+  // No pedido #2749 o cliente escreveu só que a camisa "nicht passt" e a leitura
+  // virou "ficou grande" — com uma oferta de 2XL sobre um 3XL. Sem a frase dele
+  // dizendo a direção, a direção não existe e a conversa vai PERGUNTAR.
+  const tam = validarTamanho({
+    ajustes: cls.ajustes ?? [], evidencia: cls.evidenciaTamanho ?? '',
+    textoAtual: declaracao, desejado: cls.tamanhoDesejado ?? null,
+  })
+  if (tam.descartados.length) {
+    descartes.push({
+      campo: 'ajustes',
+      valor: tam.descartados.map(d => `${d.produto}: ${d.ajuste}`).join('; '),
+      motivo: tam.motivo,
+    })
+    cls.ajustes = tam.ajustes
+  }
+  // o tamanho que o cliente PEDIU só vale se ele escreveu na mensagem nova
+  an.tamanhoDesejado = tam.desejado ?? an.tamanhoDesejado ?? null
+
   // PRODUTO: só conta o que o CLIENTE escreveu agora. Catálogo do pedido e
   // notificação citada nunca informam produto — nem quando o pedido tem um item
   // só: quem diz qual peça tem problema é ele.
@@ -2788,6 +2826,14 @@ async function enviarRespostaTravada(wsId, ticket, texto, origem = 'manual', { d
       }
     }
   }
+  // ÚLTIMA BARREIRA DO TAMANHO: nem rascunho antigo, nem texto editado à mão,
+  // nem reenvio de fila levam ao cliente um tamanho que o cliente não pediu,
+  // que contraria a direção informada ou que a loja não tem.
+  if (modoNovo) {
+    const estadoT = workspaces.get(wsId)
+    const tamE = conferirTamanhoDoTexto(texto, an, pedidoDoTicket(estadoT ?? { pedidos: [] }, ticket), estadoT?.produtos ?? [])
+    if (!tamE.ok) throw new Error(`Tamanho não confere — ${tamE.motivo}`)
+  }
   // tentativa do ciclo. Uma tentativa já bloqueada ou que falhou está encerrada:
   // o envio seguinte (manual, por exemplo) abre OUTRA, para o selo não misturar ciclos.
   const encerrada = tipo => (ticket.auditoriaIA ?? []).some(e => e.tipo === tipo && e.dados?.tentativaId === an?.tentativaAtual)
@@ -3019,7 +3065,7 @@ agendar(async () => {
           }
           // reconfere a liberação no momento do envio: bloqueado → fica em Aprovações, sem enviar
           if (!envioAutomaticoLiberado()) { t.enviaEm = undefined; anL.envioBloqueado = 'envio automático bloqueado durante o piloto'; continue }
-          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t), { faltando: anL.transicaoPendente.faltando ?? [], idioma: anL.idioma ?? null })
+          const v = conferirTextoDaFase(anL.transicaoPendente.para, t.rascunho || '', lojaL, anL, pedidoDoTicket(estado, t), { faltando: anL.transicaoPendente.faltando ?? [], idioma: anL.idioma ?? null, produtos: estado.produtos ?? [] })
           const vi = v.ok ? conferirIdioma(t.rascunho || '', anL.idioma ?? null, anL.rascunhoIdioma ?? null) : { ok: true }
           const dif = v.ok && vi.ok ? diferencaDeOferta(anL.rascunhoGerado ?? t.rascunho, t.rascunho, lojaL) : null
           if (!v.ok || !vi.ok || dif) {
@@ -5536,7 +5582,7 @@ app.post('/api/tickets/:id/regenerar', async (req, res) => {
       const e = await escreverNovo(p.system, p.user)
       if (e.erro) return res.status(400).json({ erro: e.erro, state: visao(req.wsId) })
       somarCusto(t, e.custo); registrarGasto(req.estado, t.lojaId, e.custo)
-      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t), { faltando: faltandoR, idioma: anR.idioma ?? null })
+      const v = conferirTextoDaFase(faseId, e.r.resposta, lojaR, anR, pedidoDoTicket(req.estado, t), { faltando: faltandoR, idioma: anR.idioma ?? null, produtos: req.estado.produtos ?? [] })
       if (!v.ok || (e.r.acao_proposta && e.r.acao_proposta !== faseId)) {
         return res.status(400).json({ erro: `A IA saiu da etapa permitida: ${v.motivo || 'ação diferente da permitida'}. Tente de novo.`, state: visao(req.wsId) })
       }
@@ -5693,7 +5739,7 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
       if (cupA.precisa && !cupA.ok) {
         return res.status(400).json({ erro: `Não enviado — ${motivoCupom(faseId, cupA)}.`, cupom: cupA.situacao, state: visao(req.wsId) })
       }
-      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t), { faltando: anA.transicaoPendente.faltando ?? [], idioma: anA.idioma ?? null })
+      const v = conferirTextoDaFase(faseId, textoFinal, lojaA, anA, pedidoDoTicket(req.estado, t), { faltando: anA.transicaoPendente.faltando ?? [], idioma: anA.idioma ?? null, produtos: req.estado.produtos ?? [] })
       if (!v.ok) {
         return res.status(400).json({ erro: `Não enviado — o texto não pertence à etapa "${FASES[faseId].titulo}": ${v.motivo}.`, state: visao(req.wsId) })
       }

@@ -16,6 +16,7 @@ import { confirmacaoIndevida } from './logic.js'
 import { produtoFoiInformado } from '../shared/produto.js'
 // só o texto NOVO do cliente vale como declaração dele (o citado é referência)
 import { separarTexto } from '../shared/mensagem.js'
+import { tamanhoDaVariante, tamanhosCitados, tamanhosDoCatalogo, conferirOfertaDeTamanho } from '../shared/tamanho.js'
 
 export const MODOS_ATENDIMENTO = {
   classico: 'Clássico — o atendimento atual',
@@ -291,6 +292,7 @@ export function novoEstado() {
     conclusaoPendente: null,   // solução aceita pelo cliente (fotografa o modo manual/automático no instante do aceite)
     motivo: null,
     ajusteTamanho: null,
+    tamanhoDesejado: null,   // rótulo que o CLIENTE escreveu querer (nunca deduzido)
     fotoSolicitada: false,
     fotoRecebida: false,     // chegou uma imagem (ainda não é prova de nada)
     fotoValidada: null,      // true só depois de o lojista confirmar que mostra o defeito
@@ -1041,7 +1043,9 @@ export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now()
     ``,
     `"motivo": o motivo que o CLIENTE alegou — tamanho, qualidade, nao_gostou, defeito, errado, nao_recebido, nao_informado (quando pede reembolso/devolução sem dizer por quê) ou nenhum. Nunca invente.`,
     `"produtos": os itens do pedido que o cliente citou, com o nome como aparece na lista acima (lista vazia se não citou).`,
-    `"ajustes": para cada produto que o cliente disse que ficou pequeno ou grande.`,
+    `"ajustes": SOMENTE para produto que o cliente disse, com todas as letras, que ficou PEQUENO/apertado ou GRANDE/largo. "não serve", "passt nicht", "doesn't fit", "não ficou bom" NÃO dizem a direção — deixe a lista VAZIA nesses casos.`,
+    `"evidenciaTamanho": o trecho LITERAL da mensagem nova que prova a direção do ajuste, copiado exatamente como está lá. O servidor confere se o trecho existe na mensagem nova e se ele realmente diz aquilo; sem isso o ajuste é descartado e a conversa vai PERGUNTAR se ficou pequeno ou grande.`,
+    `"tamanhoDesejado": o tamanho que o cliente escreveu que quer (ex.: "4XL"), literalmente. Vazio se ele não escreveu nenhum.`,
     `"situacaoEntrega": nao_chegou, entregue_nao_recebido (consta entregue mas ele não recebeu), voltou_remetente, recusou_na_porta, ou nenhuma. Só preencha quando a MENSAGEM NOVA perguntar onde está / quando chega / quantos dias faltam, ou disser explicitamente que não recebeu. Status da Shopify, assunto do e-mail e texto citado NÃO valem.`,
     `"evidenciaEntrega": o trecho LITERAL da mensagem nova que justifica a situacaoEntrega, copiado exatamente como está lá. String vazia quando for "nenhuma". O servidor confere se esse trecho existe mesmo na mensagem nova — trecho inventado faz a situação ser descartada.`,
     `"endereco": o endereço de entrega completo, se o cliente escreveu um; senão string vazia.`,
@@ -1463,6 +1467,73 @@ export function ofertaIndevida(texto, permitidas = []) {
   return null
 }
 
+/**
+ * O item comprado que esta conversa trata, e os tamanhos que a loja tem dele.
+ * catalogo null = não deu para conferir (sem produto no catálogo da loja) —
+ * e não conferir é motivo de bloqueio, nunca de liberação.
+ */
+function itensDoAjuste(an, pedido, produtos) {
+  const itens = pedido?.itens ?? []
+  const rotulo = i => `${i.titulo}${i.variante ? ` (${i.variante})` : ''}`
+  const alvos = (an?.produtosAfetados ?? [])
+  const escolhidos = alvos.length
+    ? alvos.map(r => itens.find(i => rotulo(i) === r) ?? itens.find(i => r.startsWith(i.titulo))).filter(Boolean)
+    : (itens.length === 1 ? [itens[0]] : [])
+  const lista = Array.isArray(produtos) ? produtos : null
+  const doCatalogo = item => (item && lista
+    ? (lista.find(p => p.titulo === item.titulo && (!pedido?.lojaId || p.lojaId === pedido.lojaId)) ?? null)
+    : null)
+  return escolhidos.map(item => {
+    const c = doCatalogo(item)
+    return {
+      item,
+      rotulo: rotulo(item),
+      original: tamanhoDaVariante(item.variante),
+      catalogo: c ? tamanhosDoCatalogo(c.variantes ?? []) : null,
+    }
+  })
+}
+
+/**
+ * TAMANHO OFERECIDO — vale em TODAS as fases, não só na troca por tamanho.
+ *
+ * Do caso #2749: o cliente disse só que a camisa "nicht passt" e a resposta
+ * ofereceu 2XL sobre um 3XL. Se o texto nomeia um tamanho, ele tem de ser
+ * coerente com a direção COMPROVADA e existir no catálogo da própria loja.
+ * Sem direção comprovada, nenhum tamanho pode sair.
+ */
+export function conferirTamanhoDoTexto(texto, an, pedido, produtos) {
+  const oferecidos = tamanhosCitados(texto)
+  if (!oferecidos.length) return { ok: true, codigo: null, motivo: null, tamanho: null }
+  const alvos = itensDoAjuste(an, pedido, produtos)
+  const desejado = an?.tamanhoDesejado ?? null
+
+  // VÁRIAS PEÇAS EM TAMANHOS DIFERENTES: um tamanho só não serve para todas.
+  // Cada item é conferido pelo tamanho DELE; e um destino único só vale se o
+  // próprio cliente o escreveu.
+  const originais = [...new Set(alvos.map(a => a.original))]
+  if (alvos.length > 1 && originais.length > 1 && !desejado) {
+    return {
+      ok: false, codigo: 'varios_tamanhos', tamanho: oferecidos[0] ?? null,
+      motivo: `as peças envolvidas foram compradas em tamanhos diferentes (${alvos.map(a => `${a.rotulo}: ${String(a.original ?? '?').toUpperCase()}`).join('; ')}) — um tamanho só não vale para todas sem o cliente dizer qual quer`,
+    }
+  }
+
+  const direcaoDe = rotulo => (an?.ajusteTamanho && rotulo ? an.ajusteTamanho[rotulo] : null)
+    ?? (an?.ajusteTamanho ? Object.values(an.ajusteTamanho)[0] : null) ?? null
+
+  // sem item localizado no pedido, a conferência ainda roda (sem tamanho
+  // original não se compara nada, e não comparar é bloqueio)
+  const lista = alvos.length ? alvos : [{ rotulo: null, original: null, catalogo: null }]
+  for (const alvo of lista) {
+    const r = conferirOfertaDeTamanho({
+      original: alvo.original, direcao: direcaoDe(alvo.rotulo), desejado, oferecidos, catalogo: alvo.catalogo,
+    })
+    if (!r.ok) return alvos.length > 1 ? { ...r, motivo: `${alvo.rotulo}: ${r.motivo}` } : r
+  }
+  return { ok: true, codigo: null, motivo: null, tamanho: oferecidos[0] ?? null }
+}
+
 /** Exigências das fases sem oferta. Devolve o motivo do bloqueio ou null. */
 function exigenciasSemOferta(faseId, s, { an, pedido, loja, faltando }) {
   const tem = re => re.test(s)
@@ -1544,6 +1615,10 @@ export function conferirTextoDaFase(faseId, texto, loja, an = null, pedido = nul
       }
     }
   }
+  // TAMANHO: antes de validar qualquer oferta, a direção tem de estar provada e
+  // o tamanho proposto tem de ser coerente e existir no catálogo da loja
+  const tam = conferirTamanhoDoTexto(s, an, pedido, opcoes.produtos)
+  if (!tam.ok) return { ok: false, motivo: tam.motivo }
   // fato consumado só na fase de confirmação (depois do clique do dono)
   if (!fase?.confirmacao) {
     const indevida = confirmacaoIndevida(s)

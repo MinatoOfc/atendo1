@@ -353,7 +353,7 @@ test('o rascunho aparece como agendado ou aguardando, NUNCA como enviado', async
   assert.ok(['agendada', 'rascunho', 'aguardando_aprovacao'].includes(rascunho.situacao), 'situação real: ' + rascunho.situacao)
   // e o checklist calculado pelo servidor acompanha
   assert.ok(c.checklist, 'há checklist')
-  assert.equal(c.checklist.itens.length, 16)
+  assert.equal(c.checklist.itens.length, 19)
   assert.equal(c.checklist.enviado, false)
 })
 
@@ -385,7 +385,7 @@ test('fase só aparece confirmada depois do envio real, e o envio gera email_env
   const enviado = depois.eventos.find(e => e.tipo === 'email_enviado')
   assert.equal(enviado.dados.enviado, true)
   assert.equal(enviado.dados.checklist.enviado, true)
-  assert.equal(enviado.dados.checklist.itens.length, 16)
+  assert.equal(enviado.dados.checklist.itens.length, 19)
 })
 
 test('falha no canal NÃO cria email_enviado e a fase não avança', async () => {
@@ -2946,4 +2946,104 @@ test('mensagem nova invalida a fotografia das três telas de uma vez', async () 
   const r = await confirmarEnvio(t.id, 'Hallo! Wir bieten Ihnen einen kostenlosen Umtausch an.', doEstado)
   assert.equal(r.status, 409, r.erro ?? '')
   assert.match(r.erro, /mensagem nova do cliente/)
+})
+
+/* ============ tamanho: direção inventada não passa por nenhuma porta ============ */
+
+test('#2749 no servidor: "nicht passt" para em tam_ajuste, sem inferir grande e sem oferecer 2XL', async () => {
+  // a IA tenta entregar a leitura errada do caso real: diz que ficou GRANDE
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'tamanho',
+    produtos: ['Polo Premium (Schwarz / L)'],
+    ajustes: [{ produto: 'Polo Premium (Schwarz / L)', ajuste: 'grande' }],
+    evidenciaTamanho: 'nicht passt',
+    situacaoEntrega: 'nenhuma', endereco: '', resumo: 'quer devolver', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', {
+    de: 'c2749@web.de', nome: 'C2749', assunto: 'Bestellung #150',
+    corpo: 'Bitte senden Sie mir einen Retourenschein, da das Polo Premium nicht passt.', lojaId: 'loja1',
+  })
+  const t = await ticket(r0.ticket.id)
+  const c = await auditoria(t.id)
+
+  // a direção inventada foi DESCARTADA, com o motivo na auditoria
+  assert.equal(t.atendimentoNovo.ajusteTamanho ?? null, null, 'nenhuma direção foi gravada')
+  const cls = c.eventos.find(e => e.tipo === 'ia_classificou')
+  const descartes = cls?.dados?.descartes ?? []
+  assert.ok(descartes.some(d => d.campo === 'ajustes'), 'o descarte do ajuste ficou registrado: ' + JSON.stringify(descartes))
+  assert.match(descartes.find(d => d.campo === 'ajustes').motivo, /não disse se ficou pequeno ou grande/)
+
+  // a conversa vai PERGUNTAR, não oferecer
+  assert.equal(t.atendimentoNovo.transicaoPendente.para, 'tam_ajuste')
+  assert.ok(t.rascunho, 'tem rascunho')
+  assert.doesNotMatch(t.rascunho, /2XL|XXL/i, 'nenhum tamanho é oferecido')
+  assert.match(t.rascunho, /klein/i)
+  assert.match(t.rascunho, /gro/i)
+  assert.equal((await enviadosDe(t.id)).length, 0, 'nada foi enviado')
+})
+
+test('a trava do tamanho não é contornável pela aprovação manual', async () => {
+  const t = await ticket('t-2749-ajuste') ?? null
+  void t
+  fila.push({
+    intencao: 'pede_troca', motivo: 'tamanho', produtos: ['Polo Premium (Schwarz / L)'],
+    ajustes: [{ produto: 'Polo Premium (Schwarz / L)', ajuste: 'pequeno' }],
+    evidenciaTamanho: 'zu klein',
+    situacaoEntrega: 'nenhuma', endereco: '', resumo: 'ficou pequeno', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', {
+    de: 'c2750@web.de', nome: 'C2750', assunto: 'Bestellung #151',
+    corpo: 'Das Polo Premium ist zu klein. Ich möchte einen Umtausch.', lojaId: 'loja1',
+  })
+  const alvo = await ticket(r0.ticket.id)
+  assert.equal(alvo.atendimentoNovo.ajusteTamanho['Polo Premium (Schwarz / L)'], 'pequeno', 'a direção com prova É aceita')
+
+  // o dono edita o texto à mão e oferece um tamanho MENOR: bloqueado
+  const c = await auditoria(alvo.id)
+  const menor = 'Hallo! Wir tauschen kostenlos um und senden Ihnen Größe XS. Lieferzeit 5 bis 11 Tage. Möchten Sie das annehmen?'
+  const r = await confirmarEnvio(alvo.id, menor, esperadoDe(c), { origem: 'manual', confirmarAlteracao: true })
+  assert.equal(r.status, 400, 'a aprovação manual não contorna: ' + (r.erro ?? ''))
+  assert.match(r.erro, /MENOR|catálogo|catalogo/i)
+  assert.equal((await enviadosDe(alvo.id)).length, 0, 'nada saiu')
+})
+
+test('o checklist não fica verde quando a direção do ajuste não veio do cliente', async () => {
+  fila.push({
+    intencao: 'pede_troca', motivo: 'tamanho', produtos: ['Polo Premium (Schwarz / L)'],
+    ajustes: [{ produto: 'Polo Premium (Schwarz / L)', ajuste: 'grande' }],
+    evidenciaTamanho: 'passt nicht',
+    situacaoEntrega: 'nenhuma', endereco: '', resumo: 'nao serve', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', {
+    de: 'c2751@web.de', nome: 'C2751', assunto: 'Bestellung #152',
+    corpo: 'Das Polo Premium passt nicht.', lojaId: 'loja1',
+  })
+  const c = await auditoria(r0.ticket.id)
+  const itens = Object.fromEntries((c.checklist?.itens ?? []).map(i => [i.id, i.estado]))
+  // os três itens novos existem
+  for (const id of ['direcao_ajuste', 'tamanho_coerente', 'variante_catalogo']) {
+    assert.ok(id in itens, 'o checklist tem ' + id + ': ' + JSON.stringify(Object.keys(itens)))
+  }
+  // e a resposta não afirma direção nenhuma: a conversa está perguntando
+  const t = await ticket(r0.ticket.id)
+  assert.equal(t.atendimentoNovo.transicaoPendente.para, 'tam_ajuste')
+  assert.equal(t.atendimentoNovo.ajusteTamanho ?? null, null)
+})
+
+test('a última barreira do envio pega o tamanho mesmo sem fase pendente', async () => {
+  // conversa assumida pelo dono: não há fase pendente, então conferirTextoDaFase
+  // nem roda. O que sobra é a barreira do próprio envio — e ela tem de pegar.
+  const t = await conversaComRascunho(141)
+  assert.equal((await mover(t.id, { motivo: 'respondo eu' })).status, 200)
+  const depois = await ticket(t.id)
+  assert.equal(depois.atendimentoNovo.transicaoPendente ?? null, null, 'sem fase pendente')
+
+  const r = await aprovar(t.id, { texto: 'Guten Tag, wir senden Ihnen Größe 5XL.', origem: 'manual' })
+  assert.equal(r.status, 500, 'o envio é abortado: ' + (r.erro ?? ''))
+  assert.match(r.erro, /Tamanho não confere/)
+  assert.equal((await enviadosDe(t.id)).length, 0, 'nada saiu')
+
+  // e o texto sem tamanho nenhum sai normalmente
+  const ok = await aprovar(t.id, { texto: 'Guten Tag, ich kümmere mich persönlich darum.', origem: 'manual' })
+  assert.equal(ok.status, 200, ok.erro ?? '')
 })

@@ -57,8 +57,12 @@ test('append-only: nada é editado ou apagado, e a chave idempotente não duplic
   assert.deepEqual(lista.map(e => e.tipo), ['cliente_recebido', 'ia_classificou', 'email_enviado'])
 })
 
-test('checklist: 16 itens, cores e resultado geral', () => {
-  assert.equal(ITENS_CHECKLIST.length, 16)
+test('checklist: 19 itens, cores e resultado geral', () => {
+  // 19: os tres ultimos entraram com a trava de tamanho (#2749)
+  assert.equal(ITENS_CHECKLIST.length, 19)
+  for (const id of ['direcao_ajuste', 'tamanho_coerente', 'variante_catalogo']) {
+    assert.ok(ITENS_CHECKLIST.some(([x]) => x === id), 'o checklist tem ' + id)
+  }
   const tudoOk = Object.fromEntries(ITENS_CHECKLIST.map(([id]) => [id, true]))
   const c1 = checklistDaResposta({ ...tudoOk, enviado: true })
   assert.equal(c1.geral, 'tudo_certo')
