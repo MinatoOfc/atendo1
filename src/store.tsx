@@ -110,6 +110,8 @@ export interface Ticket {
   marcadoRespondido?: boolean
   custoIA?: number
   iaPausada?: boolean
+  /** O canal está no meio de um envio nesta conversa: nada de assumir agora. */
+  envioEmAndamento?: boolean
   /** O dono assumiu a conversa: a IA não age nela até ele retomar. */
   atendimentoHumano?: {
     ativo: boolean; por: string; em: string; motivo: string

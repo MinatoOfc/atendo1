@@ -348,6 +348,26 @@ function neutralizarAutoEnvioNoPiloto() {
  */
 const emAtendimentoHumano = t => t?.atendimentoHumano?.ativo === true
 
+/**
+ * TRAVA POR CONVERSA. Um e-mail entregue ao canal não volta atrás — então em
+ * vez de fingir cancelamento, as operações que disputam a mesma conversa são
+ * serializadas: envio (manual, aprovado ou automático), mover para atendimento
+ * humano, retomar a IA e confirmar conclusão.
+ *
+ * Quem chegar primeiro ganha. Quem perder recebe uma resposta honesta: ou o
+ * envio aborta ANTES de chamar o canal (porque a conversa já é do dono), ou o
+ * dono recebe 409 e tenta de novo quando o envio terminar. Nunca meio estado.
+ */
+const travasDaConversa = new Set()
+const envioEmAndamento = id => travasDaConversa.has(id)
+function adquirirTrava(id) {
+  if (travasDaConversa.has(id)) return false
+  travasDaConversa.add(id)
+  return true
+}
+const liberarTrava = id => travasDaConversa.delete(id)
+const RECUSA_ENVIO_EM_ANDAMENTO = 'Existe um envio em andamento; aguarde a confirmação e tente novamente'
+
 /** Erro pronto para as rotas que a IA não pode executar numa conversa humana. */
 const recusaHumano = acao => `Esta conversa está em atendimento humano: ${acao} está desligado até você retomar a IA.`
 
@@ -1438,8 +1458,11 @@ function visao(wsId) {
     // A auditoria NÃO viaja no estado geral: são centenas de eventos por conversa,
     // e a fotografia do envio (checklist + fatos) é interna. Só /api/auditoria e
     // /api/auditoria/:id devolvem esses dados.
-    tickets: estado.tickets.map(t => (t.auditoriaIA || t.envioPendente || t.fotoAntesDoCiclo
-      ? { ...t, auditoriaIA: undefined, envioPendente: undefined, fotoAntesDoCiclo: undefined } : t)),
+    // envioEmAndamento: a tela precisa saber que o canal está no meio de um
+    // envio — para desabilitar "Mover para atendimento humano" em vez de
+    // prometer um cancelamento que não existe
+    tickets: estado.tickets.map(t => (t.auditoriaIA || t.envioPendente || t.fotoAntesDoCiclo || envioEmAndamento(t.id)
+      ? { ...t, auditoriaIA: undefined, envioPendente: undefined, fotoAntesDoCiclo: undefined, envioEmAndamento: envioEmAndamento(t.id) || undefined } : t)),
     politicas: estado.politicas,
     faqs: estado.faqs,
     comportamentos: estado.comportamentos ?? [],
@@ -2673,6 +2696,16 @@ function autorizacaoDoDono(ticket, conclusaoDoEnvio = null) {
 }
 
 async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo = 'dono' } = {}) {
+  // a trava cobre TODO o envio, inclusive o await do canal e a gravação final
+  if (!adquirirTrava(ticket.id)) throw new Error(RECUSA_ENVIO_EM_ANDAMENTO)
+  try {
+    return await enviarRespostaTravada(wsId, ticket, texto, origem, { disparo })
+  } finally {
+    liberarTrava(ticket.id)
+  }
+}
+
+async function enviarRespostaTravada(wsId, ticket, texto, origem = 'manual', { disparo = 'dono' } = {}) {
   const lojaId = ticket.lojaId ?? 'loja1'
   const contas = contasDe(wsId)
   const an = ticket.atendimentoNovo
@@ -2765,6 +2798,10 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
       throw new Error(`Confirmação não enviada — ${err.message}`)
     }
   }
+  // atraso controlado do canal simulado: abre a janela real em que o e-mail ja
+  // esta em voo, para os testes da corrida com 'Mover para atendimento humano'
+  const atraso = Number(ganchoDeTeste('ATENDO_SMTP_ATRASO') ?? 0)
+  if (simulado && atraso > 0) await new Promise(r => setTimeout(r, atraso))
   if (simulado === 'ok') { registrarEnvioSimulado(mensagemId); enviou = true }
   else if (simulado === 'falha') { auditarFalhaEnvio(ticket, transicao, 'Envio simulado falhou', texto); throw new Error('Envio simulado falhou') }
   else if (canal) {
@@ -4567,6 +4604,8 @@ async function lerMotivosFaltantes(estado, itens, limite = Infinity) {
   const pendentes = []
   for (const item of itens) {
     const t = porId.get(item.ticketId)
+    // conversa assumida pelo dono nao e lida pela IA, nem por job de fundo
+    if (t?.atendimentoHumano?.ativo) continue
     const guardado = t?.motivoReembolso
     const novaMensagem = guardado?.em && (ultimaMensagemDoCliente(t) ?? '') > guardado.em
     // motivo deduzido por palavra-chave (guardado.local) é provisório: quando a
@@ -5409,6 +5448,17 @@ app.post('/api/tickets/:id/respondido', (req, res) => {
  */
 app.post('/api/tickets/:id/atendimento-humano', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  // um e-mail já entregue ao canal não volta: aqui a resposta é honesta
+  if (!adquirirTrava(t.id)) return res.status(409).json({ erro: RECUSA_ENVIO_EM_ANDAMENTO, state: visao(req.wsId) })
+  try {
+    return await moverParaAtendimentoHumano(req, res, t)
+  } finally {
+    liberarTrava(t.id)
+  }
+})
+
+async function moverParaAtendimentoHumano(req, res, t) {
+  {
   if (req.body?.confirmar !== true) {
     return res.status(400).json({ erro: 'Mover para atendimento humano precisa de confirmação explícita.', state: visao(req.wsId) })
   }
@@ -5479,7 +5529,8 @@ app.post('/api/tickets/:id/atendimento-humano', async (req, res) => {
     return res.status(500).json({ erro: `Não foi possível salvar (${err.message}) — a conversa continua como estava.`, state: visao(req.wsId) })
   }
   return ok(req, res)
-})
+  }
+}
 
 /**
  * RETOMAR A IA. Exige confirmação e uma escolha: reler a última mensagem agora,
@@ -5491,6 +5542,16 @@ app.post('/api/tickets/:id/atendimento-humano', async (req, res) => {
  */
 app.post('/api/tickets/:id/retomar-ia', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  if (!adquirirTrava(t.id)) return res.status(409).json({ erro: RECUSA_ENVIO_EM_ANDAMENTO, state: visao(req.wsId) })
+  try {
+    return await retomarIaDaConversa(req, res, t)
+  } finally {
+    liberarTrava(t.id)
+  }
+})
+
+async function retomarIaDaConversa(req, res, t) {
+  {
   if (req.body?.confirmar !== true) {
     return res.status(400).json({ erro: 'Retomar a IA precisa de confirmação explícita.', state: visao(req.wsId) })
   }
@@ -5556,7 +5617,8 @@ app.post('/api/tickets/:id/retomar-ia', async (req, res) => {
     return voltarAoHumano(`Não foi possível salvar (${err.message})`)
   }
   return ok(req, res)
-})
+  }
+}
 
 /**
  * PAUSAR A IA é outra coisa, mais fraca: ela só deixa de LER as mensagens desta

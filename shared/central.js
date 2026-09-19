@@ -54,6 +54,9 @@ export const temRelatorio = t => !!(t?.relatorioDia || t?.relatorioLinha || t?.r
  */
 export function ehCandidatoMigracao(t) {
   if (!t || t.status === 'spam' || t.status === 'lixeira') return false
+  // conversa que o dono assumiu nao vai para a IA: nem como candidata, nem
+  // como pendente na contagem — nenhuma leitura, nenhum custo
+  if (t.atendimentoHumano?.ativo) return false
   if (t.atendimentoNovo) return false
   if (temRelatorio(t)) return false
   return ['reembolso', 'troca', 'entrega'].includes(t.categoria) || !!t.motivoReembolso

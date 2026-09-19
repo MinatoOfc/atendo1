@@ -105,7 +105,12 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
         </span>
       )}
       {/* atalho: assume a conversa sem abrir. Desliga a IA nela — por isso pergunta antes */}
-      {!['spam', 'lixeira'].includes(t.status) && !t.atendimentoHumano?.ativo && (
+      {/* durante um envio a conversa não pode ser assumida: o e-mail já pode
+          estar com o canal, e prometer cancelamento seria mentira */}
+      {!['spam', 'lixeira'].includes(t.status) && !t.atendimentoHumano?.ativo && t.envioEmAndamento && (
+        <span className="tag tag-outro" title="O canal está enviando esta resposta — espere a confirmação">Envio em andamento</span>
+      )}
+      {!['spam', 'lixeira'].includes(t.status) && !t.atendimentoHumano?.ativo && !t.envioEmAndamento && (
         <span className="btn btn-sm" role="button" title="Mover para atendimento humano (desliga a IA nesta conversa)"
           style={{ padding: '3px 8px' }}
           onClick={e => {
@@ -1202,7 +1207,13 @@ export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void
               onClick={() => { marcarResolvido(t.id); onBack() }}>
               <CheckCheck size={14} /> {t.resposta ? 'Aprovar e fechar' : 'Resolvido sem enviar'}
             </button>
-            {!t.atendimentoHumano?.ativo && (
+            {!t.atendimentoHumano?.ativo && t.envioEmAndamento && (
+              <button className="btn" disabled style={{ opacity: 0.5 }}
+                title="O canal está enviando esta resposta. Espere a confirmação — um e-mail já entregue ao canal não pode ser cancelado.">
+                <Users size={14} /> Envio em andamento
+              </button>
+            )}
+            {!t.atendimentoHumano?.ativo && !t.envioEmAndamento && (
               <button className="btn" title="Assume a conversa e desliga a IA nela — não envia nada ao cliente"
                 onClick={() => {
                   if (confirm('Mover esta conversa para atendimento humano?\n\nA IA para de classificar, escrever e enviar aqui. O rascunho atual deixa de valer (fica guardado na Auditoria) e qualquer envio agendado é cancelado. Nada é enviado ao cliente agora.')) {
