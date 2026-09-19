@@ -58,7 +58,7 @@ function ImagensAnexadas({ anexos }: { anexos?: AnexoImagem[] }) {
 }
 
 export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Ticket) => void; tagStatus?: boolean }) {
-  const { lojasVisiveis, lojaAtiva, prefs, pedidos, moverPara, fasesNovo } = useStore()
+  const { lojasVisiveis, lojaAtiva, prefs, pedidos, moverParaHumano, fasesNovo } = useStore()
   const nomeLojaDona = lojaAtiva === 'todas' && lojasVisiveis.length > 1
     ? lojasVisiveis.find(l => l.id === (t.lojaId ?? 'loja1'))?.nome
     : null
@@ -104,11 +104,16 @@ export function TicketRow({ t, onOpen, tagStatus }: { t: Ticket; onOpen: (t: Tic
           {t.atendimentoNovo.etapa ? fasesNovo[t.atendimentoNovo.etapa]?.titulo ?? t.atendimentoNovo.etapa : 'Triagem'}
         </span>
       )}
-      {/* atalho: manda a conversa para o atendimento humano sem abrir */}
-      {!['humano', 'spam', 'lixeira'].includes(t.status) && (
-        <span className="btn btn-sm" role="button" title="Mover para atendimento humano"
+      {/* atalho: assume a conversa sem abrir. Desliga a IA nela — por isso pergunta antes */}
+      {!['spam', 'lixeira'].includes(t.status) && !t.atendimentoHumano?.ativo && (
+        <span className="btn btn-sm" role="button" title="Mover para atendimento humano (desliga a IA nesta conversa)"
           style={{ padding: '3px 8px' }}
-          onClick={e => { e.stopPropagation(); moverPara(t.id, 'humano', 'Movido por você da caixa') }}>
+          onClick={e => {
+            e.stopPropagation()
+            if (confirm('Mover esta conversa para atendimento humano?\n\nA IA para de classificar, escrever e enviar aqui. O rascunho atual deixa de valer (fica guardado na Auditoria) e qualquer envio agendado é cancelado.')) {
+              moverParaHumano(t.id, 'Movido por você da caixa')
+            }
+          }}>
           <Users size={13} />
         </span>
       )}
@@ -816,7 +821,7 @@ const rotuloStatus: Record<string, string> = {
 export interface NavCasos { pos: number; total: number; anterior?: () => void; proximo?: () => void }
 
 export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void; nav?: NavCasos }) {
-  const { aprovarEnviar, editarRascunho, moverPara, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, marcarRespondido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
+  const { aprovarEnviar, editarRascunho, moverPara, moverParaHumano, retomarIA, restaurar, excluirDefinitivo, marcarLido, marcarResolvido, marcarRespondido, pausarIA, traduzirTicket, regenerarRascunho, traduzirRascunho, gerarTexto, traduzirTexto, config, lojas } = useStore()
   // com idioma fixo na loja, as respostas podem estar em outro idioma mesmo que o cliente escreva em pt
   const idiomaDaLoja = lojas.find(l => l.id === (t.lojaId ?? 'loja1'))?.idioma ?? 'auto'
   const respostaEmOutroIdioma = idiomaDaLoja !== 'auto' && idiomaDaLoja !== 'pt'
@@ -1036,7 +1041,30 @@ export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void
         </div>
       )}
 
-      {t.motivoEscalada && t.status === 'humano' && (
+      {/* A conversa é SUA: quem assumiu, quando e por quê — e como devolvê-la */}
+      {t.atendimentoHumano?.ativo && (
+        <div className="banner card-purple mb-12" style={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <Users size={15} color="var(--purple)" style={{ marginTop: 2 }} />
+          <span style={{ flex: 1, minWidth: 240 }}>
+            <b>Em atendimento humano.</b> A IA não classifica, não escreve e não envia nada aqui.
+            <br />
+            <span className="muted-sm">
+              {t.atendimentoHumano.por} · {new Date(t.atendimentoHumano.em).toLocaleString('pt-BR')}
+              {t.atendimentoHumano.motivo ? ` · ${t.atendimentoHumano.motivo}` : ''}
+            </span>
+          </span>
+          <button className="btn btn-sm" title="A IA volta e relê a última mensagem do cliente agora"
+            onClick={() => { if (confirm('Retomar a IA e reler a última mensagem do cliente?\n\nO rascunho antigo NÃO será reaproveitado: a IA começa um ciclo novo. Nada é enviado sem a sua aprovação.')) retomarIA(t.id, 'reclassificar') }}>
+            Retomar e reler a mensagem
+          </button>
+          <button className="btn btn-sm" title="A IA volta, mas só age quando o cliente escrever de novo"
+            onClick={() => { if (confirm('Retomar a IA e aguardar a próxima mensagem do cliente?\n\nO rascunho antigo é descartado e a IA fica parada até o cliente escrever.')) retomarIA(t.id, 'aguardar') }}>
+            Retomar e aguardar o cliente
+          </button>
+        </div>
+      )}
+
+      {t.motivoEscalada && t.status === 'humano' && !t.atendimentoHumano?.ativo && (
         <div className="banner card-purple mb-12">
           <Users size={15} color="var(--purple)" />
           <span><b>Sinalizado para você:</b> {(verTraducao && t.motivoTraducao) || t.motivoEscalada}</span>
@@ -1167,9 +1195,14 @@ export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void
               onClick={() => { marcarResolvido(t.id); onBack() }}>
               <CheckCheck size={14} /> {t.resposta ? 'Aprovar e fechar' : 'Resolvido sem enviar'}
             </button>
-            {t.status !== 'humano' && (
-              <button className="btn" onClick={() => { moverPara(t.id, 'humano', 'Escalado manualmente por você'); onBack() }}>
-                <Users size={14} /> Escalar para mim
+            {!t.atendimentoHumano?.ativo && (
+              <button className="btn" title="Assume a conversa e desliga a IA nela — não envia nada ao cliente"
+                onClick={() => {
+                  if (confirm('Mover esta conversa para atendimento humano?\n\nA IA para de classificar, escrever e enviar aqui. O rascunho atual deixa de valer (fica guardado na Auditoria) e qualquer envio agendado é cancelado. Nada é enviado ao cliente agora.')) {
+                    moverParaHumano(t.id, 'Movido por você da tela da conversa'); onBack()
+                  }
+                }}>
+                <Users size={14} /> Mover para atendimento humano
               </button>
             )}
             <button className="btn" onClick={() => { moverPara(t.id, 'spam'); onBack() }}><Shield size={14} /> Spam</button>
@@ -1250,7 +1283,9 @@ export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void
 
     <div className="coluna-lateral" style={{ width: 280, flexShrink: 0 }}>
       <PainelMotor t={t} />
-      <PainelFaseNovo t={t} />
+      {/* enquanto a conversa é sua, as ações da IA (aprovar aceite, recusar,
+          validar foto) saem da tela — elas não funcionam e confundiriam */}
+      {!t.atendimentoHumano?.ativo && <PainelFaseNovo t={t} />}
       <PainelPedidos t={t} />
     </div>
 

@@ -110,6 +110,11 @@ export interface Ticket {
   marcadoRespondido?: boolean
   custoIA?: number
   iaPausada?: boolean
+  /** O dono assumiu a conversa: a IA não age nela até ele retomar. */
+  atendimentoHumano?: {
+    ativo: boolean; por: string; em: string; motivo: string
+    faseNoMomento?: string | null; rascunhoInvalidado?: string | null
+  }
   traducao?: string
   assuntoTraducao?: string
   respostaTraducao?: string
@@ -558,6 +563,8 @@ interface Store extends ServerState {
   testarShopify: (lojaId?: string) => Promise<StatusShopify>
   desconectarShopify: (lojaId?: string) => void
   pausarIA: (id: string, pausar: boolean) => void
+  moverParaHumano: (id: string, motivo: string) => Promise<boolean>
+  retomarIA: (id: string, modo: 'reclassificar' | 'aguardar') => Promise<boolean>
   traduzirTicket: (id: string) => Promise<boolean>
   regenerarRascunho: (id: string, instrucao: string) => Promise<string | null>
   traduzirRascunho: (id: string) => Promise<string | null>
@@ -894,6 +901,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
 
     desconectarShopify: (lojaId = 'loja1') => api('/shopify/desconectar', 'POST', { lojaId }).then(aplicar),
+
+    // O dono assume a conversa: uma chamada só, auditada e idempotente. Não é
+    // "mover de pasta" — é desligar a IA nesta conversa.
+    moverParaHumano: async (id, motivo) => {
+      const r = await api(`/tickets/${id}/atendimento-humano`, 'POST', { confirmar: true, motivo })
+      if (r.erro) { alert(r.erro); return false }
+      aplicar(r); return true
+    },
+    // Devolve a conversa para a IA. O rascunho antigo nunca volta.
+    retomarIA: async (id, modo) => {
+      const r = await api(`/tickets/${id}/retomar-ia`, 'POST', { confirmar: true, modo })
+      if (r.erro) { alert(r.erro); return false }
+      aplicar(r); return true
+    },
 
     pausarIA: (id, pausar) => {
       setState(s => ({ ...s, tickets: s.tickets.map(t => (t.id === id ? { ...t, iaPausada: pausar, enviaEm: pausar ? undefined : t.enviaEm } : t)) }))

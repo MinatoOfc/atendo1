@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  RefreshCw, Search, MessageSquare, Bot, User, AlertTriangle, Check, Clock, ExternalLink, ShieldCheck,
-} from 'lucide-react'
+  RefreshCw, Search, MessageSquare, Bot, User, AlertTriangle, Check, Clock, ExternalLink, ShieldCheck, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { ROTULO_GERAL, ROTULO_SELO, ROTULO_SELO_CURTO, ROTULO_ORIGEM_ENVIO } from '../../shared/auditoria.js'
 import type { ConversaAuditoria, ResumoConversaAuditoria, MensagemAuditoria, ItemChecklist } from '../../shared/auditoria.js'
@@ -245,6 +244,38 @@ export default function Auditoria() {
               <div className="muted-sm" style={{ color: CORES_SELO[conversa.selo], fontWeight: 700 }}>
                 {ROTULO_SELO[conversa.selo] ?? conversa.selo}
               </div>
+              {/* A Auditoria observa; a ÚNICA coisa que ela deixa você fazer com
+                  a conversa é tirá-la da mão da IA. Numa conversa bloqueada isso
+                  vira recomendação com destaque, porque é a saída certa. */}
+              {(() => {
+                const alvo = s.todosTickets.find((x: { id: string }) => x.id === conversa.ticketId)
+                if (!alvo) return null
+                if (alvo.atendimentoHumano?.ativo) {
+                  return (
+                    <div className="muted-sm" style={{ color: 'var(--purple)', fontWeight: 700 }}>
+                      Em atendimento humano desde {hora(alvo.atendimentoHumano.em)} — a IA não age nesta conversa.
+                    </div>
+                  )
+                }
+                const bloqueada = conversa.selo === 'bloqueado'
+                const perguntar = () => {
+                  if (!confirm('Mover esta conversa para atendimento humano?' + String.fromCharCode(10, 10) + 'A IA para de classificar, escrever e enviar aqui. O rascunho atual deixa de valer (fica guardado nesta Auditoria) e qualquer envio agendado é cancelado. Nada é enviado ao cliente agora.')) return
+                  s.moverParaHumano(conversa.ticketId, 'Movido por você pela Auditoria')
+                }
+                return bloqueada ? (
+                  <div className="banner" style={{ borderColor: 'var(--purple)', background: 'var(--panel-soft)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                    <Users size={14} color="var(--purple)" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <span style={{ flex: 1, minWidth: 220 }}>
+                      <b>Recomendado:</b> esta resposta foi bloqueada e não vai sair sozinha. Assuma a conversa para responder você mesmo.
+                    </span>
+                    <button className="btn btn-sm" onClick={perguntar}>Mover para atendimento humano</button>
+                  </div>
+                ) : (
+                  <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={perguntar}>
+                    <Users size={13} /> Mover para atendimento humano
+                  </button>
+                )
+              })()}
               {conversa.retencao && conversa.retencao.omitidos > 0 && (
                 <div className="muted-sm" style={{ color: 'var(--amber, #d29922)' }}>
                   Histórico anterior omitido por retenção: {conversa.retencao.omitidos} evento(s) até

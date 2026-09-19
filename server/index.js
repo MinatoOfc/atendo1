@@ -336,8 +336,26 @@ function neutralizarAutoEnvioNoPiloto() {
  * produto preenchido pelo catálogo é apagado — na próxima interação o motor para
  * na coleta e pergunta o produto. Conversas já concluídas não são tocadas.
  */
+/**
+ * ATENDIMENTO HUMANO: o dono assumiu esta conversa. É um estado do TICKET (não
+ * do motor novo), porque vale igual para conversa clássica e nova — e porque o
+ * motor em que a conversa nasceu nunca muda por causa disto.
+ *
+ * Enquanto estiver ativo, a IA não classifica, não escreve, não regenera e não
+ * envia nada aqui. `t.iaPausada` continua ligado junto: ele já é respeitado
+ * pelo agendador, pela chegada de mensagem nova e pela coleta de produto, então
+ * ligar os dois fecha essas três portas sem código novo.
+ */
+const emAtendimentoHumano = t => t?.atendimentoHumano?.ativo === true
+
+/** Erro pronto para as rotas que a IA não pode executar numa conversa humana. */
+const recusaHumano = acao => `Esta conversa está em atendimento humano: ${acao} está desligado até você retomar a IA.`
+
 /** Caso aberto do modo novo sem prova de produto (regra única em shared/produto.js). */
 const casoSemProvaDeProduto = t => {
+  // conversa que VOCÊ assumiu não entra em migração de arranque nenhuma: era
+  // por aqui que um reinício do servidor devolvia o caso para a fila da IA
+  if (emAtendimentoHumano(t)) return false
   // cobrança de reembolso fica fora da migração de arranque: ela não é um caso
   // sem produto, é um caso que não precisa de produto
   if (t.atendimentoNovo?.acompanhamentoReembolso?.ativo) return false
@@ -394,6 +412,7 @@ async function gerarColetasDeProduto(wsId) {
   for (const t of estado.tickets ?? []) {
     const an = t.atendimentoNovo
     if (!an?.pedirProduto) continue
+    if (emAtendimentoHumano(t)) continue // a conversa é sua: nada de rascunho no arranque
     try {
       if (!(an.transicaoPendente?.para === 'coleta' && (an.transicaoPendente.faltando ?? []).includes('produtos'))) {
         await prepararRascunhoNovo(estado, t, { faseId: 'coleta', faltando: ['produtos'], resumo: 'produto não informado pelo cliente — a regra do mapa exige perguntar antes de continuar', aoFalhar: 'manter' })
@@ -1719,6 +1738,7 @@ async function exigirColetaDeProduto(estado, wsId, t, motivoHumano) {
  */
 async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo = '', instrucaoEstilo = null, aoFalhar = 'humano', releitura = null }) {
   if (motorDaConversa(t) !== 'novo') throw new Error('conversa clássica nunca recebe rascunho, fase ou agendamento do motor novo')
+  if (emAtendimentoHumano(t)) throw new Error(recusaHumano('escrever rascunho'))
   // TRAVA GLOBAL DE PRODUTO em toda saída de rascunho: sem prova, só a coleta do produto pode nascer
   if (faseId !== 'coleta' && !produtoFoiInformado(t.atendimentoNovo)) {
     const anP = t.atendimentoNovo
@@ -1858,6 +1878,7 @@ async function prepararRascunhoNovo(estado, t, { faseId, faltando = [], resumo =
 
 async function processarNovo(estado, t, { agora = Date.now(), releitura = null } = {}) {
   if (motorDaConversa(t) !== 'novo') throw new Error('conversa clássica nunca entra no motor novo')
+  if (emAtendimentoHumano(t)) throw new Error(recusaHumano('classificar a mensagem'))
   const loja = estado.lojas.find(l => l.id === (t.lojaId ?? 'loja1'))
   const pedido = pedidoDoTicket(estado, t)
   t.atendimentoNovo ??= novoEstado()
@@ -2333,11 +2354,13 @@ const nomePessoa = s => String(s || '').toLowerCase().normalize('NFD').replace(/
  */
 export { motorDaConversa }
 export function fundirConversasDuplicadas(estado) {
+  // conversa em atendimento humano nunca é fundida: a fusão remove o ticket
+  // antigo e levaria junto a auditoria e o estado que você assumiu
   let mudou = false
   let denovo = true
   while (denovo) {
     denovo = false
-    const ts = estado.tickets.filter(t => !['spam', 'lixeira'].includes(t.status))
+    const ts = estado.tickets.filter(t => !['spam', 'lixeira'].includes(t.status) && !emAtendimentoHumano(t))
     const info = ts.map(t => {
       const texto = textoDaConversa(t)
       return {
@@ -2419,7 +2442,7 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, ago
     // a conversa se revelou spam (ex.: abriu como cliente e virou oferta comercial)
     t.status = 'spam'
     t.enviaEm = undefined
-  } else if (t.iaPausada) {
+  } else if (t.iaPausada || emAtendimentoHumano(t)) {
     t.status = 'humano'
     t.motivoEscalada = 'IA pausada nesta conversa — responda manualmente ou retome a IA'
     t.motivoTraducao = undefined
@@ -2556,8 +2579,13 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
   if (modoNovo && !canal) {
     throw new Error(`A loja desta conversa (${lojaId}) não tem caixa de e-mail configurada — no modo novo a resposta só sai pela conta da própria loja, nunca pela de outra`)
   }
+  // ATENDIMENTO HUMANO: a conversa é sua. Só sai o que VOCÊ escreveu, e a trava
+  // de produto não se aplica — ela existe para impedir a IA de oferecer no
+  // escuro, não para impedir você de responder ao seu cliente.
+  const humano = emAtendimentoHumano(ticket)
+  if (humano && origem !== 'manual') throw new Error(recusaHumano('o envio automático e o da IA'))
   // modo novo sem produto comprovadamente informado: NADA sai — a única exceção é a coleta que pergunta o produto
-  if (modoNovo && !produtoFoiInformado(an) && !coletaDeProduto) {
+  if (!humano && modoNovo && !produtoFoiInformado(an) && !coletaDeProduto) {
     throw new Error('Produto não informado pelo cliente — nenhuma resposta sai antes; só a pergunta do produto')
   }
   // ÚLTIMA BARREIRA do cupom: nem rascunho antigo, nem texto editado à mão, nem
@@ -2719,7 +2747,9 @@ async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo 
     ticket.historico.push(mensagemArquivada(ticket))
     limparRespostaAtual(ticket)
   }
-  ticket.status = 'enviado'
+  // a resposta manual não devolve a conversa para a fila da IA: ela continua
+  // sua até você retomar
+  ticket.status = humano ? 'humano' : 'enviado'
   ticket.resposta = texto
   // vínculo EXATO da mensagem enviada com o evento de auditoria
   ticket.respostaMensagemId = ctxEnvio.mensagemId
@@ -2754,7 +2784,7 @@ agendar(async () => {
   const agora = Date.now()
   for (const [wsId, estado] of workspaces) {
     const vencidos = estado.tickets.filter(t =>
-      t.status === 'aprovacao' && t.enviaEm && t.enviaEm <= agora && !t.iaPausada && !enviando.has(t.id))
+      t.status === 'aprovacao' && t.enviaEm && t.enviaEm <= agora && !t.iaPausada && !emAtendimentoHumano(t) && !enviando.has(t.id))
     if (!vencidos.length) continue
     for (const t of vencidos) {
       enviando.add(t.id)
@@ -4553,6 +4583,7 @@ app.post('/api/tickets/:id/lido', (req, res) => {
 // o defeito. Só então a troca é oferecida; se não mostrar, pede outra foto.
 app.post('/api/tickets/:id/novo/foto', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  if (emAtendimentoHumano(t)) return res.status(409).json({ erro: recusaHumano('validar a foto'), state: visao(req.wsId) })
   const an = t.atendimentoNovo
   if (!an || an.fluxo !== 'defeito' || !an.aguardandoComprovacao || !an.fotoRecebida || an.aguardando !== 'humano' || an.fotoValidada === true) {
     return res.status(400).json({ erro: 'A validação de foto só existe no fluxo de defeito, com uma imagem aguardando a sua comprovação.', state: visao(req.wsId) })
@@ -4590,6 +4621,7 @@ app.post('/api/tickets/:id/novo/foto', async (req, res) => {
 // Aprovações e pelos mesmos bloqueios (só os números da opção aceita).
 app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  if (emAtendimentoHumano(t)) return res.status(409).json({ erro: recusaHumano('aprovar o aceite'), state: visao(req.wsId) })
   const an = t.atendimentoNovo
   if (an && !produtoFoiInformado(an)) {
     return res.status(400).json({ erro: 'Produto não informado pelo cliente — nada pode ser confirmado antes de ele dizer qual produto (regra do mapa).', produtoNaoInformado: true, state: visao(req.wsId) })
@@ -4637,6 +4669,7 @@ app.post('/api/tickets/:id/novo/confirmar', async (req, res) => {
 // O dono recusa ou corrige o aceite pendente: nada é confirmado; a conversa fica com ele para responder à mão.
 app.post('/api/tickets/:id/novo/recusar-aceite', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  if (emAtendimentoHumano(t)) return res.status(409).json({ erro: recusaHumano('recusar o aceite'), state: visao(req.wsId) })
   const an = t.atendimentoNovo; const cp = an?.conclusaoPendente
   if (!an || !cp || cp.status !== 'aguardando_aprovacao') return res.status(400).json({ erro: 'Esta conversa não tem aceite aguardando a sua aprovação.', state: visao(req.wsId) })
   cp.status = 'recusada'; cp.recusadaPor = req.usuario?.nome || req.usuario?.email || 'lojista'; cp.recusadaEm = new Date().toISOString(); cp.observacao = String(req.body?.observacao || '').slice(0, 300) || undefined
@@ -4854,6 +4887,7 @@ app.post('/api/tickets/:id/reclassificar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   const recusar = (msg, status = 400) => res.status(status).json({ erro: msg, state: visao(req.wsId) })
 
+  if (emAtendimentoHumano(t)) return recusar(recusaHumano('a releitura'), 409)
   if (motorDaConversa(t) !== 'novo') return recusar('Releitura só existe no modo novo.')
   if (!iaConfigurada) return recusar('A releitura usa o Claude — configure a ANTHROPIC_API_KEY primeiro.')
   const an = t.atendimentoNovo
@@ -4989,6 +5023,7 @@ app.post('/api/tickets/:id/reclassificar', async (req, res) => {
 // Refaz o rascunho com uma instrução do lojista ("ofereça 10% de desconto", "seja mais curto"…)
 app.post('/api/tickets/:id/regenerar', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
+  if (emAtendimentoHumano(t)) return res.status(409).json({ erro: recusaHumano('gerar nova resposta'), state: visao(req.wsId) })
   if (!iaConfigurada) {
     return res.status(400).json({ erro: 'Gerar nova resposta usa o Claude — configure a ANTHROPIC_API_KEY primeiro.', state: visao(req.wsId) })
   }
@@ -5137,8 +5172,19 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
     // modo novo: o texto FINAL (regenerado ou editado à mão) tem de pertencer à
     // fase pendente; edição que mude a oferta exige confirmação explícita
     const anA = t.atendimentoNovo
+    // ATENDIMENTO HUMANO: nada da IA sai daqui. O rascunho que foi invalidado
+    // quando você assumiu a conversa continua guardado na Auditoria, mas não
+    // pode ser enviado nem por engano.
+    if (emAtendimentoHumano(t)) {
+      if (origem !== 'manual') return res.status(409).json({ erro: recusaHumano('aprovar a resposta da IA'), state: visao(req.wsId) })
+      const invalidado = t.atendimentoHumano?.rascunhoInvalidado ?? null
+      if (invalidado && textoFinal.trim() === String(invalidado).trim()) {
+        return res.status(409).json({ erro: 'Este é o rascunho que a IA tinha escrito antes de você assumir a conversa — escreva a resposta ou retome a IA.', state: visao(req.wsId) })
+      }
+      if (!textoFinal.trim()) return res.status(400).json({ erro: 'Escreva a resposta antes de enviar.', state: visao(req.wsId) })
+    }
     // TRAVA PELO MOTOR DA CONVERSA (não pela transição): modo novo sem produto informado só envia a coleta do produto
-    if (motorDaConversa(t) === 'novo' && !produtoFoiInformado(anA)) {
+    if (!emAtendimentoHumano(t) && motorDaConversa(t) === 'novo' && !produtoFoiInformado(anA)) {
       const tp = anA?.transicaoPendente
       const coletaProduto = tp?.para === 'coleta' && (tp.faltando ?? []).includes('produtos')
       if (!coletaProduto) {
@@ -5216,6 +5262,169 @@ app.post('/api/tickets/:id/respondido', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   t.marcadoRespondido = !!req.body?.marcar || undefined
   salvar(req.wsId); ok(req, res)
+})
+
+/**
+ * MOVER PARA ATENDIMENTO HUMANO. Uma ação só, explícita e auditada: a conversa
+ * passa a ser sua e a IA para de agir nela.
+ *
+ * O que sai da tela não sai da Auditoria: o rascunho que deixa de valer é
+ * guardado inteiro no evento, a tentativa anterior fica registrada e a solução
+ * que o cliente já aceitou é preservada — só a conclusão que ainda não foi
+ * enviada é suspensa. Fase, histórico, relatório e o motor da conversa não são
+ * tocados.
+ *
+ * IDEMPOTENTE: clicar de novo devolve 200 sem registrar nem mudar nada.
+ */
+app.post('/api/tickets/:id/atendimento-humano', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  if (req.body?.confirmar !== true) {
+    return res.status(400).json({ erro: 'Mover para atendimento humano precisa de confirmação explícita.', state: visao(req.wsId) })
+  }
+  if (emAtendimentoHumano(t)) return ok(req, res) // segundo clique não faz nada
+
+  const antes = structuredClone(t)
+  const an = t.atendimentoNovo
+  const motivo = String(req.body?.motivo ?? '').trim() || 'Você assumiu esta conversa'
+  const por = req.usuario?.nome || req.usuario?.email || 'lojista'
+  const em = new Date().toISOString()
+  const faseNoMomento = an?.transicaoPendente?.para ?? an?.etapa ?? null
+  const rascunhoInvalidado = t.rascunho ?? null
+
+  t.atendimentoHumano = {
+    ativo: true, por, em, motivo, faseNoMomento,
+    faseAceita: an?.acaoAceita ?? null,
+    cicloId: t.cicloAuditoria ?? null,
+    tentativaId: an?.tentativaAtual ?? null,
+    rascunhoInvalidado,
+  }
+  // o rascunho invalidado, a tentativa e o agendamento ficam REGISTRADOS
+  auditar(t, 'caso_para_humano', {
+    resumo: `Você assumiu a conversa — ${motivo}`, situacao: 'atencao', fase: faseNoMomento,
+    chave: `caso_para_humano:${t.id}:atendimento_humano:${t.cicloAuditoria ?? t.data}`,
+    dados: {
+      motivo, origem: 'atendimento_humano', por, em, fase: faseNoMomento,
+      faseAceita: an?.acaoAceita ?? null,
+      tentativaEncerrada: an?.tentativaAtual ?? null,
+      // inteiro, sem corte: some da tela, nunca da auditoria
+      rascunhoInvalidado, texto: rascunhoInvalidado,
+      agendamentoCancelado: t.enviaEm ? new Date(t.enviaEm).toISOString() : null,
+      conclusaoSuspensa: an?.conclusaoPendente?.id ?? null,
+    },
+  })
+
+  t.iaPausada = true // fecha agendador, chegada de mensagem e coleta de produto
+  t.status = 'humano'
+  t.motivoEscalada = motivo
+  t.motivoTraducao = undefined
+  t.rascunho = undefined; t.rascunhoTraducao = undefined
+  t.enviaEm = undefined
+  t.decisaoPendente = undefined
+  if (an) {
+    an.aguardando = 'humano'
+    // sem fase pendente, a resposta manual não confirma fase nenhuma
+    an.transicaoPendente = null
+    an.rascunhoGerado = undefined
+    an.proximoEnvioMinimo = undefined
+    an.faseRecusada = undefined
+    an.pedirProduto = false
+    an.tentativaAtual = undefined // a tentativa antiga vive na auditoria, não no estado ativo
+    // a SOLUÇÃO ACEITA fica; só a conclusão que ainda não saiu é suspensa
+    const cp = an.conclusaoPendente
+    if (cp && !['concluida', 'cancelada', 'recusada'].includes(cp.status)) {
+      cp.statusAnterior = cp.status
+      cp.status = 'suspensa_humano'
+      cp.relatorioAutomaticoProibido = true
+      cp.interrompidaEm = em
+      cp.motivoInterrupcao = `Conversa assumida por ${por}: ${motivo}`
+    }
+  }
+
+  try {
+    await gravarCritico(req.wsId)
+  } catch (err) {
+    for (const k of Object.keys(t)) delete t[k]
+    Object.assign(t, antes)
+    return res.status(500).json({ erro: `Não foi possível salvar (${err.message}) — a conversa continua como estava.`, state: visao(req.wsId) })
+  }
+  return ok(req, res)
+})
+
+/**
+ * RETOMAR A IA. Exige confirmação e uma escolha: reler a última mensagem agora,
+ * ou ficar quieta até o cliente escrever de novo.
+ *
+ * O rascunho de antes NUNCA volta — nem para ser enviado, nem para ser
+ * aproveitado. Abre-se ciclo e tentativa novos, o período humano continua no
+ * histórico e o motor da conversa não muda.
+ */
+app.post('/api/tickets/:id/retomar-ia', async (req, res) => {
+  const t = acharTicket(req, res); if (!t) return
+  if (req.body?.confirmar !== true) {
+    return res.status(400).json({ erro: 'Retomar a IA precisa de confirmação explícita.', state: visao(req.wsId) })
+  }
+  if (!emAtendimentoHumano(t)) {
+    return res.status(400).json({ erro: 'Esta conversa não está em atendimento humano.', state: visao(req.wsId) })
+  }
+  const modo = ['reclassificar', 'aguardar'].includes(req.body?.modo) ? req.body.modo : null
+  if (!modo) {
+    return res.status(400).json({ erro: 'Escolha o que a IA faz ao voltar: reler a última mensagem ou aguardar a próxima.', state: visao(req.wsId) })
+  }
+  if (modo === 'reclassificar' && !iaConfigurada) {
+    return res.status(400).json({ erro: 'Reler a mensagem usa o Claude — configure a ANTHROPIC_API_KEY primeiro.', state: visao(req.wsId) })
+  }
+
+  const antes = structuredClone(t)
+  const por = req.usuario?.nome || req.usuario?.email || 'lojista'
+  const periodo = t.atendimentoHumano
+  const cicloAnterior = t.cicloAuditoria ?? null
+
+  // o rascunho de antes morre aqui
+  t.rascunho = undefined; t.rascunhoTraducao = undefined; t.enviaEm = undefined
+  abrirCicloAuditoria(t) // ciclo e tentativa novos
+  t.atendimentoHumano = undefined
+  t.iaPausada = false
+  t.motivoEscalada = undefined
+  t.motivoTraducao = undefined
+  const an = t.atendimentoNovo
+  if (an) { an.faseRecusada = undefined; an.aguardando = modo === 'aguardar' ? 'cliente' : null }
+
+  auditar(t, 'ia_retomada', {
+    resumo: modo === 'reclassificar' ? 'IA retomada: releitura da última mensagem' : 'IA retomada: aguardando a próxima mensagem do cliente',
+    situacao: 'informativo', fase: an?.etapa ?? null,
+    chave: `ia_retomada:${t.id}:${t.cicloAuditoria}`,
+    dados: {
+      por, modo, cicloAnterior, rascunhoAntigoDescartado: true,
+      periodoHumano: { desde: periodo?.em ?? null, por: periodo?.por ?? null, motivo: periodo?.motivo ?? null },
+    },
+  })
+
+  const voltarAoHumano = err => {
+    for (const k of Object.keys(t)) delete t[k]
+    Object.assign(t, antes)
+    salvar(req.wsId)
+    return res.status(500).json({ erro: `${err} — a conversa continua com você.`, state: visao(req.wsId) })
+  }
+
+  if (modo === 'reclassificar') {
+    try {
+      if (motorDaConversa(t) === 'novo') await processarNovo(req.estado, t, {})
+      else aplicarResultado(req.estado, t, await processarEmail(req.estado, t))
+    } catch (err) {
+      return voltarAoHumano(`A releitura falhou (${err.message})`)
+    }
+  } else {
+    // esperando o cliente: sai da fila do dono sem gerar nada
+    t.status = 'inbox'
+    t.lido = true
+  }
+
+  try {
+    await gravarCritico(req.wsId)
+  } catch (err) {
+    return voltarAoHumano(`Não foi possível salvar (${err.message})`)
+  }
+  return ok(req, res)
 })
 
 app.post('/api/tickets/:id/pausar-ia', (req, res) => {

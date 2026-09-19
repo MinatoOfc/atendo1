@@ -89,7 +89,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -97,7 +97,7 @@ for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89,
   })
 }
 // pedidos da loja automática (loja3)
-for (const n of [50, 51, 52]) {
+for (const n of [50, 51, 52, 53]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja3',
@@ -1565,6 +1565,272 @@ test('cobrança de reembolso COM prova: a loja já disse o valor, e isso aparece
   assert.equal(t.atendimentoNovo.transicaoPendente ?? null, null)
   assert.equal(t.rascunho ?? null, null)
   semRelatorio(t)
+})
+
+/* ============ Mover para atendimento humano / Retomar IA ============ */
+
+const CORPO_PADRAO = 'Das Polo Premium ist schlecht, ich möchte einen Umtausch.'
+const clsPadrao = () => ({
+  intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+  situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'quer troca',
+  idioma: 'de', idiomaConfiavel: true, spam: false,
+})
+// conversa com rascunho pronto e fase pendente, na loja indicada
+async function conversaComRascunho(n, lojaId = 'loja1') {
+  fila.push(clsPadrao())
+  const r0 = await api('/api/simular-email', { de: `c${n}@web.de`, nome: 'C' + n, assunto: 'Bestellung #' + n, corpo: CORPO_PADRAO, lojaId })
+  const t = await ticket(r0.ticket.id)
+  assert.ok(t.rascunho, 'a conversa nasceu com rascunho')
+  return t
+}
+const mover = (id, extra = {}) => api(`/api/tickets/${id}/atendimento-humano`, { confirmar: true, motivo: 'assumo eu', ...extra })
+const retomar = (id, modo, extra = {}) => api(`/api/tickets/${id}/retomar-ia`, { confirmar: true, modo, ...extra })
+
+test('conversa BLOQUEADA movida para atendimento humano: rascunho e agendamento invalidados, nada enviado', async () => {
+  // rascunho recusado pelo validador: é a conversa que mais precisa desta saída
+  escritaRuim = true
+  fila.push(clsPadrao())
+  const r0 = await api('/api/simular-email', { de: 'c130@web.de', nome: 'C130', assunto: 'Bestellung #130', corpo: CORPO_PADRAO, lojaId: 'loja1' })
+  escritaRuim = false
+  let t = await ticket(r0.ticket.id)
+  const cAntes = await auditoria(t.id)
+  const tentativaAntiga = cAntes.tentativaAtual
+  assert.ok(cAntes.eventos.some(e => e.tipo === 'rascunho_bloqueado'), 'havia um rascunho recusado')
+
+  const r = await mover(t.id, { motivo: 'texto recusado duas vezes, respondo eu' })
+  assert.equal(r.status, 200, r.erro ?? '')
+  t = await ticket(t.id)
+  const an = t.atendimentoNovo
+
+  // é sua, e aparece imediatamente em Atendimento humano
+  assert.equal(t.status, 'humano', 'a conversa vai para Atendimento humano')
+  assert.equal(t.atendimentoHumano.ativo, true)
+  assert.equal(an.aguardando, 'humano')
+  assert.equal(t.iaPausada, true, 'a IA fica parada nesta conversa')
+  // quem, quando, por quê e em que fase
+  assert.ok(t.atendimentoHumano.por, 'quem assumiu')
+  assert.ok(t.atendimentoHumano.em, 'quando')
+  assert.match(t.atendimentoHumano.motivo, /respondo eu/)
+  // rascunho e agendamento invalidados
+  assert.equal(t.rascunho ?? null, null, 'o rascunho sai da tela')
+  assert.equal(t.enviaEm ?? null, null, 'nada agendado')
+  assert.equal(an.transicaoPendente ?? null, null, 'sem fase pendente')
+  // e nada foi enviado
+  const c = await auditoria(t.id)
+  assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0)
+  // a tentativa antiga continua na Auditoria
+  assert.ok(c.eventos.some(e => e.dados?.tentativaId === tentativaAntiga), 'a tentativa anterior ficou registrada')
+  const evt = c.eventos.filter(e => e.tipo === 'caso_para_humano').at(-1)
+  assert.equal(evt.dados.origem, 'atendimento_humano')
+  assert.equal(evt.dados.tentativaEncerrada, tentativaAntiga)
+  semRelatorio(t)
+})
+
+test('mover preserva fase, solução aceita, histórico e o motor — e é idempotente', async () => {
+  let t = await conversaComRascunho(131)
+  // faz a conversa AVANÇAR e ACEITAR, para haver o que preservar
+  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env.status, 200, env.erro ?? '')
+  t = await ticket(t.id)
+  const etapaAntes = t.atendimentoNovo.etapa
+  const historicoAntes = (t.atendimentoNovo.historicoEtapas ?? []).length
+  const motorAntes = t.motorAtendimento
+  assert.ok(etapaAntes, 'há fase confirmada: ' + etapaAntes)
+
+  fila.push({ ...clsPadrao(), intencao: 'aceita', resumo: 'aceita' })
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Ja, gerne.' })
+  t = await ticket(t.id)
+  const aceitaAntes = t.atendimentoNovo.acaoAceita
+  const conclusaoAntes = t.atendimentoNovo.conclusaoPendente?.id ?? null
+
+  const r1 = await mover(t.id)
+  assert.equal(r1.status, 200, r1.erro ?? '')
+  t = await ticket(t.id)
+  const an = t.atendimentoNovo
+  assert.equal(an.etapa, etapaAntes, 'a fase não avança nem retrocede')
+  assert.equal((an.historicoEtapas ?? []).length, historicoAntes, 'o histórico de fases fica igual')
+  assert.equal(t.motorAtendimento, motorAntes, 'o motor da conversa não muda')
+  assert.equal(an.acaoAceita, aceitaAntes, 'a solução aceita é preservada')
+  if (conclusaoAntes) {
+    assert.equal(an.conclusaoPendente.id, conclusaoAntes, 'a conclusão continua existindo')
+    assert.equal(an.conclusaoPendente.status, 'suspensa_humano', 'mas suspensa')
+    assert.equal(an.conclusaoPendente.relatorioAutomaticoProibido, true)
+  }
+  semRelatorio(t)
+
+  // IDEMPOTENTE: segundo clique não duplica evento nem muda mais nada
+  const antesDoSegundo = JSON.stringify(await ticket(t.id))
+  const cAntes = await auditoria(t.id)
+  const r2 = await mover(t.id)
+  assert.equal(r2.status, 200)
+  const cDepois = await auditoria(t.id)
+  assert.equal(cDepois.eventos.length, cAntes.eventos.length, 'nenhum evento novo')
+  assert.equal(JSON.stringify(await ticket(t.id)), antesDoSegundo, 'nada mudou no ticket')
+  // e sem confirmação: exige o confirmar explícito
+  const semConfirmar = await api(`/api/tickets/${t.id}/atendimento-humano`, { motivo: 'x' })
+  assert.equal(semConfirmar.status, 400)
+  assert.match(semConfirmar.erro, /confirmação explícita/)
+})
+
+test('no atendimento humano a IA não regenera, não relê e o autoenvio não atua', async () => {
+  // um teste anterior desligou o envio automático da loja3; aqui ele é religado
+  // de propósito — a prova só vale com a condição que se quer bloquear ligada
+  const liga = await api('/api/lojas', { id: 'loja3', novoEnvioAutomatico: true, confirmar: true })
+  assert.equal(liga.status, 200, liga.erro ?? '')
+  let t = await conversaComRascunho(53, 'loja3')
+  assert.ok(t.enviaEm, 'na loja automática o envio ESTAVA agendado antes de assumir')
+  const r = await mover(t.id)
+  assert.equal(r.status, 200, r.erro ?? '')
+  t = await ticket(t.id)
+  assert.equal(t.enviaEm ?? null, null, 'o agendamento foi cancelado')
+
+  // as rotas da IA recusam
+  for (const [rota, corpo] of [
+    ['regenerar', { instrucao: 'seja mais curto' }],
+    ['novo/confirmar', {}],
+    ['novo/recusar-aceite', {}],
+  ]) {
+    const rr = await api(`/api/tickets/${t.id}/${rota}`, corpo)
+    assert.equal(rr.status, 409, rota + ' tinha de recusar')
+    assert.match(rr.erro, /atendimento humano/)
+  }
+  // aprovar como IA também recusa
+  const comoIA = await api(`/api/tickets/${t.id}/aprovar`, { texto: 'qualquer coisa', origem: 'ia' })
+  assert.equal(comoIA.status, 409)
+
+  // passada a cadência, o agendador continua sem enviar
+  await esperar(4200)
+  t = await ticket(t.id)
+  assert.equal(t.enviaEm ?? null, null)
+  assert.equal(t.resposta ?? null, null, 'nada saiu sozinho')
+  assert.equal(t.status, 'humano', 'continua sua')
+  const c = await auditoria(t.id)
+  assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0)
+})
+
+test('resposta manual sai pela conta da PRÓPRIA loja, sem confirmar fase nem criar relatório', async () => {
+  let t = await conversaComRascunho(132)
+  const rascunhoDaIA = t.rascunho
+  await mover(t.id)
+  t = await ticket(t.id)
+
+  // o rascunho da IA não pode ser reenviado nem por engano
+  const tentaOAntigo = await api(`/api/tickets/${t.id}/aprovar`, { texto: rascunhoDaIA, origem: 'manual' })
+  assert.equal(tentaOAntigo.status, 409, 'o rascunho invalidado não sai')
+  assert.match(tentaOAntigo.erro, /rascunho que a IA tinha escrito/)
+
+  // o texto do DONO sai
+  const meuTexto = 'Guten Tag, ich kümmere mich persönlich darum und melde mich morgen.'
+  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: meuTexto, origem: 'manual' })
+  assert.equal(env.status, 200, env.erro ?? '')
+  t = await ticket(t.id)
+  const an = t.atendimentoNovo
+
+  assert.equal(t.resposta, meuTexto)
+  assert.equal(t.status, 'humano', 'depois de responder, a conversa continua sua')
+  assert.equal(t.atendimentoHumano.ativo, true)
+  // nenhuma fase inventada
+  assert.equal(an.transicaoPendente ?? null, null)
+  assert.equal((an.historicoEtapas ?? []).filter(h => h.evento === 'transicao').length, 0)
+  semRelatorio(t)
+
+  const c = await auditoria(t.id)
+  const enviado = c.eventos.filter(e => e.tipo === 'email_enviado').at(-1)
+  assert.ok(enviado, 'o envio ficou registrado')
+  assert.equal(enviado.dados.origem, 'manual', 'origemEnvio manual')
+  assert.equal(enviado.dados.loja, 'loja1', 'pela conta da própria loja')
+  assert.ok(enviado.dados.mensagemId, 'com Message-ID')
+  assert.equal(enviado.dados.canalConfirmou, true, 'e confirmação do canal')
+  assert.equal(c.eventos.filter(e => e.tipo === 'fase_confirmada').length, 0, 'nenhuma fase confirmada')
+})
+
+test('retomar a IA aguardando a próxima mensagem NÃO processa o rascunho antigo', async () => {
+  let t = await conversaComRascunho(133)
+  const rascunhoDaIA = t.rascunho
+  await mover(t.id)
+  t = await ticket(t.id)
+  const cicloHumano = t.cicloAuditoria
+
+  // exige confirmação e escolha
+  assert.equal((await api(`/api/tickets/${t.id}/retomar-ia`, { modo: 'aguardar' })).status, 400)
+  assert.equal((await api(`/api/tickets/${t.id}/retomar-ia`, { confirmar: true })).status, 400)
+
+  const r = await retomar(t.id, 'aguardar')
+  assert.equal(r.status, 200, r.erro ?? '')
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoHumano ?? null, null, 'saiu do atendimento humano')
+  assert.equal(t.iaPausada, false)
+  assert.equal(t.rascunho ?? null, null, 'o rascunho antigo NÃO voltou')
+  assert.notEqual(t.rascunho, rascunhoDaIA)
+  assert.equal(t.enviaEm ?? null, null, 'nada agendado')
+  assert.equal(t.status, 'inbox', 'esperando o cliente')
+  assert.notEqual(t.cicloAuditoria, cicloHumano, 'ciclo novo')
+
+  const c = await auditoria(t.id)
+  const ret = c.eventos.filter(e => e.tipo === 'ia_retomada').at(-1)
+  assert.ok(ret, 'a retomada ficou registrada')
+  assert.equal(ret.dados.modo, 'aguardar')
+  assert.equal(ret.dados.rascunhoAntigoDescartado, true)
+  assert.ok(ret.dados.periodoHumano.desde, 'o período humano continua no histórico')
+  assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0)
+  semRelatorio(t)
+})
+
+test('retomar a IA relendo a mensagem abre ciclo e tentativa novos, sem reusar o rascunho', async () => {
+  let t = await conversaComRascunho(134)
+  const rascunhoDaIA = t.rascunho
+  await mover(t.id)
+  t = await ticket(t.id)
+  const cicloHumano = t.cicloAuditoria
+
+  fila.push(clsPadrao())
+  const r = await retomar(t.id, 'reclassificar')
+  assert.equal(r.status, 200, r.erro ?? '')
+  t = await ticket(t.id)
+  const c = await auditoria(t.id)
+
+  assert.equal(t.atendimentoHumano ?? null, null)
+  assert.notEqual(c.cicloAtual, cicloHumano, 'ciclo novo')
+  assert.ok(c.tentativaAtual, 'tentativa nova')
+  // o escritor do ensaio é determinístico, então o TEXTO pode sair igual — o que
+  // prova que nada foi reusado é o rascunho ter sido escrito de novo, no ciclo
+  // novo, depois da retomada
+  const gerados = c.eventos.filter(e => e.tipo === 'rascunho_gerado')
+  assert.ok(gerados.length >= 2, 'houve um rascunho novo depois da retomada')
+  assert.equal(gerados.at(-1).dados.cicloId, c.cicloAtual, 'o rascunho novo pertence ao ciclo novo')
+  assert.notEqual(gerados.at(-1).dados.tentativaId, gerados[0].dados.tentativaId, 'tentativa nova')
+  void rascunhoDaIA
+  assert.equal(c.eventos.filter(e => e.tipo === 'ia_retomada').at(-1).dados.modo, 'reclassificar')
+  // o período humano continua visível
+  assert.ok(c.eventos.some(e => e.tipo === 'caso_para_humano' && e.dados?.origem === 'atendimento_humano'))
+  assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0)
+  semRelatorio(t)
+})
+
+test('conversa CLÁSSICA vai e volta do humano sem trocar de motor, e uma loja não afeta a outra', async () => {
+  // clássica (loja2)
+  const rc = await api('/api/simular-email', { de: 'c135@web.de', nome: 'C135', assunto: 'Bestellung #135', corpo: CORPO_PADRAO, lojaId: 'loja2' })
+  let classica = await ticket(rc.ticket.id)
+  assert.equal(classica.motorAtendimento, 'classico')
+  assert.equal((await mover(classica.id)).status, 200)
+  classica = await ticket(classica.id)
+  assert.equal(classica.status, 'humano')
+  assert.equal(classica.atendimentoHumano.ativo, true)
+  assert.equal(classica.motorAtendimento, 'classico', 'continua clássica')
+  assert.equal((await retomar(classica.id, 'aguardar')).status, 200)
+  classica = await ticket(classica.id)
+  assert.equal(classica.motorAtendimento, 'classico', 'e volta clássica')
+  assert.equal(classica.atendimentoHumano ?? null, null)
+
+  // ISOLAMENTO: mover uma conversa da loja1 não toca numa da loja3
+  const daLoja1 = await conversaComRascunho(136, 'loja1')
+  const daLoja3 = await conversaComRascunho(137, 'loja3')
+  const antes3 = JSON.stringify(await ticket(daLoja3.id))
+  assert.equal((await mover(daLoja1.id)).status, 200)
+  const depois3 = await ticket(daLoja3.id)
+  assert.equal(JSON.stringify(depois3), antes3, 'a conversa da outra loja não mudou')
+  assert.equal(depois3.atendimentoHumano ?? null, null)
+  assert.equal((await ticket(daLoja1.id)).atendimentoHumano.ativo, true)
 })
 
 test('os auxiliares de ensaio não alteram o corpo da mensagem do cliente', async () => {

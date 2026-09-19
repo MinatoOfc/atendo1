@@ -50,6 +50,7 @@ estado.lojas = [
 const CENARIOS = {
   qa1: 'loja1', qa2: 'loja2', qa3: 'loja1', qa4: 'loja1', qa5: 'loja1', qa6: 'loja2',
   qa7: 'loja1', qa8: 'loja1', qa9: 'loja1', qa10: 'loja1', qa11: 'loja1', qa12: 'loja1',
+  qa13: 'loja2',
 }
 estado.pedidos = Object.entries(CENARIOS).map(([id, lojaId], i) => ({
   id: 'p-' + id, numero: '#' + (101 + i), cliente: 'Cliente ' + id, email: `${id}@web.de`, pais: 'Germany', valor: 100,
@@ -277,6 +278,58 @@ test('aprovação do dono + queda depois do canal: a prova é reconstruída com 
   // /api/state continua sem expor a auditoria
   assert.equal(t.auditoriaIA, undefined, '/api/state nunca traz auditoriaIA')
   assert.equal(JSON.stringify(st).includes('"auditoriaIA"'), false)
+})
+
+test('conversa assumida pelo dono continua dela depois de reiniciar o servidor', async () => {
+  // A migração de arranque é o risco real: casoSemProvaDeProduto/gerarColetasDeProduto
+  // rodam a CADA boot e já devolviam casos para a fila da IA, reescrevendo status
+  // e motivoEscalada. O teste existe para isso.
+  preparar('qa13', { lojaId: 'loja2', modo: 'automatico', aprovado: false, agendado: true })
+  await matar()
+  filho = (await subir({})).processo
+  await esperar(2500)
+  let cookie = await entrar()
+
+  // o dono assume a conversa
+  const r = await fetch(base + '/api/tickets/qa13/atendimento-humano', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', cookie },
+    body: JSON.stringify({ confirmar: true, motivo: 'assumo eu, reinício de teste' }),
+  })
+  assert.equal(r.status, 200, 'mover para humano: ' + (await r.text()).slice(0, 200))
+  const enviosAntes = envios().length
+
+  let st = await verEstado(cookie)
+  let t = st.tickets.find(x => x.id === 'qa13')
+  assert.equal(t.status, 'humano')
+  assert.equal(t.atendimentoHumano.ativo, true)
+  const marcaAntes = JSON.stringify(t.atendimentoHumano)
+
+  // DOIS reinícios seguidos
+  for (const volta of [1, 2]) {
+    await matar()
+    filho = (await subir({})).processo
+    await esperar(2500)
+    cookie = await entrar()
+    st = await verEstado(cookie)
+    t = st.tickets.find(x => x.id === 'qa13')
+    assert.equal(t.status, 'humano', `volta ${volta}: continua em Atendimento humano`)
+    assert.equal(t.atendimentoHumano?.ativo, true, `volta ${volta}: a marca sobreviveu`)
+    assert.equal(JSON.stringify(t.atendimentoHumano), marcaAntes, `volta ${volta}: quem, quando e por quê intactos`)
+    assert.equal(t.iaPausada, true, `volta ${volta}: a IA continua parada`)
+    assert.equal(t.rascunho ?? null, null, `volta ${volta}: nenhum rascunho foi gerado no arranque`)
+    assert.equal(t.enviaEm ?? null, null, `volta ${volta}: nada reagendado`)
+    assert.equal(t.atendimentoNovo.aguardando, 'humano', `volta ${volta}: aguardando humano`)
+    assert.equal(t.atendimentoNovo.transicaoPendente ?? null, null, `volta ${volta}: sem fase pendente`)
+    assert.equal(envios().length, enviosAntes, `volta ${volta}: nenhum e-mail saiu`)
+  }
+
+  // e o agendador segue rodando sem tocar nela
+  await esperar(6500)
+  st = await verEstado(cookie)
+  t = st.tickets.find(x => x.id === 'qa13')
+  assert.equal(t.status, 'humano', 'o agendador não devolveu a conversa para a IA')
+  assert.equal(envios().length, enviosAntes, 'o agendador não enviou nada')
+  assert.equal(t.relatorioAuto ?? null, null, 'nenhuma linha de relatório')
 })
 
 test('dois reinícios consecutivos depois da reconciliação: nada duplica', async () => {
