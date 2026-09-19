@@ -117,6 +117,42 @@ test('linha do tempo: cliente à esquerda, IA e você à direita, e rascunho NUN
   assert.equal(enviada.atrasoMs, 57 * 60_000)
 })
 
+test('rascunho VALIDADO que espera aprovação é âmbar, nunca vermelho', () => {
+  // o validador aprovou o texto; o que falta é o clique do dono. Vermelho aqui
+  // fazia a Auditoria dizer "Bloqueada" para uma resposta que está só na fila.
+  const t = {
+    id: 'amb', status: 'aprovacao', rascunho: 'Welche der beiden Polohemden meinen Sie?',
+    atendimentoNovo: {
+      tentativaAtual: 'tent-1', transicaoPendente: { para: 'coleta' },
+      aprovacaoObrigatoria: 'releitura da mensagem depois de uma correção — aprovação humana obrigatória',
+    },
+    auditoriaIA: [ev('rascunho_validado', { resumo: 'validado', situacao: 'ok', dados: { tentativaId: 'tent-1', enviado: false } })],
+    historico: [],
+  }
+  const m = linhaDoTempo(t).find(x => x.chave === 'rascunho')
+  assert.equal(m.situacao, 'aguardando_aprovacao')
+  assert.equal(m.naoEnviado, true)
+  assert.match(m.motivo, /aprovação humana obrigatória/)
+
+  // envio automático desligado no piloto também é espera, não proibição
+  const piloto = { ...t, atendimentoNovo: { tentativaAtual: 'tent-1', transicaoPendente: { para: 'coleta' }, envioBloqueado: 'envio automático bloqueado durante o piloto' } }
+  assert.equal(linhaDoTempo(piloto).find(x => x.chave === 'rascunho').situacao, 'aguardando_aprovacao')
+
+  // e uma tentativa que FOI recusada e depois validada de novo não fica vermelha
+  const recuperado = {
+    ...t,
+    auditoriaIA: [
+      ev('rascunho_bloqueado', { resumo: 'cupom não conferido', situacao: 'bloqueado', dados: { tentativaId: 'tent-1' } }),
+      ev('rascunho_validado', { resumo: 'validado', situacao: 'ok', dados: { tentativaId: 'tent-1', enviado: false } }),
+    ],
+  }
+  assert.equal(linhaDoTempo(recuperado).find(x => x.chave === 'rascunho').situacao, 'aguardando_aprovacao')
+
+  // agendado continua agendado
+  const agendado = { ...t, enviaEm: Date.parse('2026-09-19T12:00:00.000Z') }
+  assert.equal(linhaDoTempo(agendado).find(x => x.chave === 'rascunho').situacao, 'agendada')
+})
+
 test('rascunho bloqueado aparece como bloqueado, com o motivo, e nunca como enviado', () => {
   const t = {
     id: 't2', status: 'humano', rascunho: 'Texto que não saiu',

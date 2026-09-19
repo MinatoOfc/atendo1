@@ -26,6 +26,8 @@ const SITUACAO_MENSAGEM: Record<string, { rotulo: string; cor: string }> = {
   enviada: { rotulo: 'Enviada', cor: 'var(--green, #3fb950)' },
   agendada: { rotulo: 'Agendada', cor: 'var(--blue, #388bfd)' },
   rascunho: { rotulo: 'Rascunho — não enviado', cor: 'var(--amber, #d29922)' },
+  // âmbar: passou pelo validador e espera você. Vermelho é só proibição real.
+  aguardando_aprovacao: { rotulo: 'Aguardando aprovação — não enviado', cor: 'var(--amber, #d29922)' },
   bloqueada: { rotulo: 'Bloqueada — não enviada ao cliente', cor: 'var(--red, #f85149)' },
   falha: { rotulo: 'Falha no envio — não chegou ao cliente', cor: 'var(--red, #f85149)' },
 }

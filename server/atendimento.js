@@ -89,7 +89,7 @@ export const FASES = {
     oferta: { tipo: 'reenvio', pct: null, cupom: 15, prazo: '4 a 11 dias', semDevolucao: true },
     requer: ['produtos'],
     aoAceitar: 'endereco', aoRecusar: 'qual_cupom_35',
-    instrucao: 'Peça desculpas pelo erro e ofereça o envio GRATUITO do produto correto, sem necessidade de devolver o que recebeu, com frete expresso de 4 a 11 dias, mais um cupom de 15% como pedido de desculpas (informe o código). Pergunte se aceita.',
+    instrucao: 'Peça desculpas pelo erro e ofereça o envio GRATUITO do produto correto, sem necessidade de devolver o que recebeu, com frete expresso de 4 a 11 dias, mais um cupom de 15% como pedido de desculpas. Pergunte se aceita.',
   },
 
   /* ---- defeito (3.3) ---- */
@@ -113,14 +113,14 @@ export const FASES = {
     oferta: { tipo: 'troca', pct: null, cupom: 15, prazo: '4 a 11 dias', semDevolucao: true },
     requer: ['produtos', 'motivo'],
     aoAceitar: 'endereco', aoRecusar: 'qual_cupom_35',
-    instrucao: 'Lamente que o produto não agradou e ofereça GRATUITAMENTE outra cor, tamanho, modelo ou versão que atenda melhor, sem devolver a primeira remessa, com frete expresso de 4 a 11 dias, mais um cupom de 15% (informe o código). Pergunte qual opção prefere.',
+    instrucao: 'Lamente que o produto não agradou e ofereça GRATUITAMENTE outra cor, tamanho, modelo ou versão que atenda melhor, sem devolver a primeira remessa, com frete expresso de 4 a 11 dias, mais um cupom de 15%. Pergunte qual opção prefere.',
   },
   qual_cupom_35: {
     jornada: 'qualidade', titulo: 'Cupom de 35% ficando com o produto',
     oferta: { tipo: 'cupom', pct: null, cupom: 35, prazo: null, semDevolucao: true },
     requer: ['produtos'],
     aoAceitar: 'humano', aoRecusar: 'reemb_25',
-    instrucao: 'Ofereça um cupom de 35% válido para qualquer pedido (informe o código), e o cliente FICA com o produto. Pergunte se aceita.',
+    instrucao: 'Ofereça um cupom de 35% válido para qualquer pedido, e o cliente FICA com o produto. Pergunte se aceita.',
   },
 
   /* ---- escada de reembolso (5) ---- */
@@ -178,14 +178,14 @@ export const FASES = {
     oferta: { tipo: 'cupom', pct: null, cupom: 25, prazo: null, semDevolucao: false },
     requer: [],
     aoAceitar: 'humano', aoRecusar: 'nc_cupom_40',
-    instrucao: 'Peça desculpas com cuidado. Explique que a transportadora teve atrasos logísticos e que a loja NÃO deixará o cliente no prejuízo. Peça que aguarde no máximo mais cinco dias úteis, conforme informação da transportadora, e ofereça um cupom de 25% como pedido de desculpas (informe o código). Pergunte se aceita aguardar.',
+    instrucao: 'Peça desculpas com cuidado. Explique que a transportadora teve atrasos logísticos e que a loja NÃO deixará o cliente no prejuízo. Peça que aguarde no máximo mais cinco dias úteis, conforme informação da transportadora, e ofereça um cupom de 25% como pedido de desculpas. Pergunte se aceita aguardar.',
   },
   nc_cupom_40: {
     jornada: 'nao_recebido', titulo: 'Cupom de 40% para aguardar mais um pouco',
     oferta: { tipo: 'cupom', pct: null, cupom: 40, prazo: null, semDevolucao: false },
     requer: [],
     aoAceitar: 'humano', aoRecusar: 'reemb_100',
-    instrucao: 'Entenda a frustração e ofereça um cupom de 40% para a próxima compra (informe o código) como compensação por aguardar mais um pouco. Pergunte se aceita.',
+    instrucao: 'Entenda a frustração e ofereça um cupom de 40% para a próxima compra como compensação por aguardar mais um pouco. Pergunte se aceita.',
   },
 
   /* ---- chegou pedindo reembolso por não recebido (7) ---- */
@@ -194,7 +194,7 @@ export const FASES = {
     oferta: { tipo: 'reenvio', pct: null, cupom: 30, prazo: '4 a 11 dias', semDevolucao: false },
     requer: [],
     aoAceitar: 'endereco', aoRecusar: 'nr_reenvio_20',
-    instrucao: 'Informe que o reembolso só poderá ser efetuado quando o pedido retornar às instalações, e que esse retorno pode demorar mais de 17 dias por ser mais lento que a entrega. Como solução rápida, ofereça o REENVIO com frete expresso de 4 a 11 dias mais um cupom de 30% para a próxima compra (informe o código). Pergunte se aceita.',
+    instrucao: 'Informe que o reembolso só poderá ser efetuado quando o pedido retornar às instalações, e que esse retorno pode demorar mais de 17 dias por ser mais lento que a entrega. Como solução rápida, ofereça o REENVIO com frete expresso de 4 a 11 dias mais um cupom de 30% para a próxima compra. Pergunte se aceita.',
   },
   nr_entregue_aguardar: {
     jornada: 'nao_recebido', titulo: 'Marcado como entregue — aguardar 2 dias',
@@ -394,22 +394,25 @@ const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ
 export function casarProdutos(citados, pedido) {
   const itens = pedido?.itens ?? []
   const achados = []
+  const rotuloDe = i => `${i.titulo}${i.variante ? ` (${i.variante})` : ''}`
   for (const c of citados ?? []) {
     const n = norm(c)
     if (!n) continue
-    const item = itens.find(i => {
-      const t = norm(`${i.titulo} ${i.variante ?? ''}`)
-      return t === n || t.includes(n) || n.includes(norm(i.titulo))
-    })
+    // do mais específico ao mais frouxo. O casamento só pelo título é o último
+    // recurso E pula itens já casados: num pedido com três "Poloshirt" que só
+    // diferem na variante, sem isso as três citações caíam todas no primeiro.
+    const item = itens.find(i => norm(rotuloDe(i)) === n)
+      ?? itens.find(i => { const t = norm(`${i.titulo} ${i.variante ?? ''}`); return t === n || t.includes(n) })
+      ?? itens.find(i => !achados.includes(rotuloDe(i)) && n.includes(norm(i.titulo)))
     if (!item) continue // "o CLIENTE tem que informar quais produtos": só vale o que casa com um item real do pedido
-    const rotulo = `${item.titulo}${item.variante ? ` (${item.variante})` : ''}`
+    const rotulo = rotuloDe(item)
     if (!achados.includes(rotulo)) achados.push(rotulo)
   }
   return achados
 }
 
 /** Rótulos de todos os itens do pedido (para preencher sozinho quando só há um). */
-const rotulosDoPedido = pedido => (pedido?.itens ?? []).map(i => `${i.titulo}${i.variante ? ` (${i.variante})` : ''}`)
+export const rotulosDoPedido = pedido => (pedido?.itens ?? []).map(i => `${i.titulo}${i.variante ? ` (${i.variante})` : ''}`)
 
 /** Primeira OFERTA de cada fluxo. As fases de coleta (perguntar pequeno/grande,
  *  pedir foto, pedir produtos) entram sozinhas quando falta o dado exigido. */
@@ -1032,7 +1035,9 @@ export function promptClassificar({ loja, an, pedido, ticket, agora = Date.now()
     `- informa: só traz dados pedidos (produto, tamanho, foto, endereço) ou responde a uma pergunta da loja.`,
     `- pergunta_status: só quer saber onde está o pedido / quando chega.`,
     `- agradece: agradece ou confirma que está tudo certo, sem pedir nada.`,
-    `- outro: não se encaixa (dúvida de produto antes de comprar, nota fiscal, etc.).`,
+    `- outro: não se encaixa (dúvida de produto antes de comprar, nota fiscal, etc.) — inclusive a reclamação que só xinga o produto sem pedir nada.`,
+    ``,
+    `"evidenciaIntencao": o trecho LITERAL da mensagem nova que prova a intenção, copiado exatamente como está lá. Obrigatório para aceita, recusa, pede_troca, pede_reembolso e pede_cancelamento; string vazia nas outras. RECLAMAR NÃO É PEDIR: "que porcaria é essa", "isso é uma piada", "ninguém consegue vestir" mostram insatisfação, não um pedido de troca nem de reembolso — nesse caso use "outro" e deixe o motivo ("qualidade", "defeito"…) dizer o que houve. O servidor confere se o trecho existe na mensagem nova e se ele realmente diz aquilo; sem isso a intenção vira "outro".`,
     ``,
     `"motivo": o motivo que o CLIENTE alegou — tamanho, qualidade, nao_gostou, defeito, errado, nao_recebido, nao_informado (quando pede reembolso/devolução sem dizer por quê) ou nenhum. Nunca invente.`,
     `"produtos": os itens do pedido que o cliente citou, com o nome como aparece na lista acima (lista vazia se não citou).`,
@@ -1136,7 +1141,14 @@ export function promptEscrever({ loja, config: configBruta, faseId, faltando = [
   }
   if (faseId === 'nc_atrasado_25') dados.push('Peça que aguarde no máximo mais 5 dias úteis (diga "5 dias úteis").')
   if (conf && an.enderecoConfirmado) dados.push('Repita o endereço de entrega confirmado EXATAMENTE como está acima.')
-  if (cupom.precisa) dados.push('Diga que é um CUPOM (Gutschein / coupon / código de desconto), com o código e o percentual.')
+  // o código só entra na CONFIRMAÇÃO. Esta linha pedia "com o código" em toda
+  // fase com cupom — inclusive na oferta, onde o validador (corretamente) recusa
+  // qualquer código. Era o prompt brigando com a trava e travando a etapa.
+  if (cupom.precisa) {
+    dados.push(conf
+      ? 'Diga que é um CUPOM (Gutschein / coupon / código de desconto), com o código e o percentual.'
+      : 'Diga que é um CUPOM (Gutschein / coupon / código de desconto) e informe o percentual. NÃO escreva o código: ele só é entregue na confirmação, depois do aceite.')
+  }
 
   const system = [
     `Você é o atendimento ao cliente da loja "${loja?.nome ?? config?.nomeLoja ?? 'loja'}", um e-commerce de roupas.`,
@@ -1309,6 +1321,64 @@ const RE_PALAVRAS = {
   prazo: /prazo|frist|lieferzeit|zeitraum|zeitfenster|delivery (?:time|window|period)|d[ée]lai|plazo|termine|levertijd|levertermijn|binnen de|op tijd|within|innerhalb|dentro d[oe]|on time|p[üu]nktlich|im rahmen/i,
   vizinhos: /vizinh|nachbar|neighbo|voisin|vecin|vicin|\bburen\b|buurman|buurvrouw|portaria|hausmeister|concierge|conci[eë]rge|reception|receptie|rezeption|portier|porteir|conserje|portineria|lobby|mailroom|poststelle/i,
 }
+/**
+ * A COLETA PERGUNTA — e o validador precisa reconhecer a pergunta, não uma
+ * palavra de uma lista curta. Dois rascunhos reais foram bloqueados dizendo
+ * "falta pedir quais produtos estão envolvidos" justamente enquanto perguntavam
+ * isso, com todas as letras:
+ *
+ *   "Welche Produkte aus Ihrer Bestellung möchten Sie zurückgeben?"   (#2906)
+ *   "Welche der drei Poloshirts ... sind betroffen — das Bleu Nuit?"  (#2567)
+ *
+ * A primeira caiu por falta de vocabulário: a lista tinha "product" (com C) e
+ * "artikel", e o alemão escreve "Produkt" com K. A segunda caiu por um motivo
+ * mais fundo: ela identifica as peças pelos NOMES REAIS DO PEDIDO, e o
+ * validador nunca olhava o pedido — embora o mesmo prompt que gera o texto
+ * mande a IA usar "o nome como aparece na lista" de itens.
+ *
+ * A conferência passou a ser semântica e conservadora: exige as DUAS coisas.
+ */
+
+/** (a) referência a produto: palavra genérica nos sete idiomas. */
+const RE_PRODUTO_GENERICO = /produkt|artikel|artikeln|\bware\b|\bwaren\b|st[uü]ck|product|producto|produit|prodott|articol|articul|article|goods|goederen|merce|mercadoria|mercanc|produto|artigo|\bitem/i
+
+/**
+ * (b) pedido para o cliente DIZER QUAIS: interrogativo ("welche", "quais"),
+ * verbo de afetação ("betrifft", "sind betroffen", "concerne") ou pedido
+ * explícito de identificação ("nennen Sie", "informe", "let us know").
+ */
+const RE_QUAIS = /welche[rsnm]?\b|betrifft|betroffen|handelt es sich|nennen sie|teilen sie|sagen sie mir|welke?\b|betreft|laat.{0,20}weten|noem\b|quel(?:le)?s?\b|concerne|indiquez|pr[ée]cisez|dites-?nous|qual(?:e|i)?\b|quais\b|riguard|indichi|specific|indique|informe|diga\b|refere|cu[áa]l(?:es)?\b|qu[ée] (?:producto|art[íi]culo)|se refiere|which\b|what (?:item|product)|affected|concern|let us know|tell us|\bspecify/i
+
+/** Pedido explícito de identificação (vale como "pergunta" mesmo sem "?"). */
+const RE_PEDIDO_EXPLICITO = /nennen sie|teilen sie|sagen sie mir|laat.{0,20}weten|noem\b|indiquez|pr[ée]cisez|dites-?nous|indichi|indique|informe|diga\b|let us know|tell us|\bspecify|especifique|specificare/i
+
+/**
+ * Nomes dos itens DO PEDIDO citados no texto. Casamento por rótulo inteiro
+ * (título e cada parte da variante), nunca por tokens soltos: com tokens, um
+ * pedido chamado "Polo Premium" faria a palavra "polo" liberar qualquer texto.
+ */
+function citaItemDoPedido(s, pedido) {
+  const alvo = semAcento(s)
+  const partes = []
+  for (const i of pedido?.itens ?? []) {
+    if (i?.titulo) partes.push(i.titulo)
+    for (const v of String(i?.variante ?? '').split('/')) partes.push(v)
+  }
+  return partes
+    .map(p => semAcento(p).replace(/\s+/g, ' ').trim())
+    .filter(p => p.length >= 4)
+    .some(p => alvo.includes(p))
+}
+
+/** A resposta PERGUNTA quais produtos estão envolvidos? */
+function pedeQuaisProdutos(s, pedido) {
+  const referencia = RE_PRODUTO_GENERICO.test(s) || citaItemDoPedido(s, pedido)
+  if (!referencia) return false
+  if (!RE_QUAIS.test(s)) return false
+  // conservador: ou é pergunta de verdade, ou é um pedido explícito de identificação
+  return /\?/.test(s) || RE_PEDIDO_EXPLICITO.test(s)
+}
+
 const NOMES_FALTA = {
   pedido: 'o número do pedido', produtos: 'quais produtos estão envolvidos', motivo: 'o motivo', ajuste: 'se ficou pequeno ou grande',
   end_rua: 'rua e número', end_cep: 'código postal', end_cidade: 'cidade', foto_melhor: 'outra foto',
@@ -1401,6 +1471,8 @@ function exigenciasSemOferta(faseId, s, { an, pedido, loja, faltando }) {
       if (!faltando?.length) return tem(/\?/) ? null : 'a coleta tem de PERGUNTAR o que falta'
       for (const f of faltando) {
         if (f === 'ajuste') { if (!tem(RE_PALAVRAS.pequeno) || !tem(RE_PALAVRAS.grande)) return 'falta perguntar se ficou pequeno ou grande'; continue }
+        // produto tem conferência própria: semântica, e olhando o pedido
+        if (f === 'produtos') { if (!pedeQuaisProdutos(s, pedido)) return `falta pedir ${NOMES_FALTA.produtos}`; continue }
         const re = RE_PALAVRAS[f === 'foto_melhor' ? 'foto' : f]
         if (re && !tem(re)) return `falta pedir ${NOMES_FALTA[f] ?? f}`
       }

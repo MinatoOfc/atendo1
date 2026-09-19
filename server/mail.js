@@ -301,6 +301,11 @@ export function criarConta(id, cfg, sufixo = '') {
           assunto: parsed.subject || '(sem assunto)',
           corpo: (parsed.text || '').trim().slice(0, 8000),
           data: (parsed.date || new Date()).toISOString(),
+          // ENCADEAMENTO REAL: é o que prova que esta mensagem continua uma
+          // conversa antiga. O assunto pode ser reescrito pelo cliente; o
+          // In-Reply-To não.
+          inReplyTo: parsed.inReplyTo || null,
+          references: [].concat(parsed.references ?? []).filter(Boolean),
           anexos: extrairImagens(parsed),
         })
         await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true }).catch(() => {})
@@ -351,6 +356,8 @@ export function criarConta(id, cfg, sufixo = '') {
           assunto: parsed.subject || '(sem assunto)',
           corpo: (parsed.text || '').trim().slice(0, 8000),
           data: (parsed.date || new Date()).toISOString(),
+          inReplyTo: parsed.inReplyTo || null,
+          references: [].concat(parsed.references ?? []).filter(Boolean),
         })
         if (aoProgresso) aoProgresso(todos.length)
       }

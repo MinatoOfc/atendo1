@@ -166,8 +166,14 @@ const ORIGENS = { cliente: 'Cliente', ia: 'IA', manual: 'Você' }
 
 /**
  * Mensagens da conversa em ordem cronológica, cada uma com a situação real:
- * enviada, agendada, rascunho, bloqueada ou falha. Um rascunho NUNCA aparece
- * como enviado.
+ * enviada, agendada, rascunho, aguardando_aprovacao, bloqueada ou falha. Um
+ * rascunho NUNCA aparece como enviado.
+ *
+ * VERMELHO SÓ PARA PROIBIÇÃO REAL. Um texto que passou pelo validador e está
+ * esperando o dono clicar é âmbar ("Aguardando aprovação"), não vermelho: quem
+ * decide a cor é o que o validador disse na tentativa atual, não um campo de
+ * configuração. Bloqueada fica para o rascunho RECUSADO (cupom inválido, fase
+ * errada, idioma errado) e falha para o envio que não chegou.
  */
 export function linhaDoTempo(t, { eventos = null } = {}) {
   const aud = Array.isArray(eventos) ? eventos : (t?.auditoriaIA ?? [])
@@ -212,10 +218,18 @@ export function linhaDoTempo(t, { eventos = null } = {}) {
     })
   }
 
-  // rascunho ainda não enviado: agendado, bloqueado ou esperando aprovação
+  // rascunho ainda não enviado: agendado, aguardando aprovação ou recusado
   if (texto(t?.rascunho)) {
-    const bloqueado = !!(an?.envioBloqueado || an?.aprovacaoObrigatoria) || t?.status === 'humano'
+    // a cor vem do VALIDADOR, na tentativa atual: validou = pode esperar
+    // aprovação (âmbar); recusou e não validou depois = proibição (vermelho)
+    const tent = an?.tentativaAtual ?? null
+    const daTentativa = e => !tent || (e.dados?.tentativaId ?? null) === tent
+    const validado = aud.some(e => e.tipo === 'rascunho_validado' && daTentativa(e))
+    const recusado = aud.some(e => e.tipo === 'rascunho_bloqueado' && daTentativa(e))
+    const bloqueado = recusado && !validado
     const agendado = !!t?.enviaEm && !bloqueado
+    // esperando o dono: fase pendente, aprovação obrigatória ou envio não liberado
+    const esperandoDono = !!(an?.transicaoPendente?.para || an?.aprovacaoObrigatoria || an?.envioBloqueado)
     const minimo = an?.proximoEnvioMinimo ?? (t?.enviaEm ? new Date(t.enviaEm).toISOString() : null)
     mensagens.push({
       chave: 'rascunho',
@@ -226,7 +240,7 @@ export function linhaDoTempo(t, { eventos = null } = {}) {
       em: null,
       idioma: an?.rascunhoIdioma ?? null,
       fase: an?.transicaoPendente?.para ?? null,
-      situacao: bloqueado ? 'bloqueada' : agendado ? 'agendada' : 'rascunho',
+      situacao: bloqueado ? 'bloqueada' : agendado ? 'agendada' : esperandoDono ? 'aguardando_aprovacao' : 'rascunho',
       motivo: texto(an?.envioBloqueado) ?? texto(an?.aprovacaoObrigatoria) ?? texto(t?.motivoEscalada),
       minimoEnvio: minimo, envioReal: null, atrasoMs: null,
       naoEnviado: true,

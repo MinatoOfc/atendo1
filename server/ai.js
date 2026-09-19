@@ -582,9 +582,13 @@ export async function inferirFasesHistoricas(casos, catalogo) {
 const SCHEMA_CLASSIFICACAO_NOVO = {
   type: 'object',
   additionalProperties: false,
-  required: ['intencao', 'motivo', 'produtos', 'ajustes', 'situacaoEntrega', 'evidenciaEntrega', 'endereco', 'resumo', 'idioma', 'idiomaConfiavel', 'spam'],
+  required: ['intencao', 'evidenciaIntencao', 'motivo', 'produtos', 'ajustes', 'situacaoEntrega', 'evidenciaEntrega', 'endereco', 'resumo', 'idioma', 'idiomaConfiavel', 'spam'],
   properties: {
     intencao: { type: 'string', enum: ['aceita', 'recusa', 'pede_reembolso', 'pede_cancelamento', 'pede_troca', 'informa', 'pergunta_status', 'agradece', 'outro'] },
+    // trecho LITERAL da mensagem nova que prova a intenção de AÇÃO (pedir troca,
+    // reembolso ou cancelamento, aceitar ou recusar). Vazio nas outras intenções.
+    // O servidor confere; sem prova, a intenção vira "outro".
+    evidenciaIntencao: { type: 'string' },
     motivo: { type: 'string', enum: ['tamanho', 'qualidade', 'nao_gostou', 'defeito', 'errado', 'nao_recebido', 'nao_informado', 'nenhum'] },
     produtos: { type: 'array', items: { type: 'string' } },
     ajustes: {
@@ -644,6 +648,7 @@ export async function classificarNovo(system, user) {
         motivo: r.motivo === 'nenhum' ? null : r.motivo,
         situacaoEntrega: r.situacaoEntrega === 'nenhuma' ? null : r.situacaoEntrega,
         evidenciaEntrega: String(r.evidenciaEntrega || '').trim(),
+        evidenciaIntencao: String(r.evidenciaIntencao || '').trim(),
         endereco: String(r.endereco || '').trim() || null,
         produtos: Array.isArray(r.produtos) ? r.produtos : [],
         ajustes: Array.isArray(r.ajustes) ? r.ajustes : [],

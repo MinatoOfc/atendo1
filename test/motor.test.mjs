@@ -22,6 +22,187 @@ function rodada(an, cls, extra = {}) {
 }
 const trilha = r => r.an.historicoEtapas.map(h => h.para).join(' → ')
 
+// pedido de TRÊS polos, como os casos reais #2906 e #2567: a IA identifica as
+// peças pelos nomes do próprio pedido, e o validador precisa reconhecer isso
+const pedidoTresPolos = {
+  numero: '#2906', valor: 180, status: 'entregue', criadoEm: '2026-09-10', despachadoEm: '2026-09-11',
+  itens: [
+    { titulo: 'Poloshirt', variante: 'Bleu Nuit / L', quantidade: 1, preco: 60 },
+    { titulo: 'Poloshirt', variante: 'Noir Espresso / L', quantidade: 1, preco: 60 },
+    { titulo: 'Poloshirt', variante: 'Bleu Côtier / L', quantidade: 1, preco: 60 },
+  ],
+}
+
+test('coleta: a PERGUNTA sobre quais produtos é reconhecida — as duas frases reais bloqueadas por engano', () => {
+  const coleta = (txt, pedido = pedidoTresPolos) =>
+    conferirTextoDaFase('coleta', txt, loja, novoEstado(), pedido, { faltando: ['produtos'] })
+  const passa = (txt, nota, pedido) => {
+    const v = coleta(txt, pedido)
+    assert.equal(v.ok, true, `${nota}: tinha de passar — ${v.motivo}`)
+  }
+  const bloqueia = (txt, nota, pedido) => {
+    const v = coleta(txt, pedido)
+    assert.equal(v.ok, false, `${nota}: tinha de bloquear`)
+    assert.match(v.motivo, /quais produtos/)
+  }
+
+  /* ---- as DUAS frases reais que foram bloqueadas em produção ---- */
+  // #2906: caiu por lacuna de vocabulário — a lista tinha "product" (com C) e
+  // "artikel", e o alemão escreve "Produkt" com K
+  passa('Welche Produkte aus Ihrer Bestellung möchten Sie zurückgeben? Betrifft dies alle drei Poloshirts (Bleu Nuit, Noir Espresso, Bleu Côtier) oder nur einzelne davon?', 'frase real #2906')
+  // #2567: caiu por um motivo mais fundo — identifica as peças pelos nomes do
+  // PRÓPRIO PEDIDO, e o validador nunca olhava o pedido
+  passa('Welche der drei Poloshirts aus deiner Bestellung #2567 sind betroffen — das Bleu Nuit, das Noir Espresso oder das Bleu Côtier?', 'frase real #2567')
+
+  /* ---- as sete construções alemãs exigidas ---- */
+  for (const [nota, txt] of [
+    ['Welche Produkte', 'Welche Produkte aus Ihrer Bestellung sind betroffen?'],
+    ['Welches Produkt', 'Welches Produkt ist betroffen?'],
+    ['Um welche Produkte', 'Um welche Produkte geht es?'],
+    ['Welche Artikel', 'Welche Artikel sind betroffen?'],
+    ['Betrifft dies alle', 'Betrifft dies alle Produkte oder nur einzelne?'],
+    ['Betrifft das alle drei', 'Betrifft das alle drei Poloshirts?'],
+    ['Welche Ware', 'Welche Ware möchten Sie zurückgeben?'],
+    ['pedido explícito sem "?"', 'Bitte nennen Sie uns die betroffenen Artikel.'],
+  ]) passa(txt, 'alemão — ' + nota)
+
+  /* ---- os outros seis idiomas ---- */
+  for (const [idioma, txt] of Object.entries({
+    holandês: 'Welke producten uit uw bestelling zijn betroffen?',
+    francês: 'Quels articles de votre commande sont concernés ?',
+    italiano: 'Quali prodotti del suo ordine sono interessati?',
+    espanhol: '¿Cuáles productos de su pedido están afectados?',
+    inglês: 'Which items from your order are affected?',
+    português: 'Quais produtos do seu pedido estão envolvidos?',
+  })) passa(txt, idioma)
+
+  /* ---- negativos: não perguntam o produto ---- */
+  for (const [nota, txt] of [
+    ['afirma sem perguntar', 'Wir prüfen Ihre Produkte und melden uns bald.'],
+    ['pergunta outra coisa', 'Welche Lieferadresse sollen wir verwenden?'],
+    ['só agradece', 'Vielen Dank für Ihre Nachricht!'],
+    ['pergunta vaga', 'Können Sie uns mehr darüber erzählen?'],
+    ['produto sem pergunta', 'Ihr Artikel wird bearbeitet.'],
+  ]) bloqueia(txt, nota)
+
+  // sem pedido localizado, nomear as peças não basta: aí só a palavra genérica vale
+  bloqueia('Welche der drei Poloshirts sind betroffen?', 'nomes do pedido sem pedido localizado', null)
+  passa('Welche Produkte sind betroffen?', 'palavra genérica sem pedido', null)
+})
+
+/* ---- catálogo REAL das fases com cupom (nada escrito à mão) ---- */
+const FASES_COM_CUPOM = Object.keys(FASES).filter(id => FASES[id].oferta?.cupom && FASES[id].confirmacao !== true)
+const CODIGOS_LOJA = Object.values(loja.cupons)
+const prazoEmAlemao = o => {
+  const m = String(o.prazo ?? '').match(/(\d+)\s*a\s*(\d+)/)
+  return m ? `${m[1]} bis ${m[2]} Tage` : '4 bis 11 Tage'
+}
+// texto de NEGOCIAÇÃO montado a partir da própria oferta da fase
+const textoNegociacao = (faseId, codigo = null) => {
+  const o = FASES[faseId].oferta
+  const p = ['Hallo!']
+  if (/troca/.test(o.tipo)) p.push('Wir bieten Ihnen einen kostenlosen Umtausch an.')
+  if (/reenvio/.test(o.tipo)) p.push('Wir senden das Paket erneut.')
+  if (/reembolso/.test(o.tipo)) p.push('Wir bieten eine Rückerstattung an.')
+  if (o.tipo === 'cancelamento') p.push('Die Bestellung wird storniert.')
+  if (o.cupom) p.push(`Dazu ein Gutschein${codigo ? ' ' + codigo : ''} über ${o.cupom}%.`)
+  if (o.prazo) p.push(`Lieferzeit ${prazoEmAlemao(o)}.`)
+  if (faseId === 'nc_atrasado_25') p.push('Bitte warten Sie maximal 5 Werktage.')
+  p.push('Möchten Sie das annehmen?')
+  return p.join(' ')
+}
+const ENDERECO_CONF = 'Hauptstraße 5, 10115 Berlin'
+// texto de CONFIRMAÇÃO da opção aceita
+const textoConfirmacao = (faseAceita, codigo, pctCupom = null) => {
+  const o = FASES[faseAceita].oferta
+  const pct = pctCupom ?? o.cupom
+  const p = ['Hallo!']
+  if (/troca/.test(o.tipo)) p.push('Ihr Umtausch ist bestätigt.')
+  if (/reenvio/.test(o.tipo)) p.push('Wir senden das Paket erneut.')
+  if (/reembolso/.test(o.tipo)) p.push('Die Rückerstattung wurde veranlasst.')
+  if (o.tipo === 'cancelamento') p.push('Die Bestellung wurde storniert.')
+  if (o.cupom) p.push(`Ihr Gutschein${codigo ? ' ' + codigo : ''} über ${pct}% gilt für jede Bestellung.`)
+  if (faseDeConfirmacao(faseAceita) === 'conf_troca') {
+    p.push(`Lieferzeit ${prazoEmAlemao(o)}.`)
+    p.push(`Lieferadresse: ${ENDERECO_CONF}.`)
+  }
+  return p.join(' ')
+}
+
+test('cupom: em TODA fase real com cupom, o código só existe depois do aceite', () => {
+  // o catálogo manda; nada de id escrito à mão nem de "pula se não existir"
+  assert.deepEqual(FASES_COM_CUPOM, ['err_envio', 'qual_troca', 'qual_cupom_35', 'nc_atrasado_25', 'nc_cupom_40', 'nr_reenvio_30'],
+    'as fases reais com cupom mudaram — o teste tem de acompanhar o mapa')
+
+  for (const faseId of FASES_COM_CUPOM) {
+    const pct = FASES[faseId].oferta.cupom
+    const codigo = loja.cupons[String(pct)]
+    const outro = CODIGOS_LOJA.find(c => c !== codigo)
+    const an = { ...novoEstado(), produtosAfetados: ['Polo Premium'], produtosInformados: true }
+    const conferir = txt => conferirTextoDaFase(faseId, txt, loja, an, pedido1, { faltando: [] })
+
+    /* ---- o PROMPT da negociação ---- */
+    const p = promptEscrever({ loja, config: {}, faseId, faltando: [], an, pedido: pedido1, ticket: { corpo: 'x' }, idiomaAlvo: 'de' })
+    for (const c of CODIGOS_LOJA) {
+      assert.ok(!p.system.includes(c), `${faseId}: o código ${c} não pode chegar ao prompt da negociação`)
+    }
+    assert.match(p.system, new RegExp(`\\b${pct}\\s?%`), `${faseId}: o percentual do cupom tem de estar no prompt`)
+    assert.doesNotMatch(p.system, /informe o código|repita o código|Use EXATAMENTE este código/i,
+      `${faseId}: nenhuma instrução pode mandar informar, repetir ou usar o código`)
+    assert.match(p.system, /NÃO escreva o código|NÃO escreva nenhum código|PROIBIDO escrever qualquer código/,
+      `${faseId}: falta a proibição explícita do código`)
+
+    /* ---- o VALIDADOR ---- */
+    const bom = textoNegociacao(faseId)
+    const vBom = conferir(bom)
+    assert.equal(vBom.ok, true, `${faseId}: a oferta sem código tinha de passar — ${vBom.motivo}`)
+    assert.match(bom, new RegExp(`${pct}\\s?%`), `${faseId}: a oferta informa o percentual`)
+    for (const [nome, cod] of [['o código certo', codigo], ['um código inventado', 'FREE99'], ['o código de outra fase', outro]]) {
+      const v = conferir(textoNegociacao(faseId, cod))
+      assert.equal(v.ok, false, `${faseId}: ${nome} (${cod}) tinha de ser bloqueado`)
+      assert.match(v.motivo, /não pode aparecer antes de o cliente aceitar|não está cadastrado|não pertence à etapa/,
+        `${faseId}: motivo estranho para ${nome} — ${v.motivo}`)
+    }
+  }
+})
+
+test('cupom: em TODA confirmação alcançável, o código certo é obrigatório', () => {
+  const alcancaveis = new Set(FASES_COM_CUPOM.map(faseDeConfirmacao))
+  assert.ok(alcancaveis.size >= 2, 'as confirmações alcançáveis: ' + [...alcancaveis].join(', '))
+
+  for (const faseAceita of FASES_COM_CUPOM) {
+    const conf = faseDeConfirmacao(faseAceita)
+    const pct = FASES[faseAceita].oferta.cupom
+    const codigo = loja.cupons[String(pct)]
+    const outro = CODIGOS_LOJA.find(c => c !== codigo)
+    const an = { ...novoEstado(), produtosAfetados: ['Polo Premium'], produtosInformados: true, acaoAceita: faseAceita, enderecoConfirmado: ENDERECO_CONF }
+    const conferir = txt => conferirTextoDaFase(conf, txt, loja, an, pedido1, { faltando: [] })
+
+    const vBom = conferir(textoConfirmacao(faseAceita, codigo))
+    assert.equal(vBom.ok, true, `${faseAceita} → ${conf}: a confirmação com o código certo tinha de passar — ${vBom.motivo}`)
+
+    const semCodigo = conferir(textoConfirmacao(faseAceita, null))
+    assert.equal(semCodigo.ok, false, `${faseAceita} → ${conf}: confirmação sem código tinha de ser bloqueada`)
+    assert.match(semCodigo.motivo, /falta o código do cupom cadastrado/)
+
+    for (const [nome, cod] of [['um código inventado', 'FREE99'], ['o código de outra fase', outro]]) {
+      const v = conferir(textoConfirmacao(faseAceita, cod))
+      assert.equal(v.ok, false, `${faseAceita} → ${conf}: ${nome} (${cod}) tinha de ser bloqueado`)
+    }
+
+    const pctErrado = conferir(textoConfirmacao(faseAceita, codigo, pct === 15 ? 25 : 15))
+    assert.equal(pctErrado.ok, false, `${faseAceita} → ${conf}: percentual diferente do cupom tinha de ser bloqueado`)
+    assert.match(pctErrado.motivo, /falta o percentual do cupom|não pertence à etapa/)
+
+    // e o prompt da confirmação entrega o código certo, só ele
+    const p = promptEscrever({ loja, config: {}, faseId: conf, faltando: [], an, pedido: pedido1, ticket: { corpo: 'x' }, idiomaAlvo: 'de' })
+    assert.ok(p.system.includes(codigo), `${faseAceita} → ${conf}: o código ${codigo} tem de estar no prompt da confirmação`)
+    for (const c of CODIGOS_LOJA.filter(c => c !== codigo)) {
+      assert.ok(!p.system.includes(c), `${faseAceita} → ${conf}: o código ${c} não é desta conversa`)
+    }
+  }
+})
+
 test('cliente exigindo 100% em toda mensagem avança UMA etapa por vez, até o dono', () => {
   let r = rodada(novoEstado(), { intencao: 'pede_reembolso', motivo: 'qualidade', resumo: 'material ruim, quero 100%' })
   assert.equal(r.fase, 'qual_troca')

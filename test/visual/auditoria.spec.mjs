@@ -63,9 +63,11 @@ test.describe('Auditoria da IA', () => {
 
     // aguardando aprovação: rascunho, nunca enviado
     await lista.filter({ hasText: 'Carla Aprovação' }).click()
-    const pendente = page.locator('.msg-auditoria.sit-rascunho, .msg-auditoria.sit-agendada')
+    // âmbar, nunca vermelho: o validador aprovou o texto, falta só o seu clique
+    const pendente = page.locator('.msg-auditoria.sit-aguardando_aprovacao, .msg-auditoria.sit-rascunho, .msg-auditoria.sit-agendada')
     await expect(pendente.first()).toBeVisible()
     await expect(pendente.first()).toContainText('não enviado')
+    await expect(page.locator('.msg-auditoria.sit-bloqueada')).toHaveCount(0)
     // esta conversa tem um item amarelo (foto não validada): o selo é Revisar,
     // e em nenhuma hipótese aparece como enviada ou concluída
     await expect(page.locator('[data-coluna="conversa"]')).toContainText('Revisar')

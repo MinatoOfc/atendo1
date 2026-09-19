@@ -6,3 +6,6 @@ data
 .DS_Store
 .env
 test/visual/saida/
+
+# ajustes locais do Claude Code: nunca versionados
+.claude/settings.local.json

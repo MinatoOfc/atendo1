@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { INTENCOES_DE_ACAO, RE_INTENCAO, normalizar } from '../shared/mensagem.js'
 
 /* ---------- ambiente isolado (antes de importar o servidor) ---------- */
 const DIR = mkdtempSync(path.join(tmpdir(), 'atendo-teste-'))
@@ -159,9 +160,20 @@ globalThis.fetch = async (url, opts) => {
     // o cliente informa o produto (regra do mapa); um teste passa produtos: [] para exercitar a trava
     // o classificador de verdade aponta o trecho que prova a situacao de entrega;
     // aqui a prova e a propria mensagem nova, que o servidor confere
-    const novoTxt = String(userTxt).split('somente isto conta como declaração dele:')[1]?.split(String.fromCharCode(10) + '---')[0]?.trim() ?? ''
+    const marca = 'é só isto que ele escreveu agora:'
+    const novoTxt = String(userTxt).includes(marca) ? String(userTxt).split(marca)[1].trim() : ''
     const base = { intencao: 'outro', motivo: 'nenhum', produtos: ['Polo Premium'], ajustes: [], situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'msg', idioma: 'de', idiomaConfiavel: true, spam: false, ...c }
     if (base.situacaoEntrega && base.situacaoEntrega !== 'nenhuma' && !base.evidenciaEntrega) base.evidenciaEntrega = novoTxt
+    // a IA de verdade aponta a frase que prova a intenção de ação; a simulada
+    // procura a marca NO TEXTO QUE RECEBEU e copia o trecho literal. Nunca
+    // inventa: sem a frase, a evidência sai vazia e o servidor descarta.
+    if (!('evidenciaIntencao' in base)) {
+      // as marcas são procuradas no texto NORMALIZADO (é assim que o servidor
+      // confere); o trecho devolvido também vai normalizado, e o servidor
+      // normaliza os dois lados antes de comparar
+      const achou = INTENCOES_DE_ACAO.has(base.intencao) ? normalizar(novoTxt).match(RE_INTENCAO[base.intencao]) : null
+      base.evidenciaIntencao = achou ? achou[0] : ''
+    }
     return responder(base)
   }
   if (req.includes('acao_proposta')) {
@@ -267,7 +279,9 @@ test('cliente exigindo 100% em toda mensagem: uma etapa por resposta, 100% só c
     assert.equal(r.status, 200, r.erro)
     t = await ticket(t.id)
     assert.equal(an(t).etapa, esperada, `etapa gravada só depois do envio: ${esperada}`)
-    t = await cliente({ intencao: 'pede_reembolso', resumo: 'nada de 25, 40, 50, 60, 70 — quero 100%!' }, { de: 'c1@web.de', corpo: 'Nein! 100%!', ticketId: t.id })
+    // "Nein! 100%!" é RECUSA com contraproposta — o cliente não escreve
+    // "reembolso" nessa frase, e o servidor não aceita a intenção sem a palavra
+    t = await cliente({ intencao: 'recusa', resumo: 'nada de 25, 40, 50, 60, 70 — quero 100%!' }, { de: 'c1@web.de', corpo: 'Nein! 100%!', ticketId: t.id })
   }
   assert.equal(t.status, 'humano'); assert.equal(t.rascunho, undefined); assert.match(t.motivoEscalada, /100%/)
   assert.equal(an(t).historicoEtapas.map(h => h.para).join(' → '), 'qual_troca → qual_cupom_35 → reemb_25 → reemb_40 → reemb_50 → reemb_60 → reemb_70')
@@ -575,8 +589,11 @@ test('mensagem curta preserva o idioma; mensagem completa em outro idioma troca;
   let t = await cliente({ intencao: 'pede_reembolso', motivo: 'qualidade', idioma: 'de' }, { de: 'c22@web.de', nome: 'C22', corpo: 'Die Qualität vom Polo Premium ist schlecht, ich will mein Geld zurück.', lojaId: 'loja1' })
   assert.equal(an(t).idioma, 'de')
   await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
-  // "ok" — mesmo que a classificação diga pt e se diga confiável, o servidor não troca
-  t = await cliente({ intencao: 'recusa', idioma: 'pt', idiomaConfiavel: true }, { de: 'c22@web.de', corpo: 'ok', ticketId: t.id })
+  // recusa CURTA — mesmo que a classificação diga pt e se diga confiável, o
+  // servidor não troca o idioma da conversa. ("ok" não serve aqui: concordar
+  // não é recusar, e o servidor passou a exigir que a frase diga o que a
+  // classificação afirma.)
+  t = await cliente({ intencao: 'recusa', idioma: 'pt', idiomaConfiavel: true }, { de: 'c22@web.de', corpo: 'No', ticketId: t.id })
   assert.equal(an(t).idioma, 'de'); assert.match(t.rascunho, /Gutschein/); assert.match(ultimoPromptEscrita, /código "de"/)
   await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
   // mensagem completa em holandês: acompanha
@@ -584,7 +601,7 @@ test('mensagem curta preserva o idioma; mensagem completa em outro idioma troca;
   assert.equal(an(t).idioma, 'nl'); assert.equal(an(t).transicaoPendente.para, 'reemb_25'); assert.match(t.rascunho, /terugbetaling/); assert.match(ultimoPromptEscrita, /código "nl"/)
   await comEnvio('ok', () => aprovar(t)); t = await ticket(t.id)
   // aceite (curto) → confirmação no idioma da conversa (holandês)
-  t = await cliente({ intencao: 'aceita', idioma: 'en', idiomaConfiavel: false }, { de: 'c22@web.de', corpo: 'ok', ticketId: t.id })
+  t = await cliente({ intencao: 'aceita', idioma: 'en', idiomaConfiavel: false }, { de: 'c22@web.de', corpo: 'Ok', ticketId: t.id })
   assert.equal(t.status, 'humano'); assert.equal(an(t).idioma, 'nl')
   let r = await api(`/api/tickets/${t.id}/novo/confirmar`)
   assert.equal(r.status, 200, r.erro); t = await ticket(t.id)
@@ -914,7 +931,10 @@ test('ponta a ponta — marcado como entregue: aguardar 2 dias (48 h reais do en
   u = await enviar(u); const envio2 = Date.parse(an(u).historicoEtapas[0].em)
   u = await cliente({ intencao: 'pede_reembolso' }, { de: 'c42@web.de', corpo: 'Nichts.', ticketId: u.id, agora: iso(envio2 + 49 * H) }); assert.equal(an(u).transicaoPendente.para, 'nr_reenvio_20')
   u = await enviar(u)
-  u = await cliente({ intencao: 'aceita', resumo: 'ja' }, { de: 'c42@web.de', corpo: 'Ja, bitte erneut senden.', ticketId: u.id, agora: iso(envio2 + 50 * H) })
+  // aceite GENÉRICO: nr_reenvio_20 é oferta combinada (reenvio + 20% de
+  // reembolso). Nomear só uma das duas ações passou a ser ambíguo e vai ao dono
+  // — ver o teste do aceite parcial. Aqui o cliente aceita a proposta inteira.
+  u = await cliente({ intencao: 'aceita', resumo: 'ja' }, { de: 'c42@web.de', corpo: 'Ja, bitte.', ticketId: u.id, agora: iso(envio2 + 50 * H) })
   assert.equal(an(u).transicaoPendente.para, 'endereco', 'aceite do 20% pede endereço completo'); assert.equal(an(u).acaoAceita, 'nr_reenvio_20'); assert.match(u.rascunho, /Adresse/)
 
   // recebeu antes dos 2 dias: encerra normalmente
@@ -1114,8 +1134,32 @@ test('separação definitiva antigo × novo: motor gravado no nascimento pela da
   // o caminho real da caixa de entrada passa por acharConversa: a resposta pelo assunto volta à conversa original
   const { acharConversa } = await import('../server/index.js')
   const st = (await api('/api/state', null, 'GET')).state
+  globalThis.__acharConversa = acharConversa
   const achada = acharConversa({ tickets: st.tickets }, 'c82@web.de', 'Re: Bestellung', 'loja6', 'Immer noch nichts.')
   assert.ok(achada && achada.id === a.id, 'a resposta na thread antiga volta à conversa clássica original'); void total
+  // VÍNCULO TÉCNICO: uma resposta com In-Reply-To apontando para a conversa
+  // clássica volta para ELA, mesmo com assunto reescrito e mesmo com a loja já
+  // no motor novo. O assunto o cliente reescreve; o In-Reply-To não.
+  const idDaLoja = 'loja-c82-antiga@atendo'
+  const stThread = (await api('/api/state', null, 'GET')).state
+  const alvoClassico = stThread.tickets.find(t => t.id === a.id)
+  assert.equal(alvoClassico.motorAtendimento, 'classico')
+  // a conversa clássica guarda o Message-ID da resposta que a loja mandou
+  await api(`/api/tickets/${a.id}/rascunho`, { texto: 'x' })
+  const comId = globalThis.__acharConversa(
+    { tickets: [{ ...alvoClassico, respostaMensagemId: idDaLoja }] },
+    'c82@web.de', 'Assunto completamente diferente', 'loja6', 'Und?',
+    { inReplyTo: `<${idDaLoja}>`, references: [] })
+  assert.ok(comId && comId.id === a.id, 'o In-Reply-To devolve a conversa clássica, com outro assunto')
+
+  // citação SEM vínculo técnico não funde nada
+  const semVinculo = globalThis.__acharConversa(
+    { tickets: [{ ...alvoClassico, respostaMensagemId: idDaLoja }] },
+    'c82@web.de', 'Assunto completamente diferente', 'loja6',
+    'Und?\n\nGesendet: Montag\nVon: "Von Alder"\nBetreff: Bestellung\n\nBestellung 82 wurde bearbeitet.',
+    null)
+  assert.equal(semVinculo ?? null, null, 'sem Message-ID, o texto citado não funde conversas')
+
   // alternância novo → antigo → novo: nenhum ticket existente muda de motor
   const antesDaTroca = Object.fromEntries(st.tickets.map(t => [t.id, t.motorAtendimento]))
   r = await api('/api/lojas/loja6/modo', { modo: 'classico', confirmar: true }); assert.equal(r.status, 200)
@@ -1344,7 +1388,13 @@ test('aceite automático por tipo: cupom, troca (endereço antes), troca + 20%, 
     // jornada de entrega com prova no texto novo do cliente
     // o cliente nomeia o produto (e, quando for o caso, diz que nao recebeu):
     // sem isso o mapa manda coletar o produto antes de qualquer oferta
-    const corpoCliente = cls.situacaoEntrega ? 'Das Paket mit dem Polo Premium ist nicht angekommen.' : 'Das Polo Premium hat ein Problem.'
+    // TODOS os cenários abaixo declaram "pede_reembolso" — então o cliente diz
+    // isso com todas as letras. Sem a frase dele, o servidor descarta a intenção
+    // (e faz certo): a jornada de "não recebido" muda conforme ele peça ou não o
+    // dinheiro de volta.
+    const corpoCliente = cls.situacaoEntrega
+      ? 'Das Paket mit dem Polo Premium ist nicht angekommen. Ich will mein Geld zurück.'
+      : 'Das Polo Premium hat ein Problem. Ich will mein Geld zurück.'
     let t = await cliente(cls, { de, nome: 'C' + n, corpo: corpoCliente, lojaId: 'loja3', agora: antes() })
     if (an(t).transicaoPendente.para === 'tam_ajuste') { const r0 = await comEnvio('ok', () => aprovar(t)); assert.equal(r0.status, 200, r0.erro); t = await cliente({ intencao: 'informa', ajustes: cls.ajustes, resumo: 'ajuste' }, { de, corpo: 'zu klein', ticketId: t.id, agora: antes() }) }
     t = await negociarAte(t, de, alvo, { agora: antes })

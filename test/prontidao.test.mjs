@@ -10,8 +10,11 @@ import {
 
 // percentuais que as fases realmente usam (server/atendimento.js é a fonte)
 const USADOS = [15, 25, 30, 35, 40]
-// relógio fixo: toda conferência tem validade de 24 h, então nada pode depender do dia real
-const AGORA = Date.parse('2026-09-18T12:00:00.000Z')
+// A validade da conferência de cupons é de 24 h e é medida contra o relógio de
+// verdade. Por isso a base é AGORA, não uma data escrita à mão: com data fixa o
+// teste passava no dia em que foi escrito e virava vermelho sozinho no dia
+// seguinte. Todos os deslocamentos abaixo (-2 h, -3 h, -25 h) são relativos.
+const AGORA = Date.now()
 const HORA = 3600_000
 const CODIGOS = { 10: 'RESERVA10', 15: 'DANKE15', 25: 'SORRY25', 30: 'BACK30', 35: 'KEEP35', 40: 'WAIT40' }
 const loja = (extra = {}) => ({

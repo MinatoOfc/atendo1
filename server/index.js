@@ -12,11 +12,11 @@ import { processarEmail, processarEmailIA, iaConfigurada, testarIA, statusIA, ex
 import {
   modoDaLoja, novoEstado, decidir, confirmarTransicao, validarProposta, cupomDaFase,
   horarioMinimoEnvio, promptClassificar, promptEscrever, configDoNovo, FASES, JORNADAS, PERCENTUAIS_CUPOM, validarEndereco,
-  faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS,
+  faltaPara, conferirTextoDaFase, diferencaDeOferta, instrucaoAlteraOferta, faseDeConfirmacao, FASES_HUMANAS, rotulosDoPedido,
   definirIdioma, normalizarIdioma, conferirIdioma, IDIOMAS_VALIDADOS, ofertaDaFase, valoresMonetarios,
 } from './atendimento.js'
 import { novoEvento, registrarEvento, aplicarRetencao, checklistDaResposta, checklistDaTentativa, linhaDoTempo, passosCompactos, seloDaConversa, filtrosDaAuditoria, filtrarConversas, tentativaAtual, origemDoEnvio, cicloAtual, eventosDoCiclo, ROTULO_TIPO_AUDITORIA, LIMITE_AUDITORIA } from '../shared/auditoria.js'
-import { separarTexto, validarSituacaoEntrega, produtosDoTextoAtual, RE_PERGUNTA_LOGISTICA, RE_NAO_RECEBIDO } from '../shared/mensagem.js'
+import { separarTexto, validarSituacaoEntrega, validarIntencao, produtosDoTextoAtual, normalizar, RE_PEDIDO_INTEIRO, RE_PARTE_DO_PEDIDO, RE_COBRANCA_REEMBOLSO, RE_ACAO_CLIENTE, RE_PERGUNTA_LOGISTICA, RE_NAO_RECEBIDO } from '../shared/mensagem.js'
 import { traduzirGratis } from './traducao.js'
 import { calcularCentral, ehCandidatoMigracao, statusMigracao, normalizarInferencia, FASES_MIGRAVEIS } from '../shared/central.js'
 import { produtoFoiInformado } from '../shared/produto.js'
@@ -338,6 +338,9 @@ function neutralizarAutoEnvioNoPiloto() {
  */
 /** Caso aberto do modo novo sem prova de produto (regra única em shared/produto.js). */
 const casoSemProvaDeProduto = t => {
+  // cobrança de reembolso fica fora da migração de arranque: ela não é um caso
+  // sem produto, é um caso que não precisa de produto
+  if (t.atendimentoNovo?.acompanhamentoReembolso?.ativo) return false
   const an = t.atendimentoNovo
   if (!an || produtoFoiInformado(an)) return false
   if (!['inbox', 'aprovacao', 'humano', 'enviado'].includes(t.status)) return false
@@ -1563,6 +1566,64 @@ function aplicarResultado(estado, t, r) {
    a resposta é escrita para essa ação e conferida antes de virar rascunho.
    A transição de fase só é gravada quando o e-mail sai (enviarResposta). */
 
+/**
+ * A PRÓPRIA LOJA já prometeu ou processou um reembolso nesta conversa?
+ *
+ * Só conta o que a loja escreveu ou registrou: mensagens enviadas por ela,
+ * conclusão registrada e linha de relatório. O texto CITADO pelo cliente não
+ * entra — ele é contexto, não comprovação. Sem prova, o dono precisa saber que
+ * não há prova, e o sistema nunca pode afirmar ao cliente que já foi pago.
+ */
+function provaDeReembolso(t) {
+  const an = t.atendimentoNovo
+  const cp = an?.conclusaoPendente
+  // 1) conclusão REGISTRADA como concluída é a prova mais forte
+  if (cp?.status === 'concluida' && /reembolso|cancelamento/.test(String(cp.tipo ?? cp.faseAceita ?? ''))) {
+    return { provado: true, origem: 'conclusão registrada', em: cp.confirmadaEm ?? cp.aceitaEm ?? null, valor: cp.valor ?? null, moeda: cp.moeda ?? null, percentual: cp.percentual ?? null }
+  }
+  // 2) linha do relatório automático
+  if (t.relatorioAuto?.valor != null && /reembolso|cancel/.test(String(t.relatorioAuto.faseAceita ?? ''))) {
+    return { provado: true, origem: 'relatório', em: t.relatorioAuto.confirmacaoEnviadaEm ?? null, valor: t.relatorioAuto.valor, moeda: t.relatorioAuto.moeda ?? null, percentual: t.relatorioAuto.percentual ?? null }
+  }
+  // 3) mensagem que a LOJA enviou falando de reembolso (histórico arquivado ou resposta atual)
+  const daLoja = [
+    ...(t.historico ?? []).filter(x => x.autor === 'atendo').map(x => ({ corpo: x.corpo, em: x.data ?? null })),
+    ...(t.resposta ? [{ corpo: t.resposta, em: t.respondidoEm ?? null }] : []),
+  ]
+  for (const msg of daLoja.reverse()) {
+    const texto = String(msg.corpo ?? '')
+    if (!RE_ACAO_CLIENTE.reembolso.test(normalizar(texto))) continue
+    const valores = valoresMonetarios(texto)
+    return { provado: true, origem: 'mensagem enviada pela loja', em: msg.em, valor: valores[0] ?? null, moeda: null, percentual: null, trecho: texto.slice(0, 300) }
+  }
+  return { provado: false, origem: null, em: null, valor: null, moeda: null, percentual: null }
+}
+
+/**
+ * O cliente declarou o PEDIDO INTEIRO e o pedido é ÚNICO? Devolve o pedido, ou
+ * null.
+ *
+ * Isto NÃO é preencher produto pelo catálogo — a regra literal continua de pé.
+ * Aqui quem informou o conjunto foi o cliente ("revogo minha compra"); o
+ * catálogo só materializa QUAIS itens formam esse conjunto. Por isso exige as
+ * três provas juntas: a frase está no texto NOVO, não há linguagem de "só uma
+ * parte", e existe exatamente UM pedido possível.
+ */
+function pedidoInteiroDeclarado(estado, t, declaracao) {
+  const texto = normalizar(declaracao)
+  if (!RE_PEDIDO_INTEIRO.test(texto)) return null
+  if (RE_PARTE_DO_PEDIDO.test(texto)) return null
+  const lojaId = t.lojaId ?? 'loja1'
+  const so = n => String(n ?? '').replace(/\D/g, '')
+  // o número também tem de estar no texto NOVO: citação e assinatura não contam
+  const numeros = numerosDePedido(declaracao)
+  const todos = estado.pedidos ?? []
+  const candidatos = numeros.size
+    ? todos.filter(p => (p.lojaId ?? 'loja1') === lojaId && p.numero && numeros.has(so(p.numero)))
+    : todos.filter(p => (p.lojaId ?? 'loja1') === lojaId && p.email && p.email.trim().toLowerCase() === String(t.de || '').trim().toLowerCase())
+  return candidatos.length === 1 ? candidatos[0] : null
+}
+
 /** Pedido do cliente desta conversa: pelo número citado, senão o mais recente pelo e-mail. */
 function pedidoDoTicket(estado, t) {
   const so = n => String(n ?? '').replace(/\D/g, '')
@@ -1606,7 +1667,8 @@ function mandarParaHumanoNovo(t, motivo, origem = 'motor') {
   if (an) { an.aguardando = 'humano'; an.transicaoPendente = null; an.rascunhoGerado = undefined }
   // sem produto informado, a escalada NÃO abre uma saída manual irrestrita: o motivo fica
   // preservado como pendência e a única resposta permitida é a coleta do produto (escrita à mão)
-  if (an && !produtoFoiInformado(an)) exigirColetaManualDeProduto(t, motivo)
+  // cobrança de reembolso não pede produto: o cliente não abriu caso novo
+  if (an && !produtoFoiInformado(an) && !an.acompanhamentoReembolso?.ativo) exigirColetaManualDeProduto(t, motivo)
   if (origem === 'rascunho') return
   auditar(t, 'caso_para_humano', {
     resumo: motivo || 'Caso foi para você',
@@ -1841,6 +1903,7 @@ async function processarNovo(estado, t, { agora = Date.now(), releitura = null }
   const proposta = {
     intencao: cls.intencao ?? null, motivo: cls.motivo ?? null,
     situacaoEntrega: cls.situacaoEntrega ?? null, evidenciaEntrega: cls.evidenciaEntrega ?? '',
+    evidenciaIntencao: cls.evidenciaIntencao ?? '',
     produtos: [...(cls.produtos ?? [])], endereco: cls.endereco ?? '',
   }
   // a declaracao e o texto novo SEM a assinatura: rodape com empresa, rua,
@@ -1862,6 +1925,17 @@ async function processarNovo(estado, t, { agora = Date.now(), releitura = null }
     descartes.push({ campo: 'intencao', valor: 'pergunta_status', motivo: 'o texto novo do cliente não pergunta onde está o pedido nem quando chega' })
     cls.intencao = 'outro'
   }
+  // INTENÇÃO DE AÇÃO: pedir troca, reembolso ou cancelamento, aceitar ou recusar
+  // são atos do cliente — exigem a frase dele. Xingar o produto é reclamação, não
+  // pedido. Sem prova literal, a intenção cai para "outro"; o motivo alegado
+  // continua valendo, então a jornada e a coleta do produto não mudam.
+  // a OFERTA EM ABERTO entra na conta: "ok" não aceita 50% quando a mesa tem 40%
+  const ofertaAberta = an.ofertaAtual ?? ofertaDaFase(an.etapa, an) ?? null
+  const intencao = validarIntencao({ intencao: cls.intencao, evidencia: proposta.evidenciaIntencao, textoAtual: declaracao, oferta: ofertaAberta })
+  if (intencao.descartada) {
+    descartes.push({ campo: 'intencao', valor: intencao.descartada, motivo: intencao.motivo })
+    cls.intencao = intencao.intencao
+  }
   // PRODUTO: só conta o que o CLIENTE escreveu agora. Catálogo do pedido e
   // notificação citada nunca informam produto — nem quando o pedido tem um item
   // só: quem diz qual peça tem problema é ele.
@@ -1869,6 +1943,13 @@ async function processarNovo(estado, t, { agora = Date.now(), releitura = null }
   const produtosDescartados = proposta.produtos.filter(p => !cls.produtos.includes(p))
   if (produtosDescartados.length) {
     descartes.push({ campo: 'produtos', valor: produtosDescartados, motivo: 'produto não citado pelo cliente no texto novo (veio da notificação citada ou do catálogo)' })
+  }
+  // PEDIDO INTEIRO declarado pelo cliente: perguntar "qual item?" a quem acabou
+  // de revogar a compra toda é fazer o cliente repetir o que já disse.
+  let pedidoInteiro = null
+  if (!cls.produtos.length) {
+    pedidoInteiro = pedidoInteiroDeclarado(estado, t, declaracao)
+    if (pedidoInteiro) cls.produtos = rotulosDoPedido(pedidoInteiro)
   }
 
   // ENDEREÇO: só conta quando a conversa está de fato pedindo o endereço. Um
@@ -1907,7 +1988,15 @@ async function processarNovo(estado, t, { agora = Date.now(), releitura = null }
       entregaProposta: proposta.situacaoEntrega,
       evidenciaEntrega: proposta.evidenciaEntrega || null,
       evidenciaNoTextoAtual: entrega.evidenciaNoTextoAtual,
+      // intenção: o que a IA propôs, o que ficou e com que frase do cliente
+      intencaoProposta: proposta.intencao,
+      evidenciaIntencao: proposta.evidenciaIntencao || null,
+      evidenciaIntencaoNoTextoAtual: intencao.evidenciaNoTextoAtual,
+      intencaoDescartada: intencao.descartada,
+      aceiteAmbiguo: intencao.ambigua === true,
       produtosDescartados,
+      // o conjunto veio do cliente ("pedido inteiro"); o catálogo só listou quais são
+      pedidoInteiroDeclarado: pedidoInteiro ? { numero: pedidoInteiro.numero ?? null, itens: [...cls.produtos] } : null,
       descartes,
       conflito: entrega.conflito,
       textoAtualCaracteres: partesMsg.atual.length, textoCitadoCaracteres: partesMsg.citado.length,
@@ -1928,6 +2017,27 @@ async function processarNovo(estado, t, { agora = Date.now(), releitura = null }
   }
 
   // 2. o servidor decide a única ação permitida
+  // COBRANÇA DE REEMBOLSO JÁ PROMETIDO. Vem depois da auditoria da
+  // classificação (o registro não se perde) e antes de decidir(): o cliente não
+  // está abrindo caso novo, está cobrando o que a loja já prometeu. Nenhuma
+  // oferta nova, nenhuma pergunta de produto, nenhuma fase — o caso é seu.
+  if (RE_COBRANCA_REEMBOLSO.test(normalizar(declaracao))) {
+    const prova = provaDeReembolso(t)
+    an.acompanhamentoReembolso = { ativo: true, em: new Date().toISOString(), ...prova }
+    const dinheiro = prova.valor != null ? `${prova.valor.toFixed(2).replace('.', ',')} ${prova.moeda ?? ''}`.trim() : null
+    const detalhe = prova.provado
+      ? `Prova no histórico (${prova.origem}): ${[dinheiro, prova.percentual ? prova.percentual + '%' : null, prova.em ? 'em ' + String(prova.em).slice(0, 10) : null].filter(Boolean).join(' — ') || 'sem valor registrado'}.`
+      : 'ATENÇÃO: o sistema NÃO encontrou prova de que este reembolso foi prometido ou processado. Confira antes de responder e não diga ao cliente que já foi pago.'
+    auditar(t, 'caso_para_humano', {
+      resumo: 'Cliente cobrando reembolso anteriormente prometido/processado', situacao: 'atencao',
+      chave: `caso_para_humano:${t.id}:cobranca_reembolso:${t.data}`,
+      dados: { motivo: 'cobrança de reembolso já prometido/processado', origem: 'cobranca_reembolso', prova },
+    })
+    mandarParaHumanoNovo(t, `Cliente cobrando reembolso anteriormente prometido/processado. ${detalhe}`, 'rascunho')
+    return { spam: false }
+  }
+  an.acompanhamentoReembolso = undefined
+
   const faseAnterior = an.etapa ?? null
   const d = decidir({ an, cls, pedido, loja, temFoto: !!t.anexos?.length, agora })
   Object.assign(an, d.an)
@@ -1993,7 +2103,11 @@ async function processarNovo(estado, t, { agora = Date.now(), releitura = null }
   if (d.humano) {
     // aceite de uma OFERTA (não fase humana): conclusão manual ou automática, pelo modo fotografado no aceite
     if (d.aceite && !FASES_HUMANAS.has(d.aceite.fase)) { await registrarAceite(estado, t, d); return { spam: false } }
-    mandarParaHumanoNovo(t, d.humano)
+    // aceite descartado por ambiguidade: o motivo que chega até você é o exato,
+    // não o genérico "não deu para entender se aceitou ou recusou"
+    mandarParaHumanoNovo(t, intencao.descartada === 'aceita' && intencao.motivo
+      ? `Cliente respondeu à oferta, mas o aceite não é claro: ${intencao.motivo}`
+      : d.humano)
     if (d.aceite) {
       t.decisaoPendente = decisaoDaOferta(d.aceite.oferta)
       t.resolucao = `Aceite pendente: ${FASES[d.aceite.fase]?.titulo ?? d.aceite.fase}${an.produtosAfetados.length ? ' — ' + an.produtosAfetados.join('; ') : ''}`
@@ -2064,6 +2178,8 @@ function resgatarSpamComPedido(estado) {
 async function criarTicket(estado, { nome, de, assunto, corpo, data, messageId, anexos, agora }, lojaId = 'loja1', wsId = null) {
   const base = {
     id: uid(), nome, de, assunto, corpo, lojaId,
+    // guardado para o PRÓXIMO e-mail poder provar que responde a este
+    mensagemIdCliente: messageId ?? null,
     data: data || new Date().toISOString(),
     lido: false, origem: 'cliente',
     categoria: classificarLocal(assunto + ' ' + corpo),
@@ -2128,19 +2244,40 @@ export const normalizarAssunto = s =>
 /** Números de pedido citados num texto: "#1784", "Bestellung 1784", "pedido nº 1784"… */
 export { numerosDePedido }
 
-export function acharConversa(estado, de, assunto, lojaId, corpo = '') {
+const idDeMensagem = v => String(v ?? '').trim().replace(/^<|>$/g, '').toLowerCase()
+
+/** Todos os Message-ID que esta conversa já viu — dela e da loja. */
+function idsDaConversa(t) {
+  const ids = [t.mensagemIdCliente, t.respostaMensagemId]
+  for (const m of t.historico ?? []) ids.push(m.mensagemId)
+  return ids.map(idDeMensagem).filter(Boolean)
+}
+
+export function acharConversa(estado, de, assunto, lojaId, corpo = '', thread = null) {
   const candidatos = estado.tickets.filter(t =>
     (t.lojaId ?? 'loja1') === lojaId &&
     t.de.toLowerCase() === de.toLowerCase() &&
     !['spam', 'lixeira'].includes(t.status))
+
+  // 1) VÍNCULO TÉCNICO. In-Reply-To e References são a prova de continuidade:
+  // uma resposta a um e-mail antigo da loja pertence à conversa antiga, mesmo
+  // que o cliente tenha reescrito o assunto e mesmo que a loja já tenha trocado
+  // de motor — o motor é congelado no nascimento da conversa, então voltar para
+  // a conversa certa é o que mantém o atendimento no clássico.
+  const refs = new Set([thread?.inReplyTo, ...(thread?.references ?? [])].map(idDeMensagem).filter(Boolean))
+  if (refs.size) {
+    const porThread = candidatos.find(t => idsDaConversa(t).some(id => refs.has(id)))
+    if (porThread) return porThread
+  }
 
   const alvo = normalizarAssunto(assunto)
   const porAssunto = candidatos.find(t => normalizarAssunto(t.assunto) === alvo)
   if (porAssunto) return porAssunto
 
   // E-mails avulsos do mesmo cliente sobre o MESMO pedido viram uma conversa só,
-  // mesmo com assuntos diferentes.
-  const numeros = numerosDePedido(`${assunto} ${corpo}`)
+  // mesmo com assuntos diferentes. O número é lido do assunto e do texto NOVO:
+  // unir conversas pelo trecho citado é juntar o que o cliente nunca juntou.
+  const numeros = numerosDePedido(`${assunto} ${separarTexto(corpo).atual}`)
   if (!numeros.size) return null
   return candidatos.find(t => {
     const textoConversa = [t.assunto, t.corpo, ...(t.historico ?? []).slice(-6).map(m => m.corpo)].join(' ')
@@ -2249,10 +2386,13 @@ async function anexarNaConversa(estado, t, { corpo, data, messageId, anexos, ago
     && pareceSpam(t.assunto, corpo, t.de)
 
   t.historico = t.historico || []
-  if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao, anexos: t.anexos })
+  // ATENÇÃO À ORDEM: aqui arquiva-se a mensagem ANTERIOR, então o Message-ID
+  // que acompanha é o que estava guardado, não o que acabou de chegar.
+  if (t.corpo) t.historico.push({ autor: 'cliente', corpo: t.corpo, data: t.data, traducao: t.traducao, anexos: t.anexos, mensagemId: t.mensagemIdCliente ?? null })
   if (t.resposta) t.historico.push(mensagemArquivada(t))
 
   t.anexos = !viraSpam && wsId && anexos?.length ? await guardarAnexos(wsId, anexos) : undefined
+  t.mensagemIdCliente = messageId ?? null
   t.corpo = corpo
   t.data = data || new Date().toISOString()
   t.lido = false
@@ -2342,7 +2482,7 @@ async function sincronizar(wsId) {
         const emails = await conta.buscarNovos(estado.emailsProcessados)
         for (const e of emails) {
           // as imagens (bytes crus) só são guardadas se o e-mail não for spam
-          const conversa = acharConversa(estado, e.de, e.assunto, conta.id, e.corpo)
+          const conversa = acharConversa(estado, e.de, e.assunto, conta.id, e.corpo, e)
           if (conversa) {
             await anexarNaConversa(estado, conversa, e, wsId)
           } else {
@@ -3261,7 +3401,7 @@ app.get('/api/exportar', (req, res) => {
 // Ela injeta e-mail de ensaio e NADA mais — não toca prontidão, cupons nem envio.
 if (simulacaoDeEmailLiberada()) {
   app.post('/api/simular-email', async (req, res) => {
-    const { de, nome, assunto, corpo, lojaId, ticketId, comImagem } = req.body ?? {}
+    const { de, nome, assunto, corpo, lojaId, ticketId, comImagem, messageId, inReplyTo, references } = req.body ?? {}
     const anexos = comImagem ? [{ nome: 'foto.jpg', tipo: 'image/jpeg', dados: Buffer.from('fake') }] : []
     try {
       if (ticketId) {
@@ -3275,7 +3415,20 @@ if (simulacaoDeEmailLiberada()) {
       }
       // relógio simulado também na conversa nova (só nesta rota de ensaio)
       const agoraNovo = req.body.agora ? Date.parse(String(req.body.agora)) : NaN
-      const t = await criarTicket(req.estado, { nome: nome || 'Cliente', de: String(de || ''), assunto: String(assunto || ''), corpo: String(corpo || ''), data: new Date(Number.isFinite(agoraNovo) ? agoraNovo : Date.now()).toISOString(), anexos, agora: Number.isFinite(agoraNovo) ? agoraNovo : undefined }, lojaId || 'loja1', req.wsId)
+      const dataNova = new Date(Number.isFinite(agoraNovo) ? agoraNovo : Date.now()).toISOString()
+      // MESMO caminho da caixa de verdade: uma resposta em thread antiga entra
+      // na conversa antiga, em vez de nascer como conversa nova
+      const anexar = { de: String(de || ''), assunto: String(assunto || ''), corpo: String(corpo || ''), inReplyTo: inReplyTo ?? null, references: references ?? [] }
+      // só quando o ensaio declara encadeamento: sem ele esta rota continua
+      // criando uma conversa por chamada, como sempre fez
+      const temThread = !!(anexar.inReplyTo || anexar.references.length)
+      const existente = temThread ? acharConversa(req.estado, anexar.de, anexar.assunto, lojaId || 'loja1', anexar.corpo, anexar) : null
+      if (existente) {
+        await anexarNaConversa(req.estado, existente, { corpo: anexar.corpo, data: dataNova, messageId: messageId ?? null, anexos, agora: Number.isFinite(agoraNovo) ? agoraNovo : undefined }, req.wsId)
+        salvar(req.wsId)
+        return res.json({ ok: true, ticket: existente, state: visao(req.wsId) })
+      }
+      const t = await criarTicket(req.estado, { nome: nome || 'Cliente', de: anexar.de, assunto: anexar.assunto, corpo: anexar.corpo, data: dataNova, messageId: messageId ?? null, anexos, agora: Number.isFinite(agoraNovo) ? agoraNovo : undefined }, lojaId || 'loja1', req.wsId)
       req.estado.tickets = [t, ...req.estado.tickets]
       salvar(req.wsId)
       res.json({ ok: true, ticket: t, state: visao(req.wsId) })
@@ -3346,7 +3499,7 @@ async function importarHistorico(wsId, lojaId, prog) {
         categoria: 'outro', idioma: detectarIdiomaLocal(texto), status: 'spam',
       })
     } else {
-      const conversa = acharConversa(estado, e.de, e.assunto, lojaId, e.corpo)
+      const conversa = acharConversa(estado, e.de, e.assunto, lojaId, e.corpo, e)
       if (conversa && conversa.data && e.data < conversa.data) {
         // mensagem mais antiga que a atual da conversa: entra no histórico, na ordem certa
         conversa.historico = conversa.historico || []

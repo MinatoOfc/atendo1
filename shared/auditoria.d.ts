@@ -31,7 +31,7 @@ export interface MensagemAuditoria {
   em: string | null
   idioma: string | null
   fase: string | null
-  situacao: 'recebida' | 'enviada' | 'agendada' | 'rascunho' | 'bloqueada' | 'falha'
+  situacao: 'recebida' | 'enviada' | 'agendada' | 'rascunho' | 'aguardando_aprovacao' | 'bloqueada' | 'falha'
   motivo?: string | null
   minimoEnvio: string | null
   envioReal: string | null

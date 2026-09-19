@@ -3,7 +3,7 @@
 // numa jornada de entrega. Lógica pura — nenhuma rede, nenhum servidor.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { separarTexto, separarAssinatura, validarSituacaoEntrega, produtosDoTextoAtual } from '../shared/mensagem.js'
+import { separarTexto, separarAssinatura, validarSituacaoEntrega, validarIntencao, produtosDoTextoAtual } from '../shared/mensagem.js'
 
 /* O caso real que originou esta trava: o cliente respondeu ao aviso de entrega
    da Shopify reclamando da roupa, e o motor ofereceu "aguarde 2 dias". */
@@ -39,6 +39,213 @@ test('caso real: a notificação citada fica fora do texto do cliente', () => {
 
   // e nenhum dos dois produtos conta como informado pelo cliente
   assert.deepEqual(produtosDoTextoAtual(['Polohemd mit langen Ärmeln (Grün / XL)', 'Polohemd mit langen Ärmeln (Hellblau / XL)'], r.atual), [])
+})
+
+test('aceite parcial de oferta COMBINADA vai para o dono, nunca para o automático', () => {
+  // as combinações que existem no mapa de verdade
+  const TROCA_CUPOM = { tipo: 'troca', pct: null, cupom: 15 }        // qual_troca, err_envio, nr_reenvio_30…
+  const REENVIO_CUPOM = { tipo: 'reenvio', pct: null, cupom: 30 }
+  const TROCA_REEMB = { tipo: 'troca_reembolso', pct: 20, cupom: null } // troca_20
+  const REENVIO_REEMB = { tipo: 'reenvio_reembolso', pct: 20, cupom: null } // nr_reenvio_20
+  const SO_CUPOM = { tipo: 'cupom', pct: null, cupom: 35 }           // qual_cupom_35, nc_cupom_40
+  const ler = (t, oferta) => validarIntencao({ intencao: 'aceita', evidencia: t, textoAtual: t, oferta })
+  const aceita = (t, oferta, nota) => {
+    const r = ler(t, oferta)
+    assert.equal(r.intencao, 'aceita', `${nota}: "${t}" tinha de aceitar — ${r.motivo ?? ''}`)
+    assert.equal(r.ambigua, false)
+  }
+  const ambiguo = (t, oferta, nota) => {
+    const r = ler(t, oferta)
+    assert.equal(r.intencao, 'outro', `${nota}: "${t}" não pode virar aceite`)
+    assert.equal(r.ambigua, true, `${nota}: "${t}" tinha de ser marcado ambíguo — ${r.motivo}`)
+    assert.equal(r.descartada, 'aceita')
+    assert.ok(r.motivo && r.motivo.length > 20, 'o motivo exato acompanha o descarte')
+  }
+
+  // 1) "sim" genérico, sem ressalva: aceita a proposta COMPLETA
+  aceita('Ok.', TROCA_CUPOM, 'genérico')
+  aceita('Ok.', TROCA_REEMB, 'genérico')
+  aceita('Ja, gerne.', REENVIO_CUPOM, 'genérico')
+
+  // 2) troca/reenvio + cupom: aceitar a ENTREGA leva o pacote junto
+  aceita('Ja, den Umtausch nehme ich.', TROCA_CUPOM, 'troca nomeada')
+  aceita('Ja, ich nehme die Ersatzlieferung.', REENVIO_CUPOM, 'reenvio nomeado')
+  //    aceitar SÓ o cupom nunca aciona troca nem reenvio
+  ambiguo('Sim, aceito somente o cupom.', TROCA_CUPOM, 'só o cupom')
+  ambiguo('Ja, nur den Gutschein.', REENVIO_CUPOM, 'só o cupom (de)')
+  //    e qualquer limitação explícita é respeitada, mesmo sobre a entrega
+  ambiguo('Ja, nur den Umtausch.', TROCA_CUPOM, 'limitador sobre a troca')
+
+  // 3) troca/reenvio + reembolso parcial: uma ação só é ambíguo
+  ambiguo('Sim, aceito a troca.', TROCA_REEMB, 'só a troca')
+  ambiguo('Sim, aceito o reembolso.', TROCA_REEMB, 'só o reembolso')
+  ambiguo('Ja, die Ersatzlieferung nehme ich.', REENVIO_REEMB, 'só o reenvio')
+  //    confirmar os DOIS componentes aceita
+  aceita('Sim, aceito a troca e o reembolso de 20%.', TROCA_REEMB, 'dois componentes')
+  aceita('Ja, ich nehme die Ersatzlieferung und die 20% Rückerstattung.', REENVIO_REEMB, 'dois componentes (de)')
+
+  // 4) oferta só de cupom: aceita normalmente
+  aceita('Ok.', SO_CUPOM, 'só cupom')
+  aceita('Sim, aceito o cupom.', SO_CUPOM, 'só cupom nomeado')
+
+  // 5) limitadores reconhecidos nos idiomas atendidos
+  for (const [idioma, frase] of Object.entries({
+    português: 'Sim, aceito apenas o cupom.',
+    alemão: 'Ja, nur den Gutschein.',
+    holandês: 'Ja, alleen de kortingsbon.',
+    francês: 'Oui, seulement le coupon.',
+    italiano: 'Sì, soltanto il coupon.',
+    espanhol: 'Sí, solo el cupón.',
+    inglês: 'Yes, only the coupon.',
+  })) ambiguo(frase, TROCA_CUPOM, 'limitador em ' + idioma)
+})
+
+test('"Ersatz" pede troca; "Ersatzlieferung" pede reenvio — palavras que se contêm não se confundem', () => {
+  const so = (t, esperado) => {
+    const r = validarIntencao({ intencao: esperado, evidencia: t, textoAtual: t })
+    assert.equal(r.intencao, esperado, `"${t}" é ${esperado}`)
+  }
+  so('Ich möchte Ersatz für das Polo.', 'pede_troca')
+  // e a Ersatzlieferung, dentro de uma oferta de reenvio, não conta como troca
+  const r = validarIntencao({ intencao: 'aceita', evidencia: 'Ja, ich nehme die Ersatzlieferung.', textoAtual: 'Ja, ich nehme die Ersatzlieferung.', oferta: { tipo: 'reenvio', pct: null, cupom: 30 } })
+  assert.equal(r.intencao, 'aceita', 'Ersatzlieferung é o reenvio da própria oferta, não uma troca de fora')
+})
+
+test('aceite e recusa nos SETE idiomas — e negativa logística nunca vira recusa', () => {
+  const oferta = { tipo: 'reembolso', pct: 40, cupom: null }
+  const lido = (intencao, t) => validarIntencao({ intencao, evidencia: t, textoAtual: t, oferta }).intencao
+
+  const ACEITES = {
+    alemão: ['Ja.', 'Ja, gerne.', 'Okay, einverstanden.', 'Perfekt, abgemacht.'],
+    holandês: ['Ja.', 'Ja, graag.', 'Akkoord.', 'Prima, oké.'],
+    francês: ['Oui.', "Oui, d'accord.", 'Parfait.'],
+    italiano: ['Sì.', 'Sì, va bene.', 'Perfetto, accetto.'],
+    espanhol: ['Sí.', 'Sí, de acuerdo.', 'Perfecto, acepto.'],
+    inglês: ['Yes.', 'Yes, perfect.', 'Ok, deal.'],
+    português: ['Sim.', 'Sim, aceito.', 'Certo, perfeito.'],
+  }
+  const RECUSAS = {
+    alemão: ['Nein.', 'Nein, ich will das nicht.', 'Das reicht nicht.'],
+    holandês: ['Nee.', 'Nee, dat wil ik niet.', 'Niet akkoord.'],
+    francês: ['Non.', 'Non, je ne veux pas.', 'Pas assez.'],
+    italiano: ['No.', 'No, non voglio.', 'Non basta.'],
+    espanhol: ['No.', 'No, no quiero.', 'No es suficiente.'],
+    inglês: ['No.', "No, I don't want that.", 'Not enough.'],
+    português: ['Não.', 'Não quero.', 'Não é suficiente.'],
+  }
+  // a armadilha: toda frase abaixo TEM uma negativa, e nenhuma delas recusa nada
+  const LOGISTICAS = {
+    alemão: 'Das Paket ist noch nicht da.',
+    holandês: 'Ik heb het pakket niet ontvangen.',
+    francês: "Je n'ai pas reçu le colis.",
+    italiano: 'Non ho ricevuto il pacco.',
+    espanhol: 'No llegó el pedido.',
+    inglês: "I haven't received my order.",
+    português: 'Não recebi meu pedido.',
+  }
+
+  assert.equal(Object.keys(ACEITES).length, 7)
+  for (const [idioma, frases] of Object.entries(ACEITES)) {
+    for (const f of frases) assert.equal(lido('aceita', f), 'aceita', `${idioma}: "${f}" é aceite`)
+  }
+  for (const [idioma, frases] of Object.entries(RECUSAS)) {
+    for (const f of frases) assert.equal(lido('recusa', f), 'recusa', `${idioma}: "${f}" é recusa`)
+  }
+  for (const [idioma, f] of Object.entries(LOGISTICAS)) {
+    assert.equal(lido('recusa', f), 'outro', `${idioma}: "${f}" NÃO pode virar recusa`)
+    assert.equal(lido('aceita', f), 'outro', `${idioma}: "${f}" NÃO pode virar aceite`)
+  }
+})
+
+test('"ok" não aceita oferta contraditória: ressalva, pergunta, outro percentual ou outra solução', () => {
+  const troca20 = { tipo: 'troca_reembolso', pct: 20, cupom: null }
+  const trocaCupom15 = { tipo: 'troca', pct: null, cupom: 15 }
+  const r = (t, oferta = troca20) => validarIntencao({ intencao: 'aceita', evidencia: t, textoAtual: t, oferta })
+
+  assert.equal(r('Ok.').intencao, 'aceita', 'resposta curta e sem contradição aceita')
+  assert.equal(r('Ja, gerne.').intencao, 'aceita')
+
+  const ressalva = r('Ok, mas quero 50%.')
+  assert.equal(ressalva.intencao, 'outro', '"ok, mas…" não é aceite')
+  assert.equal(ressalva.descartada, 'aceita')
+  assert.match(ressalva.motivo, /ressalva/)
+
+  const outraSolucao = r('Okay, aber ich möchte eine Rückerstattung.', trocaCupom15)
+  assert.equal(outraSolucao.intencao, 'outro', 'pedir reembolso não aceita a troca')
+  assert.match(outraSolucao.motivo, /ressalva|não é a solução/)
+
+  const pergunta = r('Ok, qual é o prazo?')
+  assert.equal(pergunta.intencao, 'outro', 'pergunta não conclui aceite')
+  assert.match(pergunta.motivo, /pergunta/)
+
+  // corresponde à oferta aberta → aceita; não corresponde → nunca.
+  // troca_20 é oferta COMBINADA (troca + reembolso parcial), então o cliente
+  // precisa confirmar os dois componentes — ver o teste do aceite parcial.
+  assert.equal(r('Sim, aceito a troca e o reembolso de 20%.', troca20).intencao, 'aceita')
+  assert.equal(r('Sim, aceito a troca de 20%.', trocaCupom15).intencao, 'outro', '20% não está na oferta de 15%')
+  const pctDiferente = r('Ok, ich will 50%.', { tipo: 'reembolso', pct: 40, cupom: null })
+  assert.equal(pctDiferente.intencao, 'outro')
+  assert.match(pctDiferente.motivo, /não é o que está na oferta/)
+  // o percentual da própria oferta continua valendo
+  assert.equal(r('Ok, 40%.', { tipo: 'reembolso', pct: 40, cupom: null }).intencao, 'aceita')
+  // ação diferente da oferta: nunca aceita
+  assert.equal(r('Ok, dann bitte stornieren.', trocaCupom15).intencao, 'outro')
+})
+
+test('devolução NÃO é troca: pedir o produto de volta não rotula pedido de troca', () => {
+  const r = t => validarIntencao({ intencao: 'pede_troca', evidencia: t, textoAtual: t })
+  for (const t of ['Ich möchte das zurückschicken.', 'Ich will es zurückgeben.', 'I want to return it.', 'I will send it back.', 'Quero fazer a devolução.']) {
+    assert.equal(r(t).intencao, 'outro', `"${t}" não é pedido de troca`)
+    assert.equal(r(t).descartada, 'pede_troca')
+  }
+  // troca de verdade continua passando
+  for (const t of ['Ich möchte einen Umtausch.', 'Ik wil graag een omruil.', 'Je voudrais un échange.', 'Quero uma troca.']) {
+    assert.equal(r(t).intencao, 'pede_troca', `"${t}" é pedido de troca`)
+  }
+})
+
+test('intenção de AÇÃO só passa com a frase do cliente: reclamar não é pedir', () => {
+  const declaracao = separarTexto(KURT).declaracao
+  // o caso real: o cliente xinga a qualidade e NÃO pede troca nem reembolso
+  for (const intencao of ['pede_troca', 'pede_reembolso', 'pede_cancelamento']) {
+    const r = validarIntencao({ intencao, evidencia: 'Das kann doch kein Mensch anziehen', textoAtual: declaracao })
+    assert.equal(r.intencao, 'outro', `${intencao} sem pedido vira "outro"`)
+    assert.equal(r.descartada, intencao)
+    assert.match(r.motivo, /reclamar do produto ou pedir devolução não é isso/)
+    assert.equal(r.evidenciaNoTextoAtual, false)
+  }
+  // prova que NÃO está no texto novo (veio do citado, do assunto ou inventada)
+  const inventada = validarIntencao({ intencao: 'pede_reembolso', evidencia: 'ich will eine Rueckerstattung', textoAtual: declaracao })
+  assert.equal(inventada.intencao, 'outro')
+  assert.match(inventada.motivo, /não está na mensagem nova/)
+  // sem trecho nenhum
+  const vazia = validarIntencao({ intencao: 'pede_troca', evidencia: '', textoAtual: declaracao })
+  assert.equal(vazia.intencao, 'outro')
+  assert.match(vazia.motivo, /não apontou trecho/)
+
+  // PEDIDO DE VERDADE continua passando, nos idiomas atendidos
+  const passa = (intencao, evidencia, textoAtual = evidencia) => {
+    const r = validarIntencao({ intencao, evidencia, textoAtual })
+    assert.equal(r.intencao, intencao, `${intencao}: "${evidencia}" tinha de passar`)
+    assert.equal(r.descartada, null)
+    assert.equal(r.evidenciaNoTextoAtual, true)
+  }
+  passa('pede_troca', 'ich möchte einen Umtausch', 'Die Qualität ist schlecht, ich möchte einen Umtausch.')
+  passa('pede_troca', 'ik wil graag een omruil')
+  passa('pede_reembolso', 'ich will mein Geld zurück', 'Ich will mein Geld zurück!')
+  passa('pede_reembolso', 'je veux un remboursement')
+  passa('pede_cancelamento', 'bitte stornieren Sie die Bestellung')
+  passa('aceita', 'Ja, gerne.')
+  passa('aceita', 'Okay, einverstanden.')
+  passa('recusa', 'Nein, das reicht nicht.')
+  passa('recusa', 'Niet akkoord.')
+
+  // intenções que NÃO afirmam um ato passam sem prova nenhuma
+  for (const intencao of ['informa', 'pergunta_status', 'agradece', 'outro']) {
+    const r = validarIntencao({ intencao, evidencia: '', textoAtual: declaracao })
+    assert.equal(r.intencao, intencao)
+    assert.equal(r.descartada, null)
+  }
 })
 
 test('assinatura e rodapé ficam fora da declaração — e o endereço deles não conta', () => {

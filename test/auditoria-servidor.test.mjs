@@ -22,6 +22,7 @@ for (const [suf, nome] of [['', 'loja1'], ['2', 'loja2'], ['3', 'loja3']]) {
   process.env[`EMAIL${suf}_IMAP_HOST`] = 'imap.invalido.test'; process.env[`EMAIL${suf}_SMTP_HOST`] = 'smtp.invalido.test'
 }
 
+const { INTENCOES_DE_ACAO, RE_INTENCAO, normalizar } = await import('../shared/mensagem.js')
 const { hashSenha } = await import('../server/auth.js')
 const { novoEstado: estadoInicial } = await import('../server/db.js')
 
@@ -50,6 +51,34 @@ estado.pedidos = [1, 2, 3, 4, 5, 6, 9, 10].map(n => ({
   status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: n === 6 ? 'loja2' : 'loja1',
   itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
 }))
+// pedido #2567 do Andreas: três polos, reembolso já prometido pela loja
+estado.pedidos.push({
+  id: 'p-2567', numero: '#2567', cliente: 'Andreas', email: 'andreas@web.de', pais: 'Germany', valor: 74,
+  status: 'entregue', criadoEm: '2026-09-01', despachadoEm: '2026-09-02', lojaId: 'loja1',
+  itens: [
+    { titulo: 'Poloshirt', variante: 'Bleu Nuit / L', quantidade: 1, preco: 25 },
+    { titulo: 'Poloshirt', variante: 'Noir Espresso / L', quantidade: 1, preco: 25 },
+    { titulo: 'Poloshirt', variante: 'Bleu Côtier / L', quantidade: 1, preco: 24 },
+  ],
+})
+// pedido #2906: TRÊS polos, do caso real da revogação do pedido inteiro
+estado.pedidos.push({
+  id: 'p-2906', numero: '#2906', cliente: 'Cliente 2906', email: 'c2906@web.de', pais: 'Germany', valor: 180,
+  status: 'entregue', criadoEm: '2026-09-10', despachadoEm: '2026-09-11', lojaId: 'loja1',
+  itens: [
+    { titulo: 'Poloshirt', variante: 'Bleu Nuit / L', quantidade: 1, preco: 60 },
+    { titulo: 'Poloshirt', variante: 'Noir Espresso / L', quantidade: 1, preco: 60 },
+    { titulo: 'Poloshirt', variante: 'Bleu Côtier / L', quantidade: 1, preco: 60 },
+  ],
+})
+// cliente com DOIS pedidos possíveis: a revogação não pode adivinhar qual
+for (const [id, numero] of [['p-dup-1', '#3001'], ['p-dup-2', '#3002']]) {
+  estado.pedidos.push({
+    id, numero, cliente: 'Cliente Dup', email: 'cdup@web.de', pais: 'Germany', valor: 100,
+    status: 'entregue', criadoEm: '2026-09-10', despachadoEm: '2026-09-11', lojaId: 'loja1',
+    itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
+  })
+}
 // pedido do caso real: DOIS polos, para o texto do cliente ter de dizer qual
 estado.pedidos.push({
   id: 'p-kurt', numero: '#2766', cliente: 'Kurt', email: 'kurt@web.de', pais: 'Austria', valor: 118,
@@ -60,7 +89,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -105,6 +134,10 @@ const api = (rota, corpo, metodo = 'POST') => realFetch(url + rota, {
 const ticket = async id => (await api('/api/state', null, 'GET')).state.tickets.find(t => t.id === id)
 const auditoria = async id => (await api(`/api/auditoria/${id}`, null, 'GET')).conversa
 const esperar = ms => new Promise(r => setTimeout(r, ms))
+// percentual do cupom de uma fase, direto do mapa (sem duplicar a tabela aqui)
+const { FASES: FASES_MAPA } = await import('../server/atendimento.js')
+const cupomDaFaseTeste = faseId => FASES_MAPA[faseId]?.oferta?.cupom ?? null
+const FASES_CONF = Object.keys(FASES_MAPA).filter(id => FASES_MAPA[id].confirmacao)
 // a releitura exige confirmação, motivo e o estado EXATO que a tela está vendo
 const releitura = async (id, motivo, extra = {}) => {
   const t0 = await ticket(id)
@@ -118,6 +151,28 @@ const semRelatorio = t => {
   assert.equal(t.relatorioAuto ?? null, null, 'nada no relatório automático')
   assert.equal(t.relatorioDia ?? null, null, 'nenhum dia de relatório')
   assert.equal(t.relatorioTexto ?? null, null, 'nenhuma linha de relatório')
+}
+
+/**
+ * A IA de verdade tem de APONTAR a frase do cliente que prova uma intenção de
+ * ação. A simulada faz o mesmo: procura a marca da intenção NO TEXTO QUE
+ * RECEBEU e devolve o trecho literal. Ela não inventa nada — se a mensagem não
+ * disser aquilo, a evidência sai vazia e o servidor descarta, exatamente como
+ * em produção. O corpo do cliente continua intocado; o que se deriva aqui é a
+ * SAÍDA da IA a partir da entrada, nunca o contrário.
+ */
+const textoDoCliente = u => {
+  const s = String(u ?? '')
+  const i = s.indexOf('é só isto que ele escreveu agora:')
+  return i < 0 ? s : s.slice(i + 'é só isto que ele escreveu agora:'.length)
+}
+const comEvidencia = (cls, user) => {
+  if (!cls || typeof cls !== 'object') return cls
+  if ('evidenciaIntencao' in cls) return cls // o teste declarou explicitamente
+  if (!INTENCOES_DE_ACAO.has(cls.intencao)) return { ...cls, evidenciaIntencao: '' }
+  // normalizado dos dois lados: as marcas são escritas sem acento
+  const m = normalizar(textoDoCliente(user)).match(RE_INTENCAO[cls.intencao])
+  return { ...cls, evidenciaIntencao: m ? m[0] : '' }
 }
 
 /* ---------- IA simulada: classificação roteirizada + escritor que OBEDECE ao prompt ---------- */
@@ -137,11 +192,11 @@ globalThis.fetch = async (u, o) => {
     const proximo = fila.shift()
     // 'erro' = a classificação falha de verdade (400 não é reenviado pelo SDK)
     if (proximo === 'erro') return new Response(JSON.stringify({ error: { message: 'falha simulada da classificação' } }), { status: 400, headers: { 'Content-Type': 'application/json' } })
-    return responder(proximo ?? {
+    return responder(comEvidencia(proximo ?? {
       intencao: 'reclamacao', motivo: 'tamanho', produtos: ['Polo Premium (Schwarz / L)'],
       ajustes: [{ produto: 'Polo Premium (Schwarz / L)', ajuste: 'pequeno' }], situacaoEntrega: 'nenhuma',
       endereco: '', resumo: 'produto ficou pequeno', idioma: 'de', idiomaConfiavel: true, spam: false,
-    })
+    }, corpo.messages?.[0]?.content))
   }
   // escritor: monta o texto com o que o PROMPT exige (prazo, cupom, percentual, ação).
   // Com escritaRuim ligado ele devolve um texto que NÃO nomeia a ação da etapa —
@@ -228,7 +283,7 @@ test('o rascunho aparece como agendado ou aguardando, NUNCA como enviado', async
   assert.ok(rascunho, 'o rascunho está na linha do tempo')
   assert.notEqual(rascunho.situacao, 'enviada')
   assert.equal(rascunho.naoEnviado, true)
-  assert.ok(['agendada', 'rascunho', 'bloqueada'].includes(rascunho.situacao))
+  assert.ok(['agendada', 'rascunho', 'aguardando_aprovacao'].includes(rascunho.situacao), 'situação real: ' + rascunho.situacao)
   // e o checklist calculado pelo servidor acompanha
   assert.ok(c.checklist, 'há checklist')
   assert.equal(c.checklist.itens.length, 16)
@@ -901,8 +956,11 @@ test('caso real: notificação de entrega citada não vira jornada de entrega �
   const an = t.atendimentoNovo
   const c = await auditoria(t.id)
 
-  // o que o servidor ACEITOU
-  assert.equal(c.classificacao.intencao, 'pede_reembolso', 'a intenção do texto novo vale')
+  // o que o servidor ACEITOU. A intenção de AÇÃO cai junto com a entrega: o
+  // texto novo do Kurt xinga a qualidade e não pede troca nem reembolso.
+  assert.equal(c.classificacao.intencao, 'outro', 'sem pedido no texto novo, a intenção de ação não vale')
+  assert.equal(c.classificacao.intencaoProposta, 'pede_reembolso', 'o que a IA propôs continua visível')
+  assert.equal(c.classificacao.intencaoDescartada, 'pede_reembolso')
   assert.equal(c.classificacao.motivo, 'qualidade', 'o motivo do texto novo vale')
   assert.equal(c.classificacao.entrega, null, 'a situação de entrega foi descartada')
   assert.deepEqual(c.classificacao.produtos, [], 'nenhum produto veio do trecho citado')
@@ -1138,6 +1196,375 @@ test('releitura recusada num ciclo que já respondeu ao cliente', async () => {
   assert.equal(rr.status, 409, 'ciclo com mensagem enviada não se relê')
   assert.match(rr.erro, /já foi respondida|já registrou/)
   semRelatorio(await ticket(id))
+})
+
+test('reclamar não é pedir: sem a frase do cliente a intenção de ação vira "outro"', async () => {
+  // o caso real do Kurt: ele xinga a qualidade e não pede troca nem reembolso.
+  // A IA propõe pede_troca; o servidor exige a frase e não encontra.
+  fila.push({
+    intencao: 'pede_troca', motivo: 'qualidade',
+    produtos: ['Polohemd mit langen Ärmeln (Grün / XL)', 'Polohemd mit langen Ärmeln (Hellblau / XL)'],
+    ajustes: [], situacaoEntrega: 'nenhuma', evidenciaEntrega: '', evidenciaIntencao: 'Das kann doch kein Mensch anziehen',
+    endereco: '', resumo: 'reclama da qualidade', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'kurt3@web.de', nome: 'Kurt', assunto: 'Aw: Eine Lieferung wurde zugestellt', corpo: CORPO_KURT, lojaId: 'loja1' })
+  const t = await ticket(r0.ticket.id)
+  const an = t.atendimentoNovo
+  const c = await auditoria(t.id)
+
+  // a intenção foi DESCARTADA, com os dois lados auditados
+  assert.equal(c.classificacao.intencaoProposta, 'pede_troca', 'o que a IA propôs fica registrado')
+  assert.equal(c.classificacao.intencao, 'outro', 'o que o servidor aceitou')
+  assert.equal(c.classificacao.intencaoDescartada, 'pede_troca')
+  assert.equal(c.classificacao.evidenciaIntencaoNoTextoAtual, false)
+  assert.match(c.classificacao.evidenciaIntencao, /kein Mensch anziehen/, 'a frase apontada fica registrada')
+  const d = c.classificacao.descartes.find(x => x.campo === 'intencao')
+  assert.ok(d, 'o descarte da intenção está na auditoria')
+  assert.equal(d.valor, 'pede_troca')
+  assert.match(d.motivo, /reclamar do produto ou pedir devolução não é isso/)
+
+  // e NADA disso muda a jornada nem a coleta: o motivo continua valendo
+  assert.equal(an.motivo, 'qualidade')
+  assert.equal(an.fluxo, 'qualidade')
+  assert.equal(an.transicaoPendente.para, 'coleta')
+  assert.deepEqual(an.transicaoPendente.faltando, ['produtos'])
+  assert.equal(an.proximaAposColeta, 'qual_troca')
+  semRelatorio(t)
+})
+
+test('pedido de verdade continua passando, com a frase do cliente registrada', async () => {
+  fila.push({
+    intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'quer troca', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const corpo = 'Das Polo Premium ist schlecht, ich möchte einen Umtausch.'
+  const r0 = await api('/api/simular-email', { de: 'c98@web.de', nome: 'C98', assunto: 'Bestellung #98', corpo, lojaId: 'loja1' })
+  const t = await ticket(r0.ticket.id)
+  const c = await auditoria(t.id)
+  assert.equal(c.classificacao.intencao, 'pede_troca', 'com a frase, o pedido vale')
+  assert.equal(c.classificacao.intencaoDescartada ?? null, null)
+  assert.equal(c.classificacao.evidenciaIntencaoNoTextoAtual, true)
+  // o auxiliar devolve o trecho normalizado (sem acento, minúsculo), como o
+  // servidor compara; o que importa é que ele exista mesmo no texto do cliente
+  assert.ok(normalizar(corpo).includes(normalizar(c.classificacao.evidenciaIntencao)), 'a frase apontada saiu do texto do cliente')
+  assert.equal(t.atendimentoNovo.transicaoPendente.para, 'qual_troca')
+})
+
+test('rascunho validado esperando você aparece em âmbar, nunca como bloqueado', async () => {
+  const c = await auditoria(globalThis.__idBase)
+  const rascunho = c.mensagens.find(m => m.chave === 'rascunho')
+  assert.ok(rascunho, 'o rascunho está na linha do tempo')
+  assert.notEqual(rascunho.situacao, 'bloqueada', 'aprovação humana não é bloqueio')
+  assert.equal(rascunho.naoEnviado, true)
+})
+
+test('cupom combinado com troca: oferta sem código, confirmação com o código, endereço antes', async () => {
+  // "qual_troca" é a oferta COMBINADA do mapa: troca + cupom de 15%. É o caso
+  // que mais importa aqui — a etapa oferece duas coisas e mesmo assim o código
+  // não pode sair antes do aceite.
+  const corpo = 'Das Polo Premium ist von schlechter Qualität, ich möchte einen Umtausch.'
+  fila.push({
+    intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'quer troca', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'c99@web.de', nome: 'C99', assunto: 'Bestellung #99', corpo, lojaId: 'loja1' })
+  let t = await ticket(r0.ticket.id)
+  const faseCupom = t.atendimentoNovo.transicaoPendente?.para
+  assert.equal(faseCupom, 'qual_troca', 'fase da oferta combinada')
+  const pct = cupomDaFaseTeste(faseCupom)
+  assert.equal(pct, 15, 'qual_troca oferece troca + cupom de 15%')
+  assert.match(t.rascunho, new RegExp(pct + '\\s?%'), 'a oferta informa o percentual')
+  assert.match(t.rascunho, /Gutschein|Rabattcode|coupon/i, 'a oferta diz que é cupom')
+  for (const cod of Object.values(CUPONS)) {
+    assert.ok(!t.rascunho.includes(cod), `o código ${cod} não pode aparecer na oferta`)
+  }
+  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env.status, 200, env.erro ?? '')
+
+  // 3) o cliente ACEITA — e o mapa pede o endereço ANTES de confirmar
+  fila.push({
+    intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'aceita', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Ja, gerne.' })
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoNovo.acaoAceita, faseCupom, 'o aceite ficou registrado')
+  assert.equal(t.atendimentoNovo.transicaoPendente?.para, 'endereco', 'o endereço vem antes da confirmação')
+  for (const cod of Object.values(CUPONS)) {
+    assert.ok(!String(t.rascunho).includes(cod), `o código ${cod} não pode sair no pedido de endereço`)
+  }
+  const env2 = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env2.status, 200, env2.erro ?? '')
+
+  // 4) o cliente manda o endereço completo → conclusão aguardando você
+  fila.push({
+    intencao: 'informa', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: 'Litschauer Strasse 38, 3950 Gmünd, Österreich',
+    resumo: 'endereço', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Litschauer Strasse 38, 3950 Gmünd, Österreich' })
+  t = await ticket(t.id)
+  assert.ok(t.atendimentoNovo.enderecoConfirmado, 'o endereço foi validado: ' + (t.atendimentoNovo.enderecoConfirmado ?? 'nenhum'))
+
+  // 5) CONFIRMAÇÃO aprovada por você: agora sim o código sai
+  const conf = await api(`/api/tickets/${t.id}/novo/confirmar`, {})
+  assert.equal(conf.status, 200, 'confirmação gerada: ' + (conf.erro ?? ''))
+  t = await ticket(t.id)
+  assert.ok(FASES_CONF.includes(t.atendimentoNovo.transicaoPendente?.para), 'fase de confirmação: ' + t.atendimentoNovo.transicaoPendente?.para)
+  assert.ok(String(t.rascunho).includes(CUPONS[pct]), `a confirmação entrega o código ${CUPONS[pct]}`)
+})
+
+// leva a conversa até a oferta combinada "qual_troca" (troca + cupom de 15%)
+async function ateOfertaCombinada(n) {
+  fila.push({
+    intencao: 'pede_troca', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'quer troca', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: `c${n}@web.de`, nome: 'C' + n, assunto: 'Bestellung #' + n, corpo: 'Das Polo Premium ist von schlechter Qualität, ich möchte einen Umtausch.', lojaId: 'loja1' })
+  let t = await ticket(r0.ticket.id)
+  assert.equal(t.atendimentoNovo.transicaoPendente.para, 'qual_troca', 'a etapa oferece troca + cupom de 15%')
+  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env.status, 200, env.erro ?? '')
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoNovo.etapa, 'qual_troca', 'a oferta combinada está em aberto')
+  return t
+}
+
+test('aceite PARCIAL de oferta combinada: nada é decidido sozinho e o motivo é o exato', async () => {
+  let t = await ateOfertaCombinada(120)
+  const etapaAntes = t.atendimentoNovo.etapa
+
+  // o cliente aceita SÓ o cupom de uma oferta que é troca + cupom
+  fila.push({
+    intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'aceita só o cupom', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Ja, nur den Gutschein.' })
+  t = await ticket(t.id)
+  const an = t.atendimentoNovo
+
+  // o caso é SEU, com o motivo exato
+  assert.equal(t.status, 'humano', 'aceite ambíguo vai para você')
+  assert.match(t.motivoEscalada, /aceite não é claro/, 'o motivo diz que o aceite não é claro')
+  assert.match(t.motivoEscalada, /limitou o aceite/, 'e diz exatamente o que houve: ' + t.motivoEscalada)
+
+  // e NADA foi decidido
+  assert.equal(an.acaoAceita ?? null, null, 'nenhuma ação aceita foi gravada')
+  assert.equal(an.transicaoPendente ?? null, null, 'nenhuma fase pendente')
+  assert.equal(an.etapa, etapaAntes, 'a fase não avançou')
+  assert.notEqual(an.etapa, 'endereco', 'o endereço não foi pedido')
+  assert.equal(an.conclusaoPendente ?? null, null, 'nenhuma conclusão foi aberta')
+  assert.equal(an.enderecoConfirmado ?? null, null)
+  assert.equal(t.enviaEm ?? null, null, 'nada agendado')
+  semRelatorio(t)
+
+  // a auditoria mostra os dois lados e marca a ambiguidade
+  const c = await auditoria(t.id)
+  assert.equal(c.classificacao.intencaoProposta, 'aceita')
+  assert.equal(c.classificacao.intencao, 'outro')
+  assert.equal(c.classificacao.aceiteAmbiguo, true)
+  const d = c.classificacao.descartes.find(x => x.campo === 'intencao')
+  assert.ok(d, 'o descarte da intenção está na auditoria')
+  assert.match(d.motivo, /o cupom/)
+  assert.equal(c.mensagens.filter(x => x.situacao === 'enviada').length, 1, 'só a oferta saiu; nada de confirmação')
+})
+
+test('aceitar a TROCA de uma oferta troca + cupom leva o pacote completo', async () => {
+  let t = await ateOfertaCombinada(121)
+  fila.push({
+    intencao: 'aceita', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'aceita a troca', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Ja, den Umtausch nehme ich.' })
+  t = await ticket(t.id)
+  const an = t.atendimentoNovo
+  assert.equal(an.acaoAceita, 'qual_troca', 'o aceite do pacote foi gravado')
+  assert.equal(an.transicaoPendente?.para, 'endereco', 'e o mapa segue pedindo o endereço')
+  semRelatorio(t)
+})
+
+const CORPO_2906 = [
+  'Sehr geehrte Damen und Herren,',
+  '',
+  'hiermit widerrufe ich meine Bestellung vom 10.09.2026.',
+  'Bestellnummer: #2906',
+  'Ich bitte Sie mir das Geld zurückzusenden.',
+  '',
+  'Mit freundlichen Grüßen',
+].join('\n')
+
+test('cliente revoga o PEDIDO INTEIRO: os três itens entram, sem coleta desnecessária', async () => {
+  // a IA nem precisa acertar os produtos: quem informou o conjunto foi o cliente
+  fila.push({
+    intencao: 'pede_cancelamento', motivo: 'nao_informado', produtos: [], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'revoga o pedido inteiro',
+    idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'c2906@web.de', nome: 'C2906', assunto: 'Widerruf', corpo: CORPO_2906, lojaId: 'loja1' })
+  const t = await ticket(r0.ticket.id)
+  const an = t.atendimentoNovo
+  const c = await auditoria(t.id)
+
+  // o pedido foi localizado e os TRÊS itens entraram
+  assert.equal(an.produtosInformados, true, 'o cliente informou o conjunto "pedido inteiro"')
+  assert.equal(an.produtosAfetados.length, 3, 'os três polos: ' + JSON.stringify(an.produtosAfetados))
+  for (const cor of ['Bleu Nuit', 'Noir Espresso', 'Bleu Côtier']) {
+    assert.ok(an.produtosAfetados.some(p => p.includes(cor)), 'falta ' + cor)
+  }
+  // e a auditoria diz de onde veio o conjunto — não foi o catálogo que inventou
+  assert.ok(c.classificacao.pedidoInteiroDeclarado, 'a declaração de pedido inteiro ficou registrada')
+  assert.equal(c.classificacao.pedidoInteiroDeclarado.numero, '#2906')
+
+  // NÃO foi para a coleta de produto
+  assert.notEqual(an.transicaoPendente?.para, 'coleta', 'não pergunta qual item a quem revogou tudo')
+  assert.ok(!(an.transicaoPendente?.faltando ?? []).includes('produtos'))
+  semRelatorio(t)
+})
+
+test('revogação NÃO se aplica: parte do pedido, dois pedidos possíveis, ou só na citação', async () => {
+  // 1) linguagem de PARTE do pedido: continua na coleta
+  fila.push({
+    intencao: 'pede_cancelamento', motivo: 'nao_informado', produtos: [], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'parte', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r1 = await api('/api/simular-email', { de: 'c2906@web.de', nome: 'C2906', assunto: 'Widerruf',
+    corpo: 'Ich möchte meine Bestellung #2906 widerrufen, aber nur eines der Poloshirts.', lojaId: 'loja1' })
+  const t1 = await ticket(r1.ticket.id)
+  assert.equal(t1.atendimentoNovo.produtosInformados, false, '"nur eines" não marca os três')
+  assert.deepEqual(t1.atendimentoNovo.produtosAfetados, [])
+  assert.equal(t1.atendimentoNovo.transicaoPendente?.para, 'coleta', 'continua perguntando qual')
+
+  // 2) DOIS pedidos possíveis e nenhum número no texto novo: não adivinha
+  fila.push({
+    intencao: 'pede_cancelamento', motivo: 'nao_informado', produtos: [], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'ambiguo', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r2 = await api('/api/simular-email', { de: 'cdup@web.de', nome: 'CDup', assunto: 'Widerruf',
+    corpo: 'Hiermit widerrufe ich meine Bestellung.', lojaId: 'loja1' })
+  const t2 = await ticket(r2.ticket.id)
+  assert.equal(t2.atendimentoNovo.produtosInformados, false, 'dois pedidos possíveis: não marca nada')
+  assert.equal(t2.atendimentoNovo.transicaoPendente?.para, 'coleta')
+
+  // 3) a revogação está SÓ no texto citado: não conta
+  const corpoCitado = [
+    'Und?',
+    '',
+    'Gesendet: Freitag, 18. September 2026 um 14:29',
+    'Von: "Von Alder" <store@t.shopifyemail.com>',
+    'Betreff: Ihre Bestellung',
+    '',
+    'hiermit widerrufe ich meine Bestellung vom 10.09.2026. Bestellnummer: #2906',
+  ].join('\n')
+  fila.push({
+    intencao: 'outro', motivo: 'nao_informado', produtos: [], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'citado', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r3 = await api('/api/simular-email', { de: 'c2906@web.de', nome: 'C2906', assunto: 'Aw: Widerruf', corpo: corpoCitado, lojaId: 'loja1' })
+  const t3 = await ticket(r3.ticket.id)
+  assert.equal(t3.atendimentoNovo.produtosInformados, false, 'revogação só na citação não vale')
+  const c3 = await auditoria(t3.id)
+  assert.equal(c3.classificacao.pedidoInteiroDeclarado ?? null, null)
+})
+
+// o caso real do Andreas: a resposta ANTERIOR da loja só existe no texto CITADO
+const CORPO_ANDREAS = [
+  'Leider ist die Rückerstattung noch nicht auf meinem Konto. Bitte kümmere dich.',
+  '',
+  'Gesendet: Montag, 15. September 2026 um 10:12',
+  'Von: "Von Alder" <support@vonalder.com>',
+  'An: andreas@web.de',
+  'Betreff: Ihre Bestellung #2567',
+  '',
+  'Ihre Rückerstattung von 74,00 € wurde genehmigt und wird in 5-7 Werktagen zurückerstattet.',
+].join('\n')
+
+test('cobrança de reembolso já prometido não entra na coleta e vai para você com o motivo exato', async () => {
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'nao_informado', produtos: [], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'cobra o reembolso',
+    idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'andreas@web.de', nome: 'Andreas', assunto: 'Aw: Ihre Bestellung #2567', corpo: CORPO_ANDREAS, lojaId: 'loja1' })
+  const t = await ticket(r0.ticket.id)
+  const an = t.atendimentoNovo
+
+  // o caso é SEU, com o motivo exato
+  assert.equal(t.status, 'humano', 'cobrança de reembolso vai para você')
+  assert.match(t.motivoEscalada, /cobrando reembolso anteriormente prometido\/processado/i)
+
+  // NADA de escada, produto, oferta, fase, conclusão ou relatório
+  assert.equal(an.transicaoPendente ?? null, null, 'nenhuma fase pendente')
+  assert.equal(t.rascunho ?? null, null, 'nenhuma oferta escrita')
+  assert.equal(an.etapa ?? null, null, 'nenhuma fase avançou')
+  assert.equal(an.acaoAceita ?? null, null)
+  assert.equal(an.conclusaoPendente ?? null, null)
+  assert.equal(an.pedirProduto ?? false, false, 'não pede produto')
+  assert.equal(an.acompanhamentoReembolso?.ativo, true, 'o marcador durável ficou gravado')
+  semRelatorio(t)
+
+  // o texto CITADO não vira intenção, produto nem endereço
+  assert.deepEqual(an.produtosAfetados ?? [], [], 'os polos do texto citado não entram')
+  assert.equal(an.produtosInformados ?? false, false)
+  assert.equal(an.enderecoInformado ?? null, null)
+
+  // sem prova no histórico da PRÓPRIA loja, o sistema avisa em vez de afirmar
+  assert.equal(an.acompanhamentoReembolso.provado, false, 'a resposta citada pelo cliente não é prova')
+  assert.match(t.motivoEscalada, /NÃO encontrou prova/, 'o dono é avisado: ' + t.motivoEscalada)
+  assert.doesNotMatch(t.motivoEscalada, /74,00/, 'nada do texto citado vira valor comprovado')
+
+  const c = await auditoria(t.id)
+  assert.ok(c.eventos.some(e => e.tipo === 'caso_para_humano' && e.dados?.origem === 'cobranca_reembolso'), 'a auditoria registra a cobrança')
+  assert.equal(c.mensagens.filter(m => m.situacao === 'enviada').length, 0, 'nada enviado')
+})
+
+test('cobrança de reembolso COM prova: a loja já disse o valor, e isso aparece para você', async () => {
+  // desce a escada de qualidade até um REEMBOLSO de verdade, e a loja envia a
+  // oferta — é essa mensagem enviada por ela que vira prova no histórico
+  const recusar = async (t) => {
+    fila.push({
+      intencao: 'recusa', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+      situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'recusa', idioma: 'de', idiomaConfiavel: true, spam: false,
+    })
+    await api('/api/simular-email', { ticketId: t.id, corpo: 'Nein, das reicht nicht.' })
+    return ticket(t.id)
+  }
+  fila.push({
+    intencao: 'pede_reembolso', motivo: 'qualidade', produtos: ['Polo Premium (Schwarz / L)'], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'quer reembolso',
+    idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  const r0 = await api('/api/simular-email', { de: 'c122@web.de', nome: 'C122', assunto: 'Bestellung #122',
+    corpo: 'Das Polo Premium ist schlecht, ich will mein Geld zurück.', lojaId: 'loja1' })
+  let t = await ticket(r0.ticket.id)
+  let voltas = 0
+  while (t.atendimentoNovo.transicaoPendente && !/^reemb_/.test(t.atendimentoNovo.transicaoPendente.para) && voltas++ < 4) {
+    const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+    assert.equal(env.status, 200, env.erro ?? '')
+    t = await recusar(t)
+  }
+  const faseReemb = t.atendimentoNovo.transicaoPendente?.para
+  assert.match(String(faseReemb), /^reemb_/, 'chegou numa fase de reembolso: ' + faseReemb)
+  assert.match(t.rascunho, /Rückerstattung/, 'a oferta fala de reembolso')
+  const env = await api(`/api/tickets/${t.id}/aprovar`, { texto: t.rascunho, origem: 'ia' })
+  assert.equal(env.status, 200, env.erro ?? '')
+
+  // o cliente COBRA o reembolso
+  fila.push({
+    intencao: 'pergunta_status', motivo: 'nao_informado', produtos: [], ajustes: [],
+    situacaoEntrega: 'nenhuma', evidenciaEntrega: '', endereco: '', resumo: 'cobra', idioma: 'de', idiomaConfiavel: true, spam: false,
+  })
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Wo bleibt meine Rückerstattung?' })
+  t = await ticket(t.id)
+
+  assert.equal(t.status, 'humano', 'a cobrança vai para você')
+  assert.match(t.motivoEscalada, /cobrando reembolso anteriormente prometido/i)
+  assert.equal(t.atendimentoNovo.acompanhamentoReembolso.provado, true, 'a mensagem que a PRÓPRIA loja enviou é prova')
+  assert.match(t.motivoEscalada, /Prova no histórico/)
+  assert.doesNotMatch(t.motivoEscalada, /NÃO encontrou prova/)
+  // e nenhuma oferta nova nasceu da cobrança
+  assert.equal(t.atendimentoNovo.transicaoPendente ?? null, null)
+  assert.equal(t.rascunho ?? null, null)
+  semRelatorio(t)
 })
 
 test('os auxiliares de ensaio não alteram o corpo da mensagem do cliente', async () => {
