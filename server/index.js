@@ -358,15 +358,49 @@ const emAtendimentoHumano = t => t?.atendimentoHumano?.ativo === true
  * envio aborta ANTES de chamar o canal (porque a conversa já é do dono), ou o
  * dono recebe 409 e tenta de novo quando o envio terminar. Nunca meio estado.
  */
-const travasDaConversa = new Set()
-const envioEmAndamento = id => travasDaConversa.has(id)
-function adquirirTrava(id) {
-  if (travasDaConversa.has(id)) return false
-  travasDaConversa.add(id)
-  return true
+const travasDaConversa = new Map()
+/** A chave inclui o WORKSPACE: dois clientes podem ter o mesmo id de ticket. */
+const chaveDaTrava = (wsId, id) => `${wsId ?? '?'}::${id}`
+/** Há um ENVIO em andamento nesta conversa? (só envio prende a tela) */
+const envioEmAndamento = (wsId, id) => travasDaConversa.get(chaveDaTrava(wsId, id))?.tipo === 'envio'
+
+class ConflitoDeTrava extends Error {
+  constructor(tipo) {
+    super(tipo === 'envio'
+      ? 'Existe um envio em andamento; aguarde a confirmação e tente novamente'
+      : 'Movimentação já está em andamento nesta conversa')
+    this.conflito = true
+    this.tipoEmAndamento = tipo
+  }
 }
-const liberarTrava = id => travasDaConversa.delete(id)
-const RECUSA_ENVIO_EM_ANDAMENTO = 'Existe um envio em andamento; aguarde a confirmação e tente novamente'
+
+/**
+ * Executa `fn` com exclusão mútua na conversa.
+ *
+ * Envio nunca espera e nunca é esperado: se houver qualquer operação em curso,
+ * ele falha na hora — e é isso que faz o e-mail abortar ANTES do canal quando o
+ * dono ganhou a corrida. As demais (mover, retomar, confirmar) enfileiram: o
+ * segundo clique espera o primeiro e cai na guarda de idempotência, em vez de
+ * receber um erro que mentiria dizendo "envio em andamento".
+ */
+async function comTravaDaConversa(wsId, id, tipo, fn) {
+  const k = chaveDaTrava(wsId, id)
+  for (;;) {
+    const atual = travasDaConversa.get(k)
+    if (!atual) break
+    if (atual.tipo === 'envio' || tipo === 'envio') throw new ConflitoDeTrava(atual.tipo)
+    await atual.fim.catch(() => {})
+  }
+  let liberar
+  const fim = new Promise(r => { liberar = r })
+  travasDaConversa.set(k, { tipo, fim })
+  try {
+    return await fn()
+  } finally {
+    travasDaConversa.delete(k)
+    liberar()
+  }
+}
 
 /** Erro pronto para as rotas que a IA não pode executar numa conversa humana. */
 const recusaHumano = acao => `Esta conversa está em atendimento humano: ${acao} está desligado até você retomar a IA.`
@@ -1461,8 +1495,8 @@ function visao(wsId) {
     // envioEmAndamento: a tela precisa saber que o canal está no meio de um
     // envio — para desabilitar "Mover para atendimento humano" em vez de
     // prometer um cancelamento que não existe
-    tickets: estado.tickets.map(t => (t.auditoriaIA || t.envioPendente || t.fotoAntesDoCiclo || envioEmAndamento(t.id)
-      ? { ...t, auditoriaIA: undefined, envioPendente: undefined, fotoAntesDoCiclo: undefined, envioEmAndamento: envioEmAndamento(t.id) || undefined } : t)),
+    tickets: estado.tickets.map(t => (t.auditoriaIA || t.envioPendente || t.fotoAntesDoCiclo || envioEmAndamento(wsId, t.id)
+      ? { ...t, auditoriaIA: undefined, envioPendente: undefined, fotoAntesDoCiclo: undefined, envioEmAndamento: envioEmAndamento(wsId, t.id) || undefined } : t)),
     politicas: estado.politicas,
     faqs: estado.faqs,
     comportamentos: estado.comportamentos ?? [],
@@ -2697,12 +2731,8 @@ function autorizacaoDoDono(ticket, conclusaoDoEnvio = null) {
 
 async function enviarResposta(wsId, ticket, texto, origem = 'manual', { disparo = 'dono' } = {}) {
   // a trava cobre TODO o envio, inclusive o await do canal e a gravação final
-  if (!adquirirTrava(ticket.id)) throw new Error(RECUSA_ENVIO_EM_ANDAMENTO)
-  try {
-    return await enviarRespostaTravada(wsId, ticket, texto, origem, { disparo })
-  } finally {
-    liberarTrava(ticket.id)
-  }
+  return comTravaDaConversa(wsId, ticket.id, 'envio', () =>
+    enviarRespostaTravada(wsId, ticket, texto, origem, { disparo }))
 }
 
 async function enviarRespostaTravada(wsId, ticket, texto, origem = 'manual', { disparo = 'dono' } = {}) {
@@ -4646,9 +4676,11 @@ async function lerMotivosFaltantes(estado, itens, limite = Infinity) {
       item.categoria = local?.categoria ?? 'nao_informado'
       item.provisorio = true
     }
-    // guarda na conversa: a próxima geração não paga por este caso de novo
+    // guarda na conversa: a próxima geração não paga por este caso de novo.
+    // Conversa assumida pelo dono fica INTOCADA aqui também — não basta pular a
+    // leitura: esta é a linha que grava, e sozinha já sujava o ticket.
     const t = porId.get(item.ticketId)
-    if (t) {
+    if (t && !t.atendimentoHumano?.ativo) {
       t.motivoReembolso = {
         motivo: item.motivo, categoria: item.categoria, em: new Date().toISOString(),
         ...(item.provisorio ? { local: true } : {}),
@@ -5421,6 +5453,8 @@ app.post('/api/tickets/:id/aprovar', async (req, res) => {
 
     salvar(req.wsId); ok(req, res)
   } catch (err) {
+    // conflito de trava não é falha de envio: é "espere e tente de novo"
+    if (err.conflito) return res.status(409).json({ erro: err.message, state: visao(req.wsId) })
     console.error('[enviar]', err)
     res.status(500).json({ erro: 'Falha ao enviar: ' + err.message, state: visao(req.wsId) })
   }
@@ -5449,11 +5483,11 @@ app.post('/api/tickets/:id/respondido', (req, res) => {
 app.post('/api/tickets/:id/atendimento-humano', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
   // um e-mail já entregue ao canal não volta: aqui a resposta é honesta
-  if (!adquirirTrava(t.id)) return res.status(409).json({ erro: RECUSA_ENVIO_EM_ANDAMENTO, state: visao(req.wsId) })
   try {
-    return await moverParaAtendimentoHumano(req, res, t)
-  } finally {
-    liberarTrava(t.id)
+    return await comTravaDaConversa(req.wsId, t.id, 'mover_humano', () => moverParaAtendimentoHumano(req, res, t))
+  } catch (err) {
+    if (err.conflito) return res.status(409).json({ erro: err.message, state: visao(req.wsId) })
+    throw err
   }
 })
 
@@ -5542,11 +5576,11 @@ async function moverParaAtendimentoHumano(req, res, t) {
  */
 app.post('/api/tickets/:id/retomar-ia', async (req, res) => {
   const t = acharTicket(req, res); if (!t) return
-  if (!adquirirTrava(t.id)) return res.status(409).json({ erro: RECUSA_ENVIO_EM_ANDAMENTO, state: visao(req.wsId) })
   try {
-    return await retomarIaDaConversa(req, res, t)
-  } finally {
-    liberarTrava(t.id)
+    return await comTravaDaConversa(req.wsId, t.id, 'retomar_ia', () => retomarIaDaConversa(req, res, t))
+  } catch (err) {
+    if (err.conflito) return res.status(409).json({ erro: err.message, state: visao(req.wsId) })
+    throw err
   }
 })
 

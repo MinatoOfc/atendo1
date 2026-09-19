@@ -89,7 +89,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137, 140, 141, 142, 150, 151, 152, 153, 154, 155]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137, 140, 141, 142, 150, 151, 152, 153, 154, 155, 156]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -116,10 +116,30 @@ estado.pedidos.push({
   status: 'transito', criadoEm: diasAtras(2), despachadoEm: diasAtras(1), lojaId: 'loja1',
   itens: [{ titulo: 'Polo Premium', variante: 'Schwarz / L', quantidade: 1, preco: 100 }],
 })
+// MESMO id de ticket em dois workspaces: é a prova de que a trava não é global.
+// Conversa clássica (loja2) para que o envio manual não dependa de fase nenhuma.
+const ticketDuplicado = (ws) => ({
+  id: 'dup-1', nome: 'Cliente Dup', de: 'dup@web.de', assunto: 'Bestellung dup',
+  corpo: 'Hallo, ich habe eine Frage.', lojaId: 'loja2', data: new Date().toISOString(),
+  lido: false, origem: 'cliente', categoria: 'outro', idioma: 'de', status: 'inbox',
+  motorAtendimento: 'classico', primeiroEmailEm: new Date().toISOString(), marcaWs: ws,
+})
+estado.tickets = [ticketDuplicado('teste')]
 writeFileSync(path.join(DIR, 'ws-teste.json'), JSON.stringify(estado))
+
+// segundo workspace, com o MESMO id de ticket
+const estado2 = estadoInicial()
+estado2.config.automacaoAtiva = true
+estado2.lojas = [loja({ id: 'loja1', nome: 'Outra Loja', verificacaoCupons: conferencia('loja1') }),
+  { id: 'loja2', nome: 'Outra Clássica', ativa: true, moeda: 'EUR', idioma: 'auto' }]
+estado2.tickets = [ticketDuplicado('teste2')]
+writeFileSync(path.join(DIR, 'ws-teste2.json'), JSON.stringify(estado2))
 writeFileSync(path.join(DIR, 'auth.json'), JSON.stringify({
   segredo: 'segredo-de-teste-'.padEnd(64, 'x'),
-  usuarios: [{ id: 'u1', email: 'teste@teste.local', nome: 'Teste', senhaHash: await hashSenha('senha-teste-1234'), workspaceId: 'teste' }],
+  usuarios: [
+    { id: 'u1', email: 'teste@teste.local', nome: 'Teste', senhaHash: await hashSenha('senha-teste-1234'), workspaceId: 'teste' },
+    { id: 'u2', email: 'outro@teste.local', nome: 'Outro', senhaHash: await hashSenha('senha-teste-1234'), workspaceId: 'teste2' },
+  ],
   sessoes: [],
 }))
 
@@ -132,6 +152,13 @@ const api = (rota, corpo, metodo = 'POST') => realFetch(url + rota, {
   body: metodo === 'GET' ? undefined : JSON.stringify(corpo ?? {}),
 }).then(async r => ({ status: r.status, ...(await r.json()) }))
 const ticket = async id => (await api('/api/state', null, 'GET')).state.tickets.find(t => t.id === id)
+// sessão separada do segundo workspace
+let cookie2 = ''
+const api2 = (rota, corpo, metodo = 'POST') => realFetch(url + rota, {
+  method: metodo, headers: { 'Content-Type': 'application/json', cookie: cookie2 },
+  body: metodo === 'GET' ? undefined : JSON.stringify(corpo ?? {}),
+}).then(async r => ({ status: r.status, ...(await r.json()) }))
+const ticket2 = async id => (await api2('/api/state', null, 'GET')).state.tickets.find(t => t.id === id)
 const auditoria = async id => (await api(`/api/auditoria/${id}`, null, 'GET')).conversa
 const esperar = ms => new Promise(r => setTimeout(r, ms))
 // percentual do cupom de uma fase, direto do mapa (sem duplicar a tabela aqui)
@@ -179,9 +206,12 @@ const comEvidencia = (cls, user) => {
 const fila = []
 let escritaRuim = false
 let escritaErro = false
+// quantas vezes a IA foi realmente chamada: é o que prova "zero leitura"
+let chamadasIA = 0
 globalThis.fetch = async (u, o) => {
   const alvo = String(u)
   if (!/anthropic/.test(alvo)) return realFetch(u, o)
+  chamadasIA++
   const corpo = JSON.parse(o.body)
   const sys = corpo.system ?? ''
   const responder = dados => new Response(JSON.stringify({
@@ -245,6 +275,9 @@ before(async () => {
   await esperar(2000)
   const login = await realFetch(url + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'teste@teste.local', senha: 'senha-teste-1234' }) })
   assert.equal(login.status, 200, 'login de teste')
+  const login2 = await realFetch(url + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'outro@teste.local', senha: 'senha-teste-1234' }) })
+  assert.equal(login2.status, 200, 'login do segundo workspace')
+  cookie2 = login2.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
   cookie = login.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
 })
 after(async () => { globalThis.fetch = realFetch; await servidor.encerrar(); try { rmSync(DIR, { recursive: true, force: true }) } catch {} })
@@ -1993,13 +2026,13 @@ test('falha do canal: o envio não trava a conversa e o dono consegue assumir de
 
 test('clique duplo e clique simultâneo em "Mover para humano": um só efeito', async () => {
   const t = await conversaComRascunho(153)
-  // dois cliques ao mesmo tempo
+  // COMPORTAMENTO ESCOLHIDO: mover NÃO conflita com mover. O segundo clique
+  // espera o primeiro na fila da trava e cai na guarda de idempotência, então
+  // os DOIS respondem 200. Dizer "existe um envio em andamento" aqui seria
+  // mentira: não há envio nenhum.
   const [r1, r2] = await Promise.all([mover(t.id), mover(t.id)])
-  // os dois podem responder 200: quem chega depois cai na guarda de idempotencia
-  // e nao faz nada. O 409 e para ENVIO em andamento, nao para clique repetido.
-  // O que importa e o efeito: um unico evento e um unico estado.
-  for (const r of [r1, r2]) assert.ok([200, 409].includes(r.status), 'resposta esperada: ' + r.status + ' ' + (r.erro ?? ''))
-  assert.ok([r1.status, r2.status].includes(200), 'pelo menos um clique teve efeito')
+  assert.equal(r1.status, 200, 'primeiro clique: ' + (r1.erro ?? ''))
+  assert.equal(r2.status, 200, 'segundo clique também responde 200 (idempotente): ' + (r2.erro ?? ''))
 
   const depois = await ticket(t.id)
   assert.equal(depois.atendimentoHumano.ativo, true)
@@ -2032,39 +2065,133 @@ test('retomar a IA também respeita a trava do envio em andamento', async () => 
   assert.equal((await retomar(t.id, 'aguardar')).status, 200)
 })
 
+test('a trava é por WORKSPACE: o mesmo id de ticket em outro cliente não é afetado', async () => {
+  // 'dup-1' existe nos dois workspaces, de propósito
+  const meu = await ticket('dup-1')
+  const doOutro = await ticket2('dup-1')
+  assert.ok(meu && doOutro, 'o id existe nos dois workspaces')
+  assert.equal(meu.marcaWs, 'teste')
+  assert.equal(doOutro.marcaWs, 'teste2', 'e são tickets diferentes')
+
+  await comAtraso(1500, async () => {
+    // envio em voo no workspace 1
+    const enviando = api(`/api/tickets/dup-1/aprovar`, { texto: 'Guten Tag, ich melde mich.', origem: 'manual' })
+    await esperar(300)
+
+    // no workspace 1 a conversa está travada
+    const meuDurante = await ticket('dup-1')
+    assert.equal(meuDurante.envioEmAndamento, true, 'ws1 mostra envio em andamento')
+    const bloqueado = await mover('dup-1')
+    assert.equal(bloqueado.status, 409, 'ws1 recusa mover durante o envio')
+
+    // no workspace 2, o MESMO id não é afetado
+    const outroDurante = await ticket2('dup-1')
+    assert.equal(outroDurante.envioEmAndamento ?? false, false, 'ws2 NÃO mostra envio em andamento')
+    const livre = await api2('/api/tickets/dup-1/atendimento-humano', { confirmar: true, motivo: 'outro workspace' })
+    assert.equal(livre.status, 200, 'ws2 move normalmente durante o envio do ws1: ' + (livre.erro ?? ''))
+
+    const r = await enviando
+    assert.equal(r.status, 200, 'o envio do ws1 terminou: ' + (r.erro ?? ''))
+  })
+
+  // e cada workspace ficou com o seu próprio estado
+  assert.equal((await ticket('dup-1')).atendimentoHumano ?? null, null, 'ws1 não foi assumido')
+  assert.equal((await ticket2('dup-1')).atendimentoHumano.ativo, true, 'ws2 foi assumido')
+  assert.equal((await ticket2('dup-1')).marcaWs, 'teste2')
+})
+
 /* ====== os dois leitores da IA nunca tocam a conversa assumida ====== */
 
 test('a IA não lê conversa assumida: nem migração central, nem motivo do relatório', async () => {
-  // conversa CLÁSSICA (loja2) e conversa do motor NOVO (loja1), ambas assumidas
-  const rc = await api('/api/simular-email', { de: 'c155@web.de', nome: 'C155', assunto: 'Bestellung #155', corpo: CORPO_PADRAO, lojaId: 'loja2' })
-  const classica = await ticket(rc.ticket.id)
-  assert.equal(classica.motorAtendimento, 'classico')
+  const { ehCandidatoMigracao } = await import('../shared/central.js')
+
+  // Conversa CLÁSSICA que os dois leitores realmente enxergam. A elegibilidade
+  // é PROVADA antes de assumir — sem isso o teste passaria mesmo sem guarda
+  // nenhuma, que foi o que aconteceu na primeira versão deste teste.
+  const r0 = await api('/api/simular-email', { de: 'k901@web.de', nome: 'K901', assunto: 'Rückerstattung #901',
+    corpo: 'Ich möchte eine Rückerstattung, bitte erstatten Sie mir mein Geld zurück.', lojaId: 'loja2' })
+  let classica = await ticket(r0.ticket.id)
+  assert.equal(classica.motorAtendimento, 'classico', 'nasceu clássica')
+
+  // entra no relatório do dia com linha de reembolso: vira caso do leitor
+  const marcado = await api(`/api/tickets/${classica.id}/relatorio`, { adicionar: true, texto: 'Reembolso de 100% ao cliente' })
+  assert.equal(marcado.status, 200, marcado.erro ?? '')
+  classica = await ticket(classica.id)
+  assert.ok(classica.relatorioDia, 'entrou no relatório do dia')
+
+  // PROVA DE ELEGIBILIDADE: com a conversa livre, o leitor chama a IA e grava
+  const chamadasAntesDaProva = chamadasIA
+  const prova = await api('/api/relatorio-reembolsos', {})
+  assert.equal(prova.status, 200, prova.erro ?? '')
+  assert.ok(chamadasIA > chamadasAntesDaProva, 'o leitor de motivos chama a IA quando pode')
+  classica = await ticket(classica.id)
+  assert.ok(classica.motivoReembolso, 'e grava o motivo na conversa')
+
+  // SEGUNDA classica: FORA do relatorio (estar no relatorio exclui da migracao),
+  // com categoria de reembolso — essa e a candidata da migracao central
+  const r1 = await api('/api/simular-email', { de: 'k902@web.de', nome: 'K902', assunto: 'Rückerstattung #902',
+    corpo: 'Ich möchte eine Rückerstattung, bitte erstatten Sie mir mein Geld zurück.', lojaId: 'loja2' })
+  let candidata = await ticket(r1.ticket.id)
+  // entra no relatorio, e lida (ganha motivoReembolso) e SAI do relatorio: fora
+  // dele e com motivo guardado, ela e candidata a migracao — tudo por rota real
+  assert.equal((await api(`/api/tickets/${candidata.id}/relatorio`, { adicionar: true, texto: 'Reembolso de 100% ao cliente' })).status, 200)
+  assert.equal((await api('/api/relatorio-reembolsos', {})).status, 200)
+  candidata = await ticket(candidata.id)
+  assert.ok(candidata.motivoReembolso, 'o leitor gravou o motivo nela')
+  assert.equal((await api(`/api/tickets/${candidata.id}/relatorio`, { adicionar: false })).status, 200)
+  candidata = await ticket(candidata.id)
+  assert.equal(candidata.relatorioDia ?? null, null, 'saiu do relatorio')
+  assert.equal(ehCandidatoMigracao(candidata), true, 'e agora E candidata a migracao')
+
+  // conversa do MOTOR NOVO, com pedido e e-mail próprios
+  const nova = await conversaComRascunho(156)
+  assert.equal(nova.motorAtendimento, 'novo', 'nasceu no motor novo')
+  assert.ok(nova.atendimentoNovo, 'com estado do motor novo')
+
+  // AGORA as duas são do dono
   assert.equal((await mover(classica.id)).status, 200)
+  assert.equal((await mover(candidata.id)).status, 200)
+  assert.equal((await mover(nova.id)).status, 200)
+  assert.equal(ehCandidatoMigracao(await ticket(candidata.id)), false, 'assumida deixa de ser candidata a migracao')
 
-  const nova = await conversaComRascunho(150 + 5 - 5 + 0 || 150) // reaproveita a 150, já assumida
-  void nova
+  // mensagem nova do cliente: torna o motivo "vencido" e faria o leitor RELER —
+  // é exatamente a condição que a guarda precisa barrar
+  await api('/api/simular-email', { ticketId: classica.id, corpo: 'Und wann kommt das Geld?' })
 
-  const antesClassica = JSON.stringify(await ticket(classica.id))
-  const custoAntes = (await api('/api/state', null, 'GET')).state.lojas.map(l => l.gastoIA ?? 0).join(',')
+  const foto = async id => {
+    const t = await ticket(id)
+    return { ticket: JSON.stringify(t), inferencia: t.inferenciaCentral ?? null, motivo: JSON.stringify(t.motivoReembolso ?? null), humano: t.atendimentoHumano?.ativo }
+  }
+  const antes = { classica: await foto(classica.id), candidata: await foto(candidata.id), nova: await foto(nova.id) }
+  const gastoAntes = JSON.stringify((await api('/api/state', null, 'GET')).state.lojas.map(l => l.gastoIA ?? 0))
+  const chamadasAntes = chamadasIA
+  for (const f of Object.values(antes)) assert.equal(f.humano, true, 'as tres estao em atendimento humano')
 
-  // a conversa assumida não aparece como pendente de migração
-  const mig = await api('/api/central/migrar', { limite: 50, forcar: true })
+  // (a) MIGRAÇÃO CENTRAL
+  const mig = await api('/api/central/migrar', { limite: 100, forcar: true })
   assert.equal(mig.status, 200, mig.erro ?? '')
-  const depoisClassica = await ticket(classica.id)
-  assert.equal(JSON.stringify(depoisClassica), antesClassica, 'o ticket assumido não mudou nada')
-  assert.equal(depoisClassica.inferenciaCentral ?? null, null, 'nenhuma inferência da IA')
-  assert.equal(depoisClassica.atendimentoHumano.ativo, true, 'o estado humano continua')
+  for (const nome of ['classica', 'candidata', 'nova']) {
+    const id = nome === 'classica' ? classica.id : nome === 'candidata' ? candidata.id : nova.id
+    const agora = await foto(id)
+    assert.equal(agora.ticket, antes[nome].ticket, nome + ': ticket byte a byte idêntico depois da migração')
+    assert.equal(agora.inferencia, null, nome + ': nenhuma inferência da IA')
+    assert.equal(agora.humano, true, nome + ': atendimento humano preservado')
+  }
 
-  // e o custo da loja não subiu por causa dela
-  const custoDepois = (await api('/api/state', null, 'GET')).state.lojas.map(l => l.gastoIA ?? 0).join(',')
-  assert.equal(custoDepois, custoAntes, 'nenhum custo novo')
+  // (b) LEITOR DE MOTIVOS, pela rota real
+  const rel = await api('/api/relatorio-reembolsos', {})
+  assert.equal(rel.status, 200, rel.erro ?? '')
+  for (const nome of ['classica', 'candidata', 'nova']) {
+    const id = nome === 'classica' ? classica.id : nome === 'candidata' ? candidata.id : nova.id
+    const agora = await foto(id)
+    assert.equal(agora.ticket, antes[nome].ticket, nome + ': ticket byte a byte idêntico depois do leitor')
+    assert.equal(agora.motivo, antes[nome].motivo, nome + ': nenhum motivo novo')
+    assert.equal(agora.humano, true, nome + ': atendimento humano preservado')
+  }
 
-  // o motivo do relatório também não é lido
-  const rel = await api('/api/relatorio/atualizar', { dias: 90 })
-  assert.ok([200, 400, 404].includes(rel.status), 'a rota respondeu: ' + rel.status)
-  const final = await ticket(classica.id)
-  assert.equal(final.motivoReembolso ?? null, null, 'nenhum motivo lido pela IA')
-  assert.equal(JSON.stringify(final), antesClassica, 'e o ticket continua idêntico')
+  // ZERO chamada à IA e ZERO custo por causa das duas
+  assert.equal(chamadasIA, chamadasAntes, 'nenhuma chamada à IA: ' + (chamadasIA - chamadasAntes) + ' a mais')
+  assert.equal(JSON.stringify((await api('/api/state', null, 'GET')).state.lojas.map(l => l.gastoIA ?? 0)), gastoAntes, 'nenhum custo novo')
 })
 
 test('os auxiliares de ensaio não alteram o corpo da mensagem do cliente', async () => {
