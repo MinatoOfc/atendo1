@@ -89,7 +89,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137, 140, 141, 142, 150, 151, 152, 153, 154, 155, 156]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137, 140, 141, 142, 150, 151, 152, 153, 154, 155, 156, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -208,8 +208,25 @@ let escritaRuim = false
 let escritaErro = false
 // quantas vezes a IA foi realmente chamada: é o que prova "zero leitura"
 let chamadasIA = 0
+// Google Tradutor SIMULADO: o mecanismo gratuito é exercitado de verdade
+// (server/traducao.js), mas nada sai para a internet. googleFalha = true faz
+// o serviço responder 400 — que aborta na hora, sem armar o bloqueio global
+// de 429 que envenenaria os testes seguintes deste mesmo processo.
+let googleFalha = false
+let chamadasGoogle = 0
 globalThis.fetch = async (u, o) => {
   const alvo = String(u)
+  if (/translate_a\/single/.test(alvo)) {
+    chamadasGoogle++
+    if (googleFalha) return new Response('nope', { status: 400 })
+    const texto = decodeURIComponent(String(o?.body ?? '').replace(/^q=/, '').replace(/\+/g, ' '))
+    // tradução de MENTIRA mas com o comportamento que importa: sai português de
+    // verdade (nenhuma palavra do original sobra) e os números, percentuais,
+    // moedas, códigos e números de pedido continuam visíveis
+    const marcas = texto.match(/\d+(?:[.,]\d+)?\s?%|\d+(?:[.,]\d+)?\s?€|[A-Z]{3,}\d+|#\d+/g) ?? []
+    const pt = 'Tradução em português desta mensagem, apenas para você conferir.' + (marcas.length ? ' ' + marcas.join(' ') : '')
+    return new Response(JSON.stringify([[[pt, texto, null, null, 10]], null, 'de']), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
   if (!/anthropic/.test(alvo)) return realFetch(u, o)
   chamadasIA++
   const corpo = JSON.parse(o.body)
@@ -2429,4 +2446,342 @@ test('retenção: passar de 400 eventos não apaga nada em silêncio', async () 
   assert.ok('historicoCompleto' in c)
   assert.equal(c.historicoCompleto, true, 'sem corte, o histórico é completo')
   assert.equal(c.retencao, null)
+})
+
+/* ================================================================== */
+/* "Revisar e enviar" na Auditoria: reconferência no instante do envio */
+/* ================================================================== */
+
+/**
+ * O que a TELA estava vendo, montado a partir do payload REAL da Auditoria.
+ * É exatamente isto que o modal devolve ao servidor no instante do envio.
+ * Repare que o TEXTO não entra aqui: o hash é do rascunho-BASE, e o texto
+ * final pode ter sido editado pelo dono.
+ */
+const esperadoDe = c => ({
+  workspaceId: c.envio.workspaceId, lojaId: c.envio.lojaId,
+  cicloId: c.envio.cicloId, tentativaId: c.envio.tentativaId,
+  mensagemEm: c.envio.mensagemEm, rascunhoHash: c.envio.rascunhoHash,
+  fase: c.proximaPermitida, idioma: c.idioma,
+  percentual: c.envio.percentual, valor: c.envio.valor, cupom: c.envio.cupom,
+  prazo: c.envio.prazo, minimoEnvio: c.envio.minimoEnvio,
+})
+const confirmarEnvio = (id, texto, esperado, extra = {}) =>
+  api(`/api/tickets/${id}/aprovar`, { texto, origem: 'ia', esperado, ...extra })
+const enviadosDe = async id => (await auditoria(id)).eventos.filter(e => e.tipo === 'email_enviado')
+
+test('modal de uma resposta validada: o payload traz tudo o que a revisão precisa', async () => {
+  const t = await conversaComRascunho(160)
+  const c = await auditoria(t.id)
+  const e = c.envio
+
+  assert.equal(e.estado, 'aguardando_aprovacao', 'estado do envio')
+  assert.equal(e.podeRevisar, true, 'o botão principal aparece')
+  assert.equal(e.rascunhoValidado, true, 'com rascunho validado')
+  // cliente, pedido, loja remetente, mensagem atual do cliente, fase, idioma
+  assert.equal(c.cliente, 'C160')
+  assert.equal(c.pedido, '160')
+  assert.equal(c.loja, 'Loja Nova')
+  assert.equal(e.mensagemAtual, CORPO_PADRAO, 'a mensagem atual do cliente')
+  assert.ok(c.proximaPermitida, 'a fase permitida')
+  assert.equal(c.idioma, 'de', 'o idioma da conversa')
+  // texto ORIGINAL completo que será enviado — no idioma do cliente
+  assert.equal(e.rascunho, t.rascunho, 'o texto original completo')
+  assert.ok(/[A-Za-zÄÖÜäöüß]/.test(e.rascunho) && !/^Olá/.test(e.rascunho), 'no idioma do cliente')
+  assert.equal(e.rascunhoHash.length, 32, 'com identidade própria (hash do rascunho-base)')
+  // checklist, cadência e canal
+  assert.ok(c.checklist && c.checklist.itens.length > 0, 'checklist da tentativa')
+  assert.ok('minimo' in c.cadencia, 'horário mínimo da cadência')
+  assert.equal(e.canal.configurado, true, 'canal de e-mail configurado')
+  assert.equal(e.canal.propria, true, 'e é a conta da própria loja')
+  assert.equal(e.canal.endereco, 'loja1@teste.local')
+  // ciclo e tentativa atuais, para a reconferência
+  assert.equal(e.cicloId, t.cicloAuditoria)
+  assert.equal(e.tentativaId, t.atendimentoNovo.tentativaAtual)
+  assert.equal(e.workspaceId, 'teste')
+  assert.equal(e.enviada, null, 'ainda não saiu nada')
+})
+
+test('conversa bloqueada: sem botão de envio, e o servidor recusa se alguém insistir', async () => {
+  escritaRuim = true
+  fila.push(clsPadrao())
+  const r0 = await api('/api/simular-email', { de: 'c161@web.de', nome: 'C161', assunto: 'Bestellung #161', corpo: CORPO_PADRAO, lojaId: 'loja1' })
+  escritaRuim = false
+  const t = await ticket(r0.ticket.id)
+  const c = await auditoria(t.id)
+  assert.ok(c.eventos.some(e => e.tipo === 'rascunho_bloqueado'), 'o validador recusou mesmo')
+
+  assert.equal(c.envio.estado, 'bloqueada', 'a Auditoria mostra "Bloqueada — não enviada"')
+  assert.equal(c.envio.podeRevisar, false, 'e NUNCA mostra confirmação de envio')
+  assert.equal(c.envio.rascunhoValidado, false)
+
+  // o botão escondido não é a prova: o servidor também recusa
+  const recusado = [...c.eventos].reverse().find(e => e.tipo === 'rascunho_bloqueado')
+  const r = await confirmarEnvio(t.id, recusado.dados.texto, esperadoDe(c))
+  assert.equal(r.status, 409, 'recusado: ' + (r.erro ?? ''))
+  assert.match(r.erro, /validador recusou/)
+  assert.equal(r.desatualizado, true)
+  assert.equal((await enviadosDe(t.id)).length, 0, 'zero e-mails enviados')
+})
+
+test('mensagem nova do cliente entre abrir o modal e confirmar: a aprovação perde a validade', async () => {
+  const t = await conversaComRascunho(162)
+  const c = await auditoria(t.id) // o dono abre o modal AQUI
+  const esperado = esperadoDe(c)
+
+  // o cliente escreve de novo enquanto o modal está aberto
+  fila.push(clsPadrao())
+  await api('/api/simular-email', { ticketId: t.id, corpo: 'Noch eine Frage: wann kommt die Antwort?' })
+
+  const r = await confirmarEnvio(t.id, c.envio.rascunho, esperado)
+  assert.equal(r.status, 409, r.erro ?? '')
+  assert.match(r.erro, /mensagem nova do cliente/)
+  assert.equal(r.desatualizado, true)
+  assert.equal((await enviadosDe(t.id)).length, 0, 'nada foi enviado')
+})
+
+test('tentativa e ciclo antigos não podem ser enviados', async () => {
+  const t = await conversaComRascunho(163)
+  const c = await auditoria(t.id)
+  const base = esperadoDe(c)
+
+  const rTent = await confirmarEnvio(t.id, c.envio.rascunho, { ...base, tentativaId: 'tent-inventada' })
+  assert.equal(rTent.status, 409, rTent.erro ?? '')
+  assert.match(rTent.erro, /tentativa não é mais a atual/)
+
+  const rCiclo = await confirmarEnvio(t.id, c.envio.rascunho, { ...base, cicloId: 'ciclo-inventado' })
+  assert.equal(rCiclo.status, 409, rCiclo.erro ?? '')
+  assert.match(rCiclo.erro, /ciclo da conversa não é mais o atual/)
+
+  // e o rascunho-base que mudou (a IA reescreveu) também barra
+  const rHash = await confirmarEnvio(t.id, c.envio.rascunho, { ...base, rascunhoHash: 'f'.repeat(32) })
+  assert.equal(rHash.status, 409, rHash.erro ?? '')
+  assert.match(rHash.erro, /rascunho mudou/)
+
+  assert.equal((await enviadosDe(t.id)).length, 0, 'nenhuma das três tentativas enviou nada')
+})
+
+test('edição legítima do dono NÃO falha por mudar o hash — o hash é do rascunho-base', async () => {
+  const t = await conversaComRascunho(164)
+  const c = await auditoria(t.id)
+  const esperado = esperadoDe(c)
+  const editado = c.envio.rascunho + ' Vielen Dank für Ihre Geduld.'
+  assert.notEqual(editado, c.envio.rascunho, 'o texto final é diferente do rascunho-base')
+
+  const r = await confirmarEnvio(t.id, editado, esperado)
+  assert.equal(r.status, 200, 'a edição passa: ' + (r.erro ?? ''))
+
+  const depois = await ticket(t.id)
+  assert.equal(depois.resposta, editado, 'saiu EXATAMENTE o texto editado pelo dono')
+  const ev = (await enviadosDe(t.id)).at(-1)
+  assert.ok(ev, 'com evento de envio')
+  // a alteração fica registrada na fase, não some
+  const fase = depois.atendimentoNovo.historicoEtapas.at(-1)
+  assert.match(String(fase.observacao ?? ''), /editado por você/, 'a fase registra que o dono alterou o texto')
+})
+
+test('edição inválida é recusada pelo servidor (a revisão não pula a validação da fase)', async () => {
+  const t = await conversaComRascunho(165)
+  const c = await auditoria(t.id)
+  const r = await confirmarEnvio(t.id, 'Hallo, alles gut. Bis bald!', esperadoDe(c))
+  assert.equal(r.status, 400, r.erro ?? '')
+  assert.match(r.erro, /não pertence à etapa/)
+  assert.equal((await enviadosDe(t.id)).length, 0, 'nada enviado')
+})
+
+test('conversa movida para atendimento humano com o modal aberto: o envio da IA é recusado', async () => {
+  const t = await conversaComRascunho(166)
+  const c = await auditoria(t.id)
+  const esperado = esperadoDe(c)
+
+  assert.equal((await mover(t.id)).status, 200)
+  const r = await confirmarEnvio(t.id, c.envio.rascunho, esperado)
+  assert.equal(r.status, 409, r.erro ?? '')
+  assert.equal((await enviadosDe(t.id)).length, 0, 'nada enviado')
+  // e a Auditoria passa a mostrar só o estado humano
+  const depois = await auditoria(t.id)
+  assert.equal(depois.envio.estado, 'humano')
+  assert.equal(depois.envio.podeRevisar, false)
+})
+
+test('envio em andamento: o botão fica desabilitado e um segundo clique é recusado', async () => {
+  const t = await conversaComRascunho(167)
+  const c = await auditoria(t.id)
+  const esperado = esperadoDe(c)
+
+  await comAtraso(1200, async () => {
+    const primeiro = confirmarEnvio(t.id, c.envio.rascunho, esperado)
+    await esperar(300)
+    // a Auditoria mostra "Envio em andamento" e desliga o botão
+    const durante = await auditoria(t.id)
+    assert.equal(durante.envio.estado, 'em_andamento')
+    assert.equal(durante.envio.podeRevisar, false, 'botão desabilitado durante o envio')
+    // segunda aba tentando o mesmo envio
+    const segundo = await confirmarEnvio(t.id, c.envio.rascunho, esperado)
+    assert.equal(segundo.status, 409, 'a segunda aba é recusada')
+    assert.match(segundo.erro, /envio em andamento/)
+    assert.equal((await primeiro).status, 200, 'o primeiro envio terminou')
+  })
+  assert.equal((await enviadosDe(t.id)).length, 1, 'UM único e-mail')
+})
+
+test('clique duplo: um único envio e um único Message-ID', async () => {
+  const t = await conversaComRascunho(168)
+  const c = await auditoria(t.id)
+  const esperado = esperadoDe(c)
+
+  const [r1, r2] = await Promise.all([
+    confirmarEnvio(t.id, c.envio.rascunho, esperado),
+    confirmarEnvio(t.id, c.envio.rascunho, esperado),
+  ])
+  const oks = [r1, r2].filter(r => r.status === 200)
+  assert.equal(oks.length, 1, 'exatamente um clique enviou: ' + JSON.stringify([r1.status, r2.status]))
+  assert.equal([r1, r2].find(r => r.status !== 200).status, 409, 'o outro é recusado, não é erro de envio')
+
+  const enviados = await enviadosDe(t.id)
+  assert.equal(enviados.length, 1, 'UM evento de envio')
+  const ids = new Set(enviados.map(e => e.dados.mensagemId))
+  assert.equal(ids.size, 1, 'UM único Message-ID')
+  assert.ok([...ids][0], 'com Message-ID de verdade')
+
+  // sucesso: a Auditoria mostra Message-ID, horário e confirmação do canal
+  const depois = await auditoria(t.id)
+  assert.equal(depois.envio.estado, 'enviada')
+  assert.equal(depois.envio.podeRevisar, false, 'nunca um segundo envio')
+  assert.equal(depois.envio.enviada.mensagemId, [...ids][0])
+  assert.ok(Date.parse(depois.envio.enviada.em) > 0, 'com horário')
+  assert.equal(depois.envio.enviada.canalConfirmou, true, 'e confirmação do canal')
+
+  // e uma terceira tentativa com o MESMO estado é recusada
+  const terceiro = await confirmarEnvio(t.id, c.envio.rascunho, esperado)
+  assert.equal(terceiro.status, 409, terceiro.erro ?? '')
+  // pelo motivo CERTO: já foi enviada (e não só porque o rascunho sumiu)
+  assert.match(terceiro.erro, /já foi enviada ao cliente/)
+  assert.equal((await enviadosDe(t.id)).length, 1, 'continua UM envio só')
+})
+
+test('falha do canal não confirma a fase nem marca a conversa como respondida', async () => {
+  const t = await conversaComRascunho(169)
+  const c = await auditoria(t.id)
+  const faseAntes = (await ticket(t.id)).atendimentoNovo.etapa ?? null
+
+  process.env.ATENDO_SMTP_FAKE = 'falha'
+  let r
+  try { r = await confirmarEnvio(t.id, c.envio.rascunho, esperadoDe(c)) }
+  finally { process.env.ATENDO_SMTP_FAKE = 'ok' }
+
+  assert.equal(r.status, 500, 'o envio falhou de verdade: ' + (r.erro ?? ''))
+  const depois = await ticket(t.id)
+  assert.equal(depois.atendimentoNovo.etapa ?? null, faseAntes, 'a fase NÃO foi confirmada')
+  assert.equal(depois.respondidoEm ?? null, null, 'a conversa não conta como respondida')
+  const cd = await auditoria(t.id)
+  assert.equal(cd.eventos.filter(e => e.tipo === 'email_enviado').length, 0, 'nenhum e-mail enviado')
+  assert.ok(cd.eventos.some(e => e.tipo === 'envio_falhou'), 'a falha ficou registrada')
+})
+
+test('a revisão de um workspace não vale no outro, mesmo com o mesmo id de conversa', async () => {
+  const meu = await ticket('dup-1')
+  const doOutro = await ticket2('dup-1')
+  assert.ok(meu && doOutro, 'o id existe nos dois workspaces')
+
+  // o dono do ws2 abre a revisão da CONVERSA DELE
+  const doWs2 = (await api2('/api/auditoria/dup-1', null, 'GET')).conversa
+  assert.equal(doWs2.envio.workspaceId, 'teste2')
+  const doWs1 = (await api('/api/auditoria/dup-1', null, 'GET')).conversa
+  assert.equal(doWs1.envio.workspaceId, 'teste', 'cada um enxerga o seu')
+
+  // essa revisão NÃO pode confirmar um envio no ws1
+  const r = await confirmarEnvio('dup-1', 'texto qualquer', esperadoDe(doWs2))
+  assert.equal(r.status, 409, r.erro ?? '')
+  assert.match(r.erro, /aberta em outra conta/)
+})
+
+test('a revisão preserva a cadência atual — não cria nem adianta um horário mínimo', async () => {
+  const t = await conversaComRascunho(170)
+  const c = await auditoria(t.id)
+  const minimoAntes = c.envio.minimoEnvio
+
+  // mínimo diferente do que a tela viu: a revisão está velha
+  const r = await confirmarEnvio(t.id, c.envio.rascunho, { ...esperadoDe(c), minimoEnvio: '2099-01-01T00:00:00.000Z' })
+  assert.equal(r.status, 409, r.erro ?? '')
+  assert.match(r.erro, /horário mínimo da cadência mudou/)
+  assert.equal((await ticket(t.id)).atendimentoNovo.proximoEnvioMinimo ?? null, minimoAntes, 'e a cadência não foi tocada')
+
+  // com o mínimo certo, o envio sai — e não deixa uma cadência nova para trás
+  const ok = await confirmarEnvio(t.id, c.envio.rascunho, esperadoDe(c))
+  assert.equal(ok.status, 200, ok.erro ?? '')
+  const depois = await ticket(t.id)
+  assert.equal(depois.atendimentoNovo.proximoEnvioMinimo ?? null, null, 'nenhuma cadência nova')
+  assert.equal(depois.enviaEm ?? null, null, 'nenhum agendamento novo')
+})
+
+/* ---------------- tradução gratuita pelo Google ---------------- */
+
+test('tradução do cliente e da resposta: só leitura, pelo mesmo caminho gratuito', async () => {
+  const t = await conversaComRascunho(171)
+  const antes = JSON.stringify(await ticket(t.id))
+  const c = await auditoria(t.id)
+  const chamadasAntes = chamadasIA
+
+  const doCliente = await api('/api/traduzir-texto', { texto: c.envio.mensagemAtual })
+  assert.equal(doCliente.status, 200, doCliente.erro ?? '')
+  assert.match(doCliente.traducao, /^Tradução em português/, 'a mensagem do cliente traduzida')
+  assert.notEqual(doCliente.traducao, CORPO_PADRAO, 'e é outra coisa, não o original repetido')
+
+  const daIA = await api('/api/traduzir-texto', { texto: c.envio.rascunho })
+  assert.equal(daIA.status, 200, daIA.erro ?? '')
+  assert.match(daIA.traducao, /^Tradução em português/, 'a resposta da IA traduzida')
+
+  // números, percentuais, moedas, códigos e número do pedido continuam VISÍVEIS
+  const marcas = c.envio.rascunho.match(/\d+(?:[.,]\d+)?\s?%|\d+(?:[.,]\d+)?\s?€|[A-Z]{3,}\d+|#\d+/g) ?? []
+  assert.ok(marcas.length > 0, 'o rascunho tem número/percentual/código para preservar: ' + JSON.stringify(marcas))
+  for (const m of marcas) assert.ok(daIA.traducao.includes(m), 'continua visível na tradução: ' + m)
+
+  // a rota não devolve estado nenhum: ela não mexe na conversa
+  assert.equal(doCliente.state ?? null, null, 'a tradução não devolve estado')
+  // ORIGINAL INTACTO, byte a byte
+  assert.equal(JSON.stringify(await ticket(t.id)), antes, 'o ticket ficou idêntico')
+  const depois = await auditoria(t.id)
+  assert.equal(depois.envio.rascunho, c.envio.rascunho, 'o rascunho continua no idioma do cliente')
+  assert.equal(depois.envio.rascunhoHash, c.envio.rascunhoHash, 'e o hash do rascunho-base não mudou')
+  assert.equal(depois.envio.mensagemAtual, CORPO_PADRAO, 'a mensagem do cliente continua original')
+  // ZERO Claude: a tradução gratuita não gasta token
+  assert.equal(chamadasIA, chamadasAntes, 'nenhuma chamada ao Claude')
+  assert.equal(JSON.stringify(depois.eventos), JSON.stringify(c.eventos), 'nenhum evento novo na auditoria')
+})
+
+test('a tradução em português nunca é enviada ao cliente', async () => {
+  const t = await conversaComRascunho(172)
+  const c = await auditoria(t.id)
+  const traduzida = (await api('/api/traduzir-texto', { texto: c.envio.rascunho })).traducao
+  assert.match(traduzida, /^Tradução em português/, 'temos a tradução na mão')
+
+  // mandar a tradução é recusado pelas travas que já existem (idioma/fase)
+  const errado = await confirmarEnvio(t.id, traduzida, esperadoDe(c))
+  assert.equal(errado.status, 400, 'a tradução não passa: ' + (errado.erro ?? ''))
+  assert.equal((await enviadosDe(t.id)).length, 0)
+
+  // o original passa — e é o original que sai
+  const certo = await confirmarEnvio(t.id, c.envio.rascunho, esperadoDe(c))
+  assert.equal(certo.status, 200, certo.erro ?? '')
+  assert.equal((await ticket(t.id)).resposta, c.envio.rascunho, 'saiu o texto original, no idioma do cliente')
+})
+
+test('falha do Google não bloqueia o envio: a tradução avisa e o original continua valendo', async () => {
+  const t = await conversaComRascunho(173)
+  const c = await auditoria(t.id)
+
+  googleFalha = true
+  let r
+  try { r = await api('/api/traduzir-texto', { texto: c.envio.rascunho }) }
+  finally { googleFalha = false }
+  assert.equal(r.status, 400, 'a tradução falha')
+  assert.ok(r.erro, 'com motivo para mostrar na tela: ' + r.erro)
+  assert.equal(r.traducao ?? null, null, 'e sem tradução nenhuma')
+  // nenhuma chave, prompt ou dado interno vaza na mensagem de erro
+  assert.ok(!/sk-ant|api[_-]?key|prompt|system/i.test(r.erro), 'a mensagem não expõe nada interno')
+
+  // e o envio do original continua funcionando normalmente
+  const ok = await confirmarEnvio(t.id, c.envio.rascunho, esperadoDe(c))
+  assert.equal(ok.status, 200, 'o envio não foi bloqueado pela falha da tradução: ' + (ok.erro ?? ''))
 })

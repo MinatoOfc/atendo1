@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  RefreshCw, Search, MessageSquare, Bot, User, AlertTriangle, Check, Clock, ExternalLink, ShieldCheck, Users } from 'lucide-react'
+  RefreshCw, Search, MessageSquare, Bot, User, AlertTriangle, Check, Clock, ExternalLink, Send, ShieldCheck, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { ROTULO_GERAL, ROTULO_SELO, ROTULO_SELO_CURTO, ROTULO_ORIGEM_ENVIO } from '../../shared/auditoria.js'
 import type { ConversaAuditoria, ResumoConversaAuditoria, MensagemAuditoria, ItemChecklist } from '../../shared/auditoria.js'
 import { useStore } from '../store'
+import RevisarEnviar from '../components/RevisarEnviar'
 
 /* A auditoria só OBSERVA: nenhuma ação daqui muda fase, oferta, envio ou relatório.
    O único dado que ela escreve é a marcação de revisão (metadados). */
@@ -56,6 +57,9 @@ export default function Auditoria() {
   const [carregando, setCarregando] = useState(false)
   const [aba, setAba] = useState<'lista' | 'conversa' | 'painel'>('lista')
   const [observacao, setObservacao] = useState('')
+  // FOTOGRAFIA da conversa no instante em que a revisão foi aberta: a página
+  // se atualiza sozinha a cada 10 s, o que está sendo revisado não muda
+  const [revisao, setRevisao] = useState<ConversaAuditoria | null>(null)
   const selecionadaRef = useRef<string | null>(null)
   selecionadaRef.current = selecionada
 
@@ -244,37 +248,107 @@ export default function Auditoria() {
               <div className="muted-sm" style={{ color: CORES_SELO[conversa.selo], fontWeight: 700 }}>
                 {ROTULO_SELO[conversa.selo] ?? conversa.selo}
               </div>
-              {/* A Auditoria observa; a ÚNICA coisa que ela deixa você fazer com
-                  a conversa é tirá-la da mão da IA. Numa conversa bloqueada isso
-                  vira recomendação com destaque, porque é a saída certa. */}
+              {/* A Auditoria observa; as duas coisas que ela deixa você FAZER com
+                  a conversa são tirá-la da mão da IA e revisar a resposta que
+                  está esperando você. Numa conversa bloqueada, assumir vira
+                  recomendação com destaque, porque é a saída certa. */}
               {(() => {
                 const alvo = s.todosTickets.find((x: { id: string }) => x.id === conversa.ticketId)
                 if (!alvo) return null
-                if (alvo.atendimentoHumano?.ativo) {
+                const env = conversa.envio
+                if (alvo.atendimentoHumano?.ativo || env.estado === 'humano') {
+                  // só as ações humanas e as DUAS retomadas seguras — as mesmas
+                  // da tela da conversa, com a mesma confirmação
                   return (
-                    <div className="muted-sm" style={{ color: 'var(--purple)', fontWeight: 700 }}>
-                      Em atendimento humano desde {hora(alvo.atendimentoHumano.em)} — a IA não age nesta conversa.
+                    <div className="row gap-8" style={{ flexWrap: 'wrap', alignItems: 'center' }} data-revisar="humano">
+                      <span className="muted-sm" style={{ color: 'var(--purple)', fontWeight: 700 }}>
+                        Em atendimento humano desde {hora(alvo.atendimentoHumano?.em)} — a IA não age nesta conversa.
+                      </span>
+                      <button className="btn btn-sm" title="A IA volta e relê a última mensagem do cliente agora"
+                        onClick={() => { if (confirm('Retomar a IA e reler a última mensagem do cliente?' + String.fromCharCode(10, 10) + 'O rascunho antigo NÃO será reaproveitado: a IA começa um ciclo novo. Nada é enviado sem a sua aprovação.')) s.retomarIA(conversa.ticketId, 'reclassificar') }}>
+                        Retomar e reler a mensagem
+                      </button>
+                      <button className="btn btn-sm" title="A IA volta, mas só age quando o cliente escrever de novo"
+                        onClick={() => { if (confirm('Retomar a IA e aguardar a próxima mensagem do cliente?' + String.fromCharCode(10, 10) + 'O rascunho antigo é descartado e a IA fica parada até o cliente escrever.')) s.retomarIA(conversa.ticketId, 'aguardar') }}>
+                        Retomar e aguardar o cliente
+                      </button>
+                      <button className="btn-ghost btn-sm" onClick={() => navegar(`/caixa?ticket=${conversa.ticketId}`)}>
+                        <ExternalLink size={13} /> Abrir conversa
+                      </button>
                     </div>
                   )
                 }
-                const bloqueada = conversa.selo === 'bloqueado'
+                const bloqueada = env.estado === 'bloqueada' || conversa.selo === 'bloqueado'
                 const perguntar = () => {
                   if (!confirm('Mover esta conversa para atendimento humano?' + String.fromCharCode(10, 10) + 'A IA para de classificar, escrever e enviar aqui. O rascunho atual deixa de valer (fica guardado nesta Auditoria) e qualquer envio agendado é cancelado. Nada é enviado ao cliente agora.')) return
                   s.moverParaHumano(conversa.ticketId, 'Movido por você pela Auditoria')
                 }
-                return bloqueada ? (
-                  <div className="banner" style={{ borderColor: 'var(--purple)', background: 'var(--panel-soft)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                    <Users size={14} color="var(--purple)" style={{ marginTop: 2, flexShrink: 0 }} />
-                    <span style={{ flex: 1, minWidth: 220 }}>
-                      <b>Recomendado:</b> esta resposta foi bloqueada e não vai sair sozinha. Assuma a conversa para responder você mesmo.
-                    </span>
-                    <button className="btn btn-sm" onClick={perguntar}>Mover para atendimento humano</button>
-                  </div>
-                ) : (
+                const humano = (
                   <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={perguntar}>
                     <Users size={13} /> Mover para atendimento humano
                   </button>
                 )
+                if (bloqueada) {
+                  return (
+                    <div className="banner" style={{ borderColor: 'var(--purple)', background: 'var(--panel-soft)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                      <Users size={14} color="var(--purple)" style={{ marginTop: 2, flexShrink: 0 }} />
+                      <span style={{ flex: 1, minWidth: 220 }}>
+                        <b>Recomendado:</b> esta resposta foi bloqueada e não vai sair sozinha. Corrija a resposta na
+                        conversa ou assuma o atendimento para responder você mesmo.
+                      </span>
+                      <button className="btn btn-sm" onClick={() => navegar(`/caixa?ticket=${conversa.ticketId}`)}>
+                        <ExternalLink size={13} /> Corrigir
+                      </button>
+                      <button className="btn btn-sm" onClick={perguntar}>Mover para atendimento humano</button>
+                    </div>
+                  )
+                }
+                if (env.estado === 'em_andamento') {
+                  return (
+                    <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+                      <button className="btn btn-primary btn-sm" disabled data-revisar="em-andamento">
+                        <Send size={13} /> Envio em andamento…
+                      </button>
+                      {humano}
+                    </div>
+                  )
+                }
+                if (env.estado === 'enviada' && env.enviada) {
+                  return (
+                    <div className="row gap-8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span className="muted-sm" style={{ color: 'var(--green, #3fb950)' }} data-revisar="enviada">
+                        Enviada {hora(env.enviada.em)} · Message-ID {env.enviada.mensagemId ?? '—'}
+                        {env.enviada.canalConfirmou ? ' · o canal confirmou a saída' : ' · sem confirmação do canal'}
+                      </span>
+                      {humano}
+                    </div>
+                  )
+                }
+                if (env.estado === 'agendada') {
+                  return (
+                    <div className="row gap-8" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span className="muted-sm" style={{ color: 'var(--blue, #388bfd)' }} data-revisar="agendada">
+                        Agendada para {hora(conversa.cadencia.agendado)} — ainda não saiu.
+                      </span>
+                      {humano}
+                    </div>
+                  )
+                }
+                if (env.podeRevisar) {
+                  return (
+                    <div className="row gap-8" style={{ flexWrap: 'wrap' }}>
+                      {/* o primeiro clique NÃO envia: abre a revisão com uma
+                          fotografia desta conversa, que é o que volta ao
+                          servidor para ele conferir no instante do envio */}
+                      <button className="btn btn-primary btn-sm" data-revisar="abrir"
+                        onClick={() => setRevisao(conversa)}>
+                        <Send size={13} /> Revisar e enviar
+                      </button>
+                      {humano}
+                    </div>
+                  )
+                }
+                return humano
               })()}
               {conversa.retencao && conversa.retencao.omitidos > 0 && (
                 <div className="muted-sm" style={{ color: 'var(--amber, #d29922)' }}>
@@ -424,8 +498,13 @@ export default function Auditoria() {
           )}
         </aside>
       </div>
+      {revisao && (
+        <RevisarEnviar base={revisao} aoFechar={() => setRevisao(null)}
+          aoConcluir={() => { setRevisao(null); carregar(false) }} />
+      )}
       <p className="muted-sm" style={{ marginTop: 10 }}>
-        Esta página só observa o atendimento: nada aqui muda fase, oferta, envio, aprovação ou relatório.
+        Esta página observa o atendimento: nada muda sozinho aqui. As únicas ações são assumir a conversa e
+        revisar uma resposta que já está esperando você — e essa só sai depois de você confirmar.
         {s.lojasVisiveis.length > 1 && ' Cada conversa aparece com a loja dela.'}
       </p>
     </div>

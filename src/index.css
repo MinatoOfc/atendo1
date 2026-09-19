@@ -496,6 +496,39 @@ a { color: inherit; text-decoration: none; }
 .msg-auditoria.sit-bloqueada, .msg-auditoria.sit-falha { border-color: var(--red, #f85149); }
 .corpo-auditoria { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .lista-dados, .lista-checklist { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; }
+
+/* ---- modal "Revisar e enviar" da Auditoria ---- */
+.modal.modal-revisao { max-width: 720px; }
+.grid-revisao { display: grid; gap: 12px; }
+.bloco-revisao { display: grid; gap: 6px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.linha-revisao { display: flex; gap: 10px; justify-content: space-between; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
+.linha-revisao b { text-align: right; overflow-wrap: anywhere; }
+.lista-revisao { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 3px; font-size: 12.5px; }
+.lista-revisao li { overflow-wrap: anywhere; }
+.lista-revisao li::before { content: '•'; margin-right: 6px; }
+.lista-revisao li[data-estado="verde"]::before { color: var(--green, #3fb950); }
+.lista-revisao li[data-estado="amarelo"]::before { color: var(--amber, #d29922); }
+.lista-revisao li[data-estado="vermelho"]::before { color: var(--red, #f85149); }
+.lista-revisao li[data-estado="cinza"]::before { color: var(--text-3); }
+.texto-revisao {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  font-size: 13px; line-height: 1.5; outline: none; background: var(--panel); color: var(--text);
+  resize: vertical; font-family: inherit;
+}
+.texto-revisao:focus { border-color: var(--purple); box-shadow: 0 0 0 3px var(--ring); }
+/* a tradução fica visivelmente SEPARADA do original — nunca ocupa o lugar dele */
+.bloco-traducao {
+  display: grid; gap: 3px; border-left: 3px solid var(--purple); background: var(--panel-soft);
+  border-radius: 0 8px 8px 0; padding: 6px 9px; overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.acoes-revisao { flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .overlay { padding: 8px; align-items: flex-start; }
+  .modal.modal-revisao { max-height: 96vh; }
+  .modal-revisao .modal-head { padding: 14px 14px 0; }
+  .modal-revisao .modal-body { padding: 12px 14px 16px; }
+  .acoes-revisao .btn, .acoes-revisao .btn-ghost { flex: 1 1 100%; justify-content: center; }
+}
 .lista-checklist .ponto { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 @media (max-width: 900px) {
   .auditoria-grade { grid-template-columns: 1fr; }

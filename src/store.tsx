@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import type { RevisaoEsperada } from '../shared/auditoria.js'
 
 /* ---------------- Tipos ---------------- */
 
@@ -521,7 +522,14 @@ interface Store extends ServerState {
   /** move todos os casos marcados do dia `de` para o dia `para` (AAAA-MM-DD) */
   moverRelatorio: (de: string, para: string) => void
   marcarRespondido: (id: string, marcar: boolean) => void
-  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual', confirmarAlteracao?: boolean) => void
+  /**
+   * CAMINHO OFICIAL DE ENVIO — o mesmo em Aprovações, na conversa e no modal
+   * "Revisar e enviar" da Auditoria. `esperado` é opcional: quem manda o que
+   * estava vendo pede a reconferência do servidor no instante do envio e
+   * trata o erro por conta própria (sem alert).
+   */
+  aprovarEnviar: (id: string, texto: string, manterAberto?: boolean, origem?: 'ia' | 'manual', confirmarAlteracao?: boolean, esperado?: RevisaoEsperada)
+    => Promise<{ erro?: string; desatualizado?: boolean; enviado?: boolean }>
   /** modo novo: você confirma se a imagem recebida comprova o defeito */
   validarFotoNovo: (id: string, valida: boolean) => void
   /** o dono recusa/corrige o aceite pendente: nada é confirmado; a conversa fica com ele */
@@ -813,7 +821,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       debounces.current[id] = window.setTimeout(() => { api(`/tickets/${id}/rascunho`, 'POST', { texto }) }, 800)
     },
 
-    aprovarEnviar: function aprovarEnviar(id, texto, manterAberto, origem, confirmarAlteracao) {
+    aprovarEnviar: async function aprovarEnviar(id, texto, manterAberto, origem, confirmarAlteracao, esperado) {
       clearTimeout(debounces.current[id])
       setState(s => ({
         ...s,
@@ -821,18 +829,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ? { ...t, status: manterAberto ? t.status : 'enviado', resposta: texto, respostaOrigem: origem, respondidoEm: new Date().toISOString(), enviaEm: undefined }
           : t)),
       }))
-      api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto, origem, confirmarAlteracao: !!confirmarAlteracao }).then(r => {
-        // modo novo: a edição mudou a oferta da etapa — só sai com confirmação explícita
-        if ((r as { precisaConfirmar?: boolean }).precisaConfirmar && !confirmarAlteracao) {
-          aplicar(r) // desfaz o "enviado" otimista
-          if (window.confirm(`${r.erro}\n\nEnviar mesmo assim? A alteração fica registrada no histórico de fases.`)) {
-            aprovarEnviar(id, texto, manterAberto, origem, true)
-          }
-          return
+      const r = await api(`/tickets/${id}/aprovar`, 'POST', { texto, manterAberto: !!manterAberto, origem, confirmarAlteracao: !!confirmarAlteracao, esperado })
+      // modo novo: a edição mudou a oferta da etapa — só sai com confirmação explícita
+      if ((r as { precisaConfirmar?: boolean }).precisaConfirmar && !confirmarAlteracao) {
+        aplicar(r) // desfaz o "enviado" otimista
+        if (window.confirm(`${r.erro}\n\nEnviar mesmo assim? A alteração fica registrada no histórico de fases.`)) {
+          return aprovarEnviar(id, texto, manterAberto, origem, true, esperado)
         }
-        if (r.erro) alert(r.erro)
-        aplicar(r)
-      })
+        return { erro: r.erro }
+      }
+      // quem mandou o que estava vendo mostra o motivo na própria tela
+      if (r.erro && !esperado) alert(r.erro)
+      aplicar(r)
+      return { erro: r.erro, desatualizado: (r as { desatualizado?: boolean }).desatualizado, enviado: !r.erro }
     },
     validarFotoNovo: (id, valida) => api(`/tickets/${id}/novo/foto`, 'POST', { valida }).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),
     recusarAceiteNovo: id => api(`/tickets/${id}/novo/recusar-aceite`, 'POST', {}).then(r => { if (r.erro) alert(r.erro); aplicar(r) }),

@@ -253,6 +253,9 @@ const eventoAud = (tipo, min, extra = {}) => ({
   chave: `${tipo}:${extra.ticketId}:${min}`,
 })
 const ticketAud = (id, extra = {}) => ({
+  // ciclo da conversa: em produção ele nasce com cada mensagem nova do cliente
+  // (server/index.js). Sem ele, a revisão não consegue identificar o ciclo.
+  cicloAuditoria: 'ciclo-' + id,
   id, nome: extra.nome ?? 'Cliente Auditoria', de: extra.de ?? `${id}@web.de`, assunto: 'Bestellung #1001',
   corpo: extra.corpo ?? 'Die Qualität ist schlecht, ich möchte eine Lösung.', data: emAud(0),
   lido: true, origem: 'cliente', categoria: 'reembolso', status: extra.status ?? 'enviado', idioma: 'de',
@@ -459,7 +462,7 @@ estado.tickets.push(
       versao: 1, fluxo: 'qualidade', etapa: 'qual_cupom_35', produtosAfetados: ['Polo Premium (Schwarz / L)'],
       produtosInformados: true, motivo: 'qualidade', historicoEtapas: [{ de: null, para: 'qual_cupom_35', em: emAud(1) }],
       transicaoPendente: { para: 'reemb_25', mensagem: 'x', faltando: [] }, aguardando: 'envio', acaoAceita: null,
-      idioma: 'de', rascunhoIdioma: 'de', proximoEnvioMinimo: emAud(300),
+      idioma: 'de', rascunhoIdioma: 'de', proximoEnvioMinimo: emAud(300), tentativaAtual: 'tent-apr',
     },
     auditoriaIA: [
       eventoAud('cliente_recebido', 0, { ticketId: 'aud-aprovacao' }),

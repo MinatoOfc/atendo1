@@ -182,3 +182,113 @@ test.describe('Auditoria da IA', () => {
     await expect(page).toHaveScreenshot('auditoria-corrigida-1280.png', { mask: [page.locator('.muted-sm').filter({ hasText: 'Atualizado' })] })
   })
 })
+
+/* ------------------------------------------------------------------ */
+/* "Revisar e enviar": o primeiro clique abre a revisão, não envia      */
+/* ------------------------------------------------------------------ */
+
+test.describe('Revisar e enviar', () => {
+  // o botão só existe numa conversa aguardando aprovação, validada, no ciclo e
+  // na tentativa atuais, sem envio em andamento e fora do atendimento humano
+  const escolherFelipe = async page => {
+    await page.locator('.item-auditoria').filter({ hasText: 'Felipe Aguardando' }).click()
+    await expect(page.locator('[data-coluna="conversa"]')).toBeVisible()
+  }
+  const abrirRevisao = async page => {
+    const botao = page.locator('[data-revisar="abrir"]')
+    await expect(botao).toBeVisible()
+    await botao.click()
+    await expect(page.locator('.modal-revisao')).toBeVisible()
+  }
+
+  // janela mais alta SÓ aqui: o pedido é "desktop com modal completo", e a
+  // revisão inteira (dados, texto, checklist, cadência, canal e ações) não cabe
+  // em 720 px de altura
+  const DESKTOP_ALTO = { width: 1280, height: 1100 }
+
+  test('desktop: o modal traz cliente, pedido, loja, mensagem, fase, idioma, texto, checklist, cadência e canal', async ({ page }) => {
+    await entrar(page, DESKTOP_ALTO)
+    // a conversa BLOQUEADA nunca oferece envio — só corrigir e assumir
+    await page.locator('.item-auditoria').filter({ hasText: 'Bruno Bloqueado' }).click()
+    await expect(page.locator('[data-revisar="abrir"]')).toHaveCount(0)
+    await expect(page.locator('[data-coluna="conversa"]')).toContainText('Corrigir')
+    await expect(page.locator('[data-coluna="conversa"]')).toContainText('Mover para atendimento humano')
+    // a conversa JÁ RESPONDIDA não oferece envio nenhum
+    await page.locator('.item-auditoria').filter({ hasText: 'Ana Correta' }).click()
+    await expect(page.locator('.msg-auditoria.sit-enviada').first()).toBeVisible()
+    await expect(page.locator('[data-revisar="abrir"]')).toHaveCount(0)
+
+    await escolherFelipe(page)
+    await abrirRevisao(page)
+    const modal = page.locator('.modal-revisao')
+    await expect(modal).toContainText('Felipe Aguardando')
+    await expect(modal).toContainText('#1001')
+    await expect(modal).toContainText('Von Alder')
+    await expect(modal).toContainText('Die Qualität ist schlecht')
+    await expect(modal).toContainText('Troca')            // fase
+    await expect(modal).toContainText('de')               // idioma
+    await expect(modal).toContainText('DANKE15')          // texto original, com o cupom
+    await expect(modal).toContainText('Checklist da resposta')
+    await expect(modal).toContainText('horário mínimo da cadência')
+    await expect(modal).toContainText('canal de e-mail')
+    // as cinco ações
+    for (const acao of ['Confirmar envio', 'Editar antes de enviar', 'Gerar novamente', 'Mover para atendimento humano', 'Cancelar']) {
+      await expect(modal.getByRole('button', { name: acao })).toBeVisible()
+    }
+    await expect(page).toHaveScreenshot('auditoria-revisar-1280.png', { mask: [page.locator('.muted-sm').filter({ hasText: 'Atualizado' })] })
+  })
+
+  test('a tradução aparece separada, não entra no campo editável e nada é enviado', async ({ page }) => {
+    // Google dublado: o ensaio nunca sai para a internet
+    await page.route('**/api/traduzir-texto', async rota => {
+      const corpo = JSON.parse(rota.request().postData() ?? '{}')
+      await rota.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ ok: true, traducao: 'Versão em português desta mensagem (' + String(corpo.texto).length + ' caracteres).' }),
+      })
+    })
+    // se QUALQUER envio for tentado, o teste tem de saber
+    let tentouEnviar = 0
+    await page.route('**/api/tickets/*/aprovar', async rota => { tentouEnviar++; await rota.abort() })
+
+    await entrar(page)
+    await escolherFelipe(page)
+    await abrirRevisao(page)
+    const modal = page.locator('.modal-revisao')
+    const original = await modal.locator('.corpo-auditoria').nth(1).innerText()
+
+    await modal.getByRole('button', { name: 'Traduzir mensagem do cliente' }).click()
+    await expect(modal.locator('.bloco-traducao')).toHaveCount(1)
+    await modal.getByRole('button', { name: 'Traduzir resposta da IA' }).click()
+    await expect(modal.locator('.bloco-traducao')).toHaveCount(2)
+    for (const i of [0, 1]) {
+      await expect(modal.locator('.bloco-traducao').nth(i)).toContainText('Versão em português')
+      await expect(modal.locator('.bloco-traducao').nth(i)).toContainText('O envio usa o texto original')
+    }
+    // ORIGINAL INTACTO: o texto que vai sair continua o mesmo, em alemão
+    await expect(modal.locator('.corpo-auditoria').nth(1)).toHaveText(original)
+    await expect(modal.locator('.corpo-auditoria').nth(1)).toContainText('DANKE15')
+
+    // e o campo editável começa com o ORIGINAL, nunca com a tradução
+    await modal.getByRole('button', { name: 'Editar antes de enviar' }).click()
+    await expect(modal.locator('.texto-revisao')).toHaveValue(original)
+    expect(tentouEnviar, 'traduzir não envia nada').toBe(0)
+  })
+
+  test('celular: o modal cabe na tela, sem rolagem horizontal', async ({ page }) => {
+    await entrar(page, CELULAR)
+    await escolherFelipe(page)
+    await abrirRevisao(page)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'sem rolagem horizontal com o modal aberto').toBe(true)
+    expect(await page.evaluate(() => {
+      const m = document.querySelector('.modal-revisao')
+      return m ? m.scrollWidth <= m.clientWidth + 1 : false
+    }), 'o conteúdo do modal não estoura a largura').toBe(true)
+    // as ações continuam alcançáveis rolando o modal
+    const confirmar = page.locator('.modal-revisao').getByRole('button', { name: 'Confirmar envio' })
+    await confirmar.scrollIntoViewIfNeeded()
+    await expect(confirmar).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'nem depois de rolar até as ações').toBe(true)
+    await expect(page).toHaveScreenshot('auditoria-revisar-celular-390.png', { mask: [page.locator('.muted-sm').filter({ hasText: 'Atualizado' })] })
+  })
+})

@@ -90,6 +90,60 @@ export interface ConversaAuditoria extends ResumoConversaAuditoria {
   tentativaAtual: string | null
   cicloAtual: string | null
   historicoCompleto: boolean
+  envio: EnvioAuditoria
+}
+
+/** Estado do envio da tentativa atual, como a Auditoria o enxerga. */
+export type EstadoEnvioAuditoria =
+  | 'humano' | 'em_andamento' | 'bloqueada' | 'enviada' | 'agendada'
+  | 'aguardando_aprovacao' | 'rascunho' | 'sem_rascunho'
+
+export interface PrazoEntrega { min: number; max: number; processamento: number }
+
+/**
+ * O que a tela estava vendo quando o dono abriu a revisão. Vai de volta ao
+ * servidor no instante do envio para ele conferir que nada disso mudou.
+ * É o RASCUNHO-BASE — nunca o texto final, que o dono pode ter editado.
+ */
+export interface RevisaoEsperada {
+  workspaceId?: string | null
+  lojaId?: string | null
+  cicloId?: string | null
+  tentativaId?: string | null
+  mensagemEm?: string | null
+  rascunhoHash?: string | null
+  fase?: string | null
+  idioma?: string | null
+  percentual?: number | null
+  valor?: number | null
+  cupom?: string | null
+  prazo?: PrazoEntrega | null
+  minimoEnvio?: string | null
+}
+
+export interface EnvioAuditoria {
+  estado: EstadoEnvioAuditoria
+  /** as cinco condições do botão "Revisar e enviar", decididas no servidor */
+  podeRevisar: boolean
+  rascunhoValidado: boolean
+  /** texto original completo que será enviado (idioma do cliente) */
+  rascunho: string | null
+  /** identidade do rascunho-BASE aberto no modal — o texto editado é outra coisa */
+  rascunhoHash: string | null
+  rascunhoIdioma: string | null
+  workspaceId: string
+  lojaId: string
+  cicloId: string | null
+  tentativaId: string | null
+  mensagemEm: string | null
+  mensagemAtual: string | null
+  minimoEnvio: string | null
+  percentual: number | null
+  valor: number | null
+  cupom: string | null
+  prazo: PrazoEntrega | null
+  canal: { configurado: boolean; propria: boolean; endereco: string | null; remetente: string | null }
+  enviada: { mensagemId: string | null; em: string | null; canalConfirmou: boolean } | null
 }
 
 export declare const TIPOS_AUDITORIA: string[]
