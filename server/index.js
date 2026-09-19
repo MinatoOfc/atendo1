@@ -351,6 +351,28 @@ const emAtendimentoHumano = t => t?.atendimentoHumano?.ativo === true
 /** Erro pronto para as rotas que a IA não pode executar numa conversa humana. */
 const recusaHumano = acao => `Esta conversa está em atendimento humano: ${acao} está desligado até você retomar a IA.`
 
+/**
+ * INVARIANTE: conversa assumida pelo dono está sempre com a IA parada. Estado
+ * antigo gravado antes desta regra (ou meio escrito por uma queda) é corrigido
+ * no arranque — sem gerar rascunho, sem enviar e sem tirar a conversa da fila
+ * de quem assumiu.
+ */
+function reforcarAtendimentoHumano() {
+  let corrigidos = 0
+  for (const [wsId, estado] of workspaces) {
+    let mudou = false
+    for (const t of estado.tickets ?? []) {
+      if (!emAtendimentoHumano(t)) continue
+      if (t.iaPausada !== true) { t.iaPausada = true; mudou = true; corrigidos++ }
+      if (t.enviaEm) { t.enviaEm = undefined; mudou = true }
+      if (t.status !== 'humano') { t.status = 'humano'; mudou = true }
+      if (t.atendimentoNovo && t.atendimentoNovo.aguardando !== 'humano') { t.atendimentoNovo.aguardando = 'humano'; mudou = true }
+    }
+    if (mudou) salvar(wsId)
+  }
+  if (corrigidos) console.log(`  atendimento humano: ${corrigidos} conversa(s) com a IA religada por estado antigo — corrigidas`)
+}
+
 /** Caso aberto do modo novo sem prova de produto (regra única em shared/produto.js). */
 const casoSemProvaDeProduto = t => {
   // conversa que VOCÊ assumiu não entra em migração de arranque nenhuma: era
@@ -5427,9 +5449,26 @@ app.post('/api/tickets/:id/retomar-ia', async (req, res) => {
   return ok(req, res)
 })
 
+/**
+ * PAUSAR A IA é outra coisa, mais fraca: ela só deixa de LER as mensagens desta
+ * conversa. Não transfere responsabilidade, não invalida rascunho e não cancela
+ * conclusão.
+ *
+ * Por isso este atalho não pode desfazer um atendimento humano: sair dele exige
+ * a escolha de /retomar-ia (reler agora ou aguardar o cliente). Sem esta trava
+ * existiriam dois caminhos de volta, e um deles ligaria a IA de novo deixando a
+ * conversa marcada como sua — com o rascunho antigo ainda por perto.
+ */
 app.post('/api/tickets/:id/pausar-ia', (req, res) => {
   const t = acharTicket(req, res); if (!t) return
-  t.iaPausada = !!req.body.pausar
+  const pausar = !!req.body.pausar
+  if (!pausar && emAtendimentoHumano(t)) {
+    return res.status(409).json({
+      erro: 'Esta conversa está em atendimento humano: para devolvê-la à IA use "Retomar IA" e escolha entre reler a última mensagem ou aguardar a próxima.',
+      state: visao(req.wsId),
+    })
+  }
+  t.iaPausada = pausar
   if (t.iaPausada) t.enviaEm = undefined
   salvar(req.wsId); ok(req, res)
 })
@@ -5620,11 +5659,14 @@ async function iniciar() {
   for (const wsId of workspaces.keys()) neutralizarConclusaoAutomatica(wsId, 'Conclusão automática interrompida porque a loja não tem mais todos os pré-requisitos (envio automático, automação geral, piloto ou caixa própria).', { por: 'sistema (arranque)' })
   for (const wsId of workspaces.keys()) { corrigirConfirmacoesMeioGravadas(wsId); await reconciliarEnviosInterrompidos(wsId) }
   migrarCasosSemProduto()
+  // depois das migrações: nenhuma delas pode deixar uma conversa assumida com a IA ligada
+  reforcarAtendimentoHumano()
 
   servidorHttp = app.listen(PORT, async () => {
     console.log(`atendo servidor na porta ${PORT}`)
     // casos migrados sem prova de produto: a única saída é a pergunta do produto
     for (const wsId of workspaces.keys()) await gerarColetasDeProduto(wsId)
+    reforcarAtendimentoHumano()
     console.log(`  banco:   ${db.usandoPostgres ? 'PostgreSQL' : 'arquivos locais (defina DATABASE_URL para usar o Postgres)'}`)
     console.log(`  workspaces: ${workspaces.size}`)
     console.log(`  oauth shopify: ${oauthDisponivel ? 'pronto' : 'não configurado'}`)

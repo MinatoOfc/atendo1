@@ -89,7 +89,7 @@ estado.pedidos.push({
   ],
 })
 // pedidos dos clientes que exercitam os ciclos de auditoria (61 a 65)
-for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137]) {
+for (const n of [61, 62, 63, 64, 65, 70, 71, 80, 81, 82, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 120, 121, 122, 130, 131, 132, 133, 134, 135, 136, 137, 140, 141, 142]) {
   estado.pedidos.push({
     id: 'p' + n, numero: '#' + n, cliente: 'Cliente ' + n, email: `c${n}@web.de`, pais: 'Germany', valor: 100,
     status: 'entregue', criadoEm: '2026-08-20', despachadoEm: '2026-08-22', lojaId: 'loja1',
@@ -1831,6 +1831,70 @@ test('conversa CLÁSSICA vai e volta do humano sem trocar de motor, e uma loja n
   assert.equal(JSON.stringify(depois3), antes3, 'a conversa da outra loja não mudou')
   assert.equal(depois3.atendimentoHumano ?? null, null)
   assert.equal((await ticket(daLoja1.id)).atendimentoHumano.ativo, true)
+})
+
+test('o atalho antigo "Pausar IA" não desfaz um atendimento humano', async () => {
+  let t = await conversaComRascunho(140)
+  assert.equal((await mover(t.id)).status, 200)
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoHumano.ativo, true)
+  assert.equal(t.iaPausada, true, 'assumida implica IA parada')
+
+  // o endpoint antigo, chamado direto, RECUSA a retomada
+  const r = await api(`/api/tickets/${t.id}/pausar-ia`, { pausar: false })
+  assert.equal(r.status, 409, 'o caminho antigo não devolve a conversa para a IA')
+  assert.match(r.erro, /Retomar IA/)
+
+  // e o estado continua exatamente o mesmo
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoHumano.ativo, true, 'continua sendo sua')
+  assert.equal(t.iaPausada, true, 'a IA continua parada')
+  assert.equal(t.status, 'humano')
+  assert.equal(t.rascunho ?? null, null)
+  assert.equal(t.enviaEm ?? null, null)
+  semRelatorio(t)
+
+  // pausar de novo (pausar: true) é inofensivo e continua permitido
+  const rp = await api(`/api/tickets/${t.id}/pausar-ia`, { pausar: true })
+  assert.equal(rp.status, 200)
+  assert.equal((await ticket(t.id)).atendimentoHumano.ativo, true)
+
+  // as DUAS retomadas novas continuam funcionando
+  const r1 = await retomar(t.id, 'aguardar')
+  assert.equal(r1.status, 200, r1.erro ?? '')
+  t = await ticket(t.id)
+  assert.equal(t.atendimentoHumano ?? null, null)
+  assert.equal(t.iaPausada, false)
+
+  // e a outra retomada, numa segunda conversa
+  let t2 = await conversaComRascunho(141)
+  assert.equal((await mover(t2.id)).status, 200)
+  assert.equal((await api(`/api/tickets/${t2.id}/pausar-ia`, { pausar: false })).status, 409)
+  fila.push(clsPadrao())
+  const r2 = await retomar(t2.id, 'reclassificar')
+  assert.equal(r2.status, 200, r2.erro ?? '')
+  t2 = await ticket(t2.id)
+  assert.equal(t2.atendimentoHumano ?? null, null)
+  assert.equal(t2.iaPausada, false)
+})
+
+test('conversa apenas PAUSADA, sem ter sido assumida, continua usando o atalho antigo', async () => {
+  const t = await conversaComRascunho(142)
+  assert.equal(t.atendimentoHumano ?? null, null, 'não foi assumida')
+
+  const pausa = await api(`/api/tickets/${t.id}/pausar-ia`, { pausar: true })
+  assert.equal(pausa.status, 200, pausa.erro ?? '')
+  let d = await ticket(t.id)
+  assert.equal(d.iaPausada, true)
+  assert.equal(d.enviaEm ?? null, null, 'pausar cancela o agendamento')
+  assert.equal(d.atendimentoHumano ?? null, null, 'pausar NÃO transfere a responsabilidade')
+  // pausar não invalida o rascunho: é o que separa as duas ações
+  assert.ok(d.rascunho, 'o rascunho continua lá — pausar não é assumir')
+
+  const volta = await api(`/api/tickets/${t.id}/pausar-ia`, { pausar: false })
+  assert.equal(volta.status, 200, 'sem atendimento humano, o toggle antigo funciona normalmente')
+  d = await ticket(t.id)
+  assert.equal(d.iaPausada, false)
 })
 
 test('os auxiliares de ensaio não alteram o corpo da mensagem do cliente', async () => {

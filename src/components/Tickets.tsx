@@ -1024,8 +1024,11 @@ export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void
         )}
       </div>
 
-      {/* Pausar / retomar a IA nesta conversa */}
-      {t.status !== 'spam' && t.status !== 'lixeira' && (
+      {/* Pausar / retomar a IA nesta conversa. Some quando a conversa foi
+          ASSUMIDA: ali a volta é pelo banner de atendimento humano, que exige
+          escolher entre reler agora e aguardar o cliente. Dois caminhos de
+          retomada seriam um convite a religar a IA sem encerrar nada. */}
+      {t.status !== 'spam' && t.status !== 'lixeira' && !t.atendimentoHumano?.ativo && (
         <div className="card mb-12" style={{ padding: '12px 16px' }}>
           <div className="row spread">
             <span style={{ fontWeight: 700, fontSize: 13.5, color: t.iaPausada ? 'var(--amber)' : 'var(--green)' }}>
@@ -1036,7 +1039,11 @@ export function TicketDetail({ t, onBack, nav }: { t: Ticket; onBack: () => void
             </button>
           </div>
           <p className="muted-sm" style={{ marginTop: 6, lineHeight: 1.5 }}>
-            Quando pausada, a IA nem lê as novas mensagens desta conversa — zero gasto de tokens. Elas caem direto para você responder manualmente, até clicar em "Retomar IA".
+            <b>Pausar IA</b> só interrompe a leitura automática: a IA nem lê as novas mensagens desta conversa — zero gasto de tokens.
+            Elas caem direto para você responder manualmente, até clicar em "Retomar IA". A fase, o rascunho e o agendamento continuam como estão.
+            <br />
+            Para assumir a conversa de verdade, use <b>Mover para atendimento humano</b>: aí a responsabilidade passa a ser sua, o rascunho
+            atual deixa de valer e o envio agendado é cancelado.
           </p>
         </div>
       )}

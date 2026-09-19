@@ -50,7 +50,7 @@ estado.lojas = [
 const CENARIOS = {
   qa1: 'loja1', qa2: 'loja2', qa3: 'loja1', qa4: 'loja1', qa5: 'loja1', qa6: 'loja2',
   qa7: 'loja1', qa8: 'loja1', qa9: 'loja1', qa10: 'loja1', qa11: 'loja1', qa12: 'loja1',
-  qa13: 'loja2',
+  qa13: 'loja2', qa14: 'loja2',
 }
 estado.pedidos = Object.entries(CENARIOS).map(([id, lojaId], i) => ({
   id: 'p-' + id, numero: '#' + (101 + i), cliente: 'Cliente ' + id, email: `${id}@web.de`, pais: 'Germany', valor: 100,
@@ -330,6 +330,48 @@ test('conversa assumida pelo dono continua dela depois de reiniciar o servidor',
   assert.equal(t.status, 'humano', 'o agendador não devolveu a conversa para a IA')
   assert.equal(envios().length, enviosAntes, 'o agendador não enviou nada')
   assert.equal(t.relatorioAuto ?? null, null, 'nenhuma linha de relatório')
+})
+
+test('estado legado incompatível (assumida com a IA ligada) é corrigido no arranque', async () => {
+  // Estado que só existe em banco antigo ou em queda no meio da gravação: a
+  // conversa está marcada como assumida, mas com a IA ligada e um envio
+  // agendado. O arranque tem de reconciliar isso SEM gerar rascunho e SEM
+  // enviar — a invariável é: assumida implica IA parada.
+  preparar('qa14', { lojaId: 'loja2', modo: 'automatico', aprovado: false, agendado: true })
+  const salvo = estadoSalvo()
+  const alvo = salvo.tickets.find(x => x.id === 'qa14')
+  alvo.atendimentoHumano = { ativo: true, por: 'Allan', em: '2026-09-18T10:00:00.000Z', motivo: 'legado', faseNoMomento: null }
+  alvo.iaPausada = false            // incoerente de propósito
+  alvo.status = 'aprovacao'         // idem
+  alvo.enviaEm = Date.now() - 1000  // já vencido: o agendador pegaria na hora
+  if (alvo.atendimentoNovo) alvo.atendimentoNovo.aguardando = 'cliente'
+  writeFileSync(arquivo, JSON.stringify(salvo))
+  const enviosAntes = envios().length
+  const rascunhoAntes = alvo.rascunho ?? null
+
+  await matar()
+  filho = (await subir({})).processo
+  await esperar(2500)
+  const cookie = await entrar()
+  const st = await verEstado(cookie)
+  const t = st.tickets.find(x => x.id === 'qa14')
+
+  assert.equal(t.atendimentoHumano?.ativo, true, 'continua sendo do dono')
+  assert.equal(t.iaPausada, true, 'a IA foi parada: assumida implica IA parada')
+  assert.equal(t.status, 'humano', 'voltou para a fila do dono')
+  assert.equal(t.enviaEm ?? null, null, 'o agendamento vencido foi cancelado')
+  assert.equal(t.atendimentoNovo.aguardando, 'humano')
+  // o arranque NÃO escreve rascunho: o que existia continua igual, e inerte —
+  // com status humano, sem agendamento e com a IA parada ele não tem por onde sair
+  assert.equal(t.rascunho ?? null, rascunhoAntes, 'o arranque não gerou nem reescreveu rascunho')
+
+  // e o agendador roda sem enviar nada
+  await esperar(6500)
+  const st2 = await verEstado(cookie)
+  const t2 = st2.tickets.find(x => x.id === 'qa14')
+  assert.equal(envios().length, enviosAntes, 'nenhum e-mail saiu')
+  assert.equal(t2.status, 'humano')
+  assert.equal(t2.relatorioAuto ?? null, null)
 })
 
 test('dois reinícios consecutivos depois da reconciliação: nada duplica', async () => {
